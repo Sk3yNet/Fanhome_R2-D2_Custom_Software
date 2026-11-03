@@ -27,7 +27,7 @@ at any time; the agent stays installed.
 Today R2 Main only receives controller messages and logs them, so the robot does much less than with
 its factory software. Everything below is behavior the factory software has. Build the behaviors on a
 small internal sequencer (timed steps of commands, head moves and sounds) that later grows into the
-routine engine in section 5.
+routine engine in section 6.
 
 ### Core behaviors
 - [ ] **Actions:** wake up, turn left/right/around, go forward, walk a circle, patrol (ends after 60 s),
@@ -94,11 +94,11 @@ Today:
 - [ ] **Local network only, enforced.** Reject connections from non-private source addresses and from
       outside the robot's own subnet.
 - [ ] **Token out of the APK.** Each robot gets its own credentials at pairing or install time instead of a
-      token built into the build. This is required before prebuilt releases can be published (section 4).
+      token built into the build. This is required before prebuilt releases can be published (section 5).
 
 ### Phase 2
 - [ ] **Pairing with physical presence.** A new client is only accepted after a button press on the robot
-      (`btn` event), on the serial console, or via the SD card config file (section 7). Each client gets
+      (`btn` event), on the serial console, or via the SD card config file (section 8). Each client gets
       its own key.
 - [ ] **Signed requests.** HMAC or public-key signatures over method, path, body hash, timestamp and
       nonce, so captured requests can't be replayed or modified. Later, TLS with a pinned
@@ -110,7 +110,46 @@ Today:
       who did what.
 - [ ] Phone app compatibility mode (section 2) limited to the permissions it needs: no installs, no reboots.
 
-## 4. Releases and tooling
+## 4. Platform security: Android 4.4.2
+The robot runs Android 4.4.2 (2013) on a 3.4 kernel, as an engineering build, with no security updates.
+First decide whether a full upgrade is possible; if not, harden what's there.
+
+### Evaluate a full upgrade first
+- [ ] **Newer Android for the H3:** Allwinner has newer Android releases for the H3 on other boards. Check
+      whether one can be adapted to this board's wiring and 512 MB of RAM, and get the kernel source for
+      this board.
+- [ ] **Mainline Linux on the same board:** a current kernel with security updates. The H3, the AP6212
+      Wi-Fi chip, the audio codec and USB cameras have mainline drivers. R2 Agent and R2 Main would become
+      Linux services, but the controller protocol, behaviors and API carry over. It could boot from an SD
+      card (section 8), leaving the factory eMMC untouched.
+- [ ] **A replacement board** (e.g. a current Raspberry Pi-class board) wired to the robot's controller
+      UART, speaker, microphone and camera. Map the robot's connectors and power budget first.
+- [ ] Compare the options on hardware support (UART, Wi-Fi, audio in and out, camera), effort,
+      reversibility, and what's needed for new users, then pick one.
+
+### If staying on Android 4.4.2: hardening
+Known exposure: kernel privilege-escalation bugs (e.g. Dirty COW), the media framework (Stagefright),
+the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne), root adb and
+`ro.secure=0` from the engineering build, and world-writable device nodes.
+- [ ] **Firewall at boot:** iptables rules that allow only the agent's ports, only from the local subnet,
+      and drop everything else, including stray system services.
+- [ ] **Turn off what isn't used:** Bluetooth (unless phone app compatibility needs it), MTP, unused system
+      apps and services, and any listener we don't need.
+- [ ] **No untrusted content:** no WebView, no media from the network, no downloads from URLs. Only the
+      robot's own sound files and our signed updates.
+- [ ] **Current TLS in our apps:** bundle a modern TLS library for outbound connections (MQTT, Home
+      Assistant, GitHub) instead of relying on the system's.
+- [ ] **Least privilege:** keep the agent's shell commands to a minimum, give R2 Main no extra
+      permissions, and sandbox plugins.
+- [ ] **Fix device node permissions** at boot, e.g. world-writable UARTs.
+- [ ] **Production-style build:** turn off root adb and `ro.secure=0` with a modified boot image (shares the
+      boot-image work in section 8), keeping the serial console for recovery.
+- [ ] **Patch the Wi-Fi stack:** rebuild wpa_supplicant/hostapd with the KRACK fixes.
+- [ ] **Kernel:** get the GPL kernel source for this board and backport critical fixes. Failing that,
+      rely on the firewall and on never running untrusted code.
+- [ ] Document the remaining risk in the README.
+
+## 5. Releases and tooling
 - [ ] **CI:** a GitHub Actions build of both APKs on every push. This needs a Linux version of the build script.
 - [ ] **Signed releases** on GitHub, so users don't have to set up a build toolchain. Depends on
       "token out of the APK" (section 3).
@@ -119,25 +158,25 @@ Today:
 - [ ] Setup script for the build toolchain (JDK, Android SDK, platform-tools).
 - [ ] Later: the agent updates itself from GitHub releases. This needs signed updates (section 3).
 
-## 5. Scripted movement routines
+## 6. Scripted movement routines
 - [ ] Routine format (e.g. JSON): steps of `cmd` (any controller command), `wait`, `wait_until`
       (a condition on `gin` state), `repeat`, sound and LED cues. The built-in actions from section 2
       become editable routines in this format.
 - [ ] Interpreter in R2 Main, with safety built in: stop if the controller reports an error or the robot
       is charging, an overall timeout, and an emergency stop (API, button, or loss of the agent connection).
 - [ ] Upload, list, run and stop routines through the agent API and the PC tool.
-- [ ] Triggers: robot buttons, voice commands, a schedule, or external events (see section 8).
+- [ ] Triggers: robot buttons, voice commands, a schedule, or external events (see section 9).
 - [ ] Test routines against the controller simulator (section 1).
 - [ ] Later: record a routine by driving the robot, then play it back.
 
-## 6. Web control page
+## 7. Web control page
 - [ ] A phone-friendly page served by the robot: live status (battery, charging, arm/head/lightsaber),
       a joystick for driving and head, action buttons, routine triggers, an emergency stop, and the
       camera view.
 - [ ] Uses the same authentication as the API (section 3).
 - [ ] Later: gamepad support.
 
-## 7. SD card installation (soft-mod)
+## 8. SD card installation (soft-mod)
 New users should be able to put an SD card into an untouched robot and either install this software,
 or run it straight from the card as a soft-mod that disappears when the card is removed.
 
@@ -153,7 +192,7 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       adapter are needed.
 - [ ] Image builder script plus written instructions; check that it works on several robots.
 
-## 8. Plugins and integrations (Home Assistant first)
+## 9. Plugins and integrations (Home Assistant first)
 - [ ] Plugin interface in R2 Main: plugins subscribe to controller events and robot state, can send
       commands and run routines, and have their own config and lifecycle. Pick a loading model:
       built into R2 Main, or separate APKs found by an intent filter.
@@ -163,6 +202,6 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       work in section 3.
 - [ ] Plugin permissions, so an integration can't install software or reboot unless allowed.
 
-## 9. Usability and housekeeping
+## 10. Usability and housekeeping
 - [ ] **Uninstall without a PC:** a button combination on the robot that switches the factory app back
       on and reboots.
