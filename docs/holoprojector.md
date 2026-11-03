@@ -10,9 +10,9 @@ in Italian) and photos of the board. Anything marked *inferred* is not confirmed
 - **Control:** the main board sends `{"cmd":"projector","mode":1|2|0}` to the controller and plays the
   matching audio clip. The controller switches the projector on and off. No image data ever leaves the main
   board; the clip lives on the projector board.
-- *Inferred:* "projector 1" and "projector 2" are two separate projector boards, each playing its own stored
-  clip. The cable to the projector has a single enable line, so it can only switch a board on or off, not
-  choose an image.
+- Confirmed: "projector 1" plays a Princess Leia clip and "projector 2" a Luke Skywalker clip, each once
+  and then stopping. *Open question:* whether that's one board told which clip to play or two boards.
+  The documented cable has a single enable line, which fits two boards, but the 4 MB flash could hold both clips.
 
 ## Projector board ("R2D2 – Projector", about 47 × 26 mm)
 | Ref | Part | Role |

@@ -56,6 +56,25 @@ and sounds. Recreating them is on the [roadmap](../ROADMAP.md).
 - Ranges and units for `power`, `angle`, `dir`, and the `led` values.
 - Whether the controller needs regular `gin` or `reset-wdt` traffic to keep running. R2 Agent keeps polling `gin`
   every 5 s to be safe.
-- Confirmed on hardware so far: `gin` status replies, `mode` 13 and 14 (toggles), `mode` 3 then 0 (turn
-  left, stop), and `lcd` `s`/`l` on and off. The other commands are untested.
+- Confirmed on hardware so far: `gin` status replies, `mode` 13 and 14 (toggles), `mode` 3, 4, 2 and 5 each
+  followed by 0 (turn left, right, around, forward; stop), `lcd` `s`/`l` on and off, and `head-angle` 20 then 0 (the head turns and returns; `gin` has no
+  head position in practice), and `arm` / `lightsaber` power 1 then 0 (out, back in; `gin` reports
+  the lightsaber state, but if the part sticks mechanically it still reports 0). Mode 2 stopped after
+  about 2 s had turned R2 about a third of a full rotation. The other commands are untested.
+- Whether turns end on their own if no stop is sent.
+- `move` works: `power` 20, `angle` 0 crept forward about 1 inch in roughly 2 s; `power` 50 went about
+  4 inches in roughly 1.2 s, so speed rises faster than the power value (power 0 and mode 0 stop it). `angle` 180 is reverse:
+  `power` 30 went back about 2.25 inches in roughly 1.8 s. `angle` 90 turns right on the spot (seen from
+  behind). `angle` 270 is not a left spin: at `power` 30 for about 1.5 s it only backed up about an inch
+  with a slight twist (left side 1 in, right 0.75 in), `angle` −90 spins left on the spot, so `angle` runs −180 to
+  180: 0 forward, 90 right, −90 left, 180 back. In between, the controller mixes the two
+  wheels: at `angle` 45 (`power` 30, about 1.9 s) the left wheel moved about 1.5 inches forward and the right
+  wheel stayed still, a forward pivot to the right. At `angle` 20 (`power` 30, about 3.6 s) both wheels
+  went forward, left about 2 inches and right about 1.5, a gentle right curve.
+  The full `power` range and how `angle` steers are still unknown; the factory app uses angle 0 and 180 for
+  driving straight.
+- The projector once came on by itself (shortly after a lightsaber jam) and `gin` reported `projector` 182;
+  `projector` mode 0 turned it off. What 182 means, and what started it, is unknown.
+- Confirmed: `projector` mode 1 plays the Princess Leia clip once and then stops by itself, but `gin` keeps
+  reporting 1 until mode 0 is sent (the factory app sends 0 when the matching audio ends). Mode 2 plays the Luke Skywalker clip the same way (reports 2).
 - Where exactly the short display sits.
