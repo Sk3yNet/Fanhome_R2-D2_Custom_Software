@@ -1,0 +1,22 @@
+# Allow-list: only source, docs and scripts are tracked. Everything else (eMMC backups, logs,
+# secrets, downloaded toolchains, factory firmware files, build output) stays local.
+/*
+!/.gitignore
+!/README.md
+!/ROADMAP.md
+!/apps/
+!/docs/
+!/tools/
+
+/apps/out/
+/apps/*/assets/
+
+/tools/*
+!/tools/*.ps1
+!/tools/serial-commands/
+
+*.log
+*.so
+*.apk
+*.img
+*.keystore

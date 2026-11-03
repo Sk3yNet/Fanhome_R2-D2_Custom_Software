@@ -1,0 +1,6 @@
+# Runtime only (resets on reboot): move root adb from USB to TCP port 5555 on the robot's current network
+setprop service.adb.tcp.port 5555
+stop adbd
+start adbd
+netcfg | grep -v 0.0.0.0
+netstat -ln | grep 5555

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  R2 Agent: always-on recovery layer. Installed in /system/priv-app so it gets
+  install/reboot permissions and android:persistent keeps it alive.
+  It owns /dev/ttyS2, serves the update API, and supervises the main app.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.r2hack.agent">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.DELETE_PACKAGES" />
+    <uses-permission android:name="android.permission.REBOOT" />
+    <uses-permission android:name="android.permission.CHANGE_COMPONENT_ENABLED_STATE" />
+    <uses-permission android:name="android.permission.FORCE_STOP_PACKAGES" />
+    <uses-permission android:name="android.permission.READ_LOGS" />
+
+    <application
+        android:label="R2 Agent"
+        android:name=".AgentApp"
+        android:persistent="true"
+        android:allowBackup="false">
+
+        <service android:name=".AgentService" android:exported="false" />
+
+        <receiver android:name=".BootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="dev.r2hack.agent.WAKE" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

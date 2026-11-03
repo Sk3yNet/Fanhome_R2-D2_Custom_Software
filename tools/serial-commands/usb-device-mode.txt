@@ -1,0 +1,6 @@
+# Runtime only (resets on reboot): ask the sunxi OTG driver to switch to USB device mode
+cat /sys/devices/platform/sunxi_usb_udc/usb_device
+echo 1 > /sys/devices/platform/sunxi_usb_udc/usb_device
+cat /sys/devices/platform/sunxi_usb_udc/otg_role
+cat /sys/class/android_usb/android0/state
+dmesg | grep -i -E "usb|otg|udc|vbus|android_work"

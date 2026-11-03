@@ -1,0 +1,119 @@
+# Build R2 Agent and/or R2 Main without Gradle.
+# Usage: powershell -ExecutionPolicy Bypass -File apps\build.ps1 [-App agent|main|all]
+# Output: apps\out\R2Agent.apk, apps\out\R2Main.apk
+param([ValidateSet('agent', 'main', 'all')][string]$App = 'all')
+$ErrorActionPreference = 'Stop'
+
+$root    = Split-Path $PSScriptRoot
+$tools   = Join-Path $root 'tools'
+$jdk     = Join-Path $tools 'jdk'
+$sdk     = Join-Path $tools 'android-sdk'
+$bt      = Join-Path $sdk 'build-tools\35.0.1'
+$android = Join-Path $sdk 'platforms\android-19\android.jar'
+$secrets = Join-Path $root 'secrets'
+$outDir  = Join-Path $PSScriptRoot 'out'
+
+if (-not (Test-Path "$jdk\bin\javac.exe")) { throw "JDK not found at $jdk" }
+$env:JAVA_HOME = $jdk
+$env:PATH = "$jdk\bin;$env:PATH"
+New-Item -ItemType Directory -Force $secrets, $outDir | Out-Null
+
+function Invoke-Tool {
+    param([string]$Exe, [string[]]$Arguments)
+    & $Exe @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "$Exe failed with exit code $LASTEXITCODE" }
+}
+
+# One signing key for both apps, plus the API token baked into the agent.
+$keystore = Join-Path $secrets 'r2hack.keystore'
+$passFile = Join-Path $secrets 'keystore-pass.txt'
+$tokenFile = Join-Path $secrets 'agent-token.txt'
+function New-RandomString([int]$bytes) {
+    $b = New-Object byte[] $bytes
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+    ([BitConverter]::ToString($b) -replace '-', '').ToLower()
+}
+if (-not (Test-Path $passFile)) { Set-Content $passFile (New-RandomString 16) -NoNewline -Encoding ascii }
+if (-not (Test-Path $tokenFile)) { Set-Content $tokenFile (New-RandomString 24) -NoNewline -Encoding ascii }
+$pass = (Get-Content $passFile -Raw).Trim()
+$token = (Get-Content $tokenFile -Raw).Trim()
+if (-not (Test-Path $keystore)) {
+    Invoke-Tool "$jdk\bin\keytool.exe" @('-genkeypair', '-keystore', $keystore, '-storepass', $pass, '-keypass', $pass,
+        '-alias', 'r2hack', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=r2hack')
+}
+
+# versionCode = minutes since 2025-01-01, so every build can replace the previous one.
+$versionCode = [int]((Get-Date).ToUniversalTime() - [datetime]'2025-01-01').TotalMinutes
+$versionName = (Get-Date).ToString('yyyy.MM.dd-HHmm')
+
+function Build-App {
+    param([string]$Name, [string]$Dir, [string]$ApkName, [scriptblock]$Generate)
+    Write-Host "== $Name $versionName ($versionCode)"
+    $work = Join-Path $outDir "build-$Name"
+    if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+    $gen = Join-Path $work 'gen'; $classes = Join-Path $work 'classes'; $dex = Join-Path $work 'dex'
+    New-Item -ItemType Directory -Force $gen, $classes, $dex | Out-Null
+    & $Generate $gen
+
+    $sources = @(Get-ChildItem (Join-Path $Dir 'src'), $gen -Recurse -Filter *.java | ForEach-Object FullName)
+    Invoke-Tool "$jdk\bin\javac.exe" (@('-source', '8', '-target', '8', '-nowarn', '-Xlint:-options', '-encoding', 'UTF-8',
+        '-bootclasspath', $android, '-classpath', $android, '-d', $classes) + $sources)
+
+    $classFiles = @(Get-ChildItem $classes -Recurse -Filter *.class | ForEach-Object FullName)
+    Invoke-Tool "$bt\d8.bat" (@('--release', '--min-api', '19', '--lib', $android, '--output', $dex) + $classFiles)
+
+    $unsigned = Join-Path $work 'unsigned.apk'
+    $linkArgs = @('link', '-o', $unsigned, '-I', $android, '--manifest', (Join-Path $Dir 'AndroidManifest.xml'),
+        '--min-sdk-version', '19', '--target-sdk-version', '19',
+        '--version-code', "$versionCode", '--version-name', $versionName)
+    $assets = Join-Path $work 'assets'
+    if (Test-Path (Join-Path $Dir 'assets')) { Copy-Item (Join-Path $Dir 'assets') $assets -Recurse }
+    if (Test-Path $assets) { $linkArgs += @('-A', $assets) }
+    Invoke-Tool "$bt\aapt2.exe" $linkArgs
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::Open($unsigned, 'Update')
+    try {
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $dex 'classes.dex'), 'classes.dex') | Out-Null
+    } finally { $zip.Dispose() }
+
+    $aligned = Join-Path $work 'aligned.apk'
+    Invoke-Tool "$bt\zipalign.exe" @('-f', '-p', '4', $unsigned, $aligned)
+    $final = Join-Path $outDir $ApkName
+    Invoke-Tool "$bt\apksigner.bat" @('sign', '--ks', $keystore, '--ks-pass', "pass:$pass", '--ks-key-alias', 'r2hack',
+        '--min-sdk-version', '19', '--out', $final, $aligned)
+    Write-Host "   -> $final"
+}
+
+if ($App -in 'agent', 'all') {
+    # The UART library (libr2d2.so) is not bundled: the agent loads the robot's own copy at runtime.
+    $agentDir = Join-Path $PSScriptRoot 'agent'
+    Build-App 'agent' $agentDir 'R2Agent.apk' {
+        param($gen)
+        $d = Join-Path $gen 'dev\r2hack\agent'; New-Item -ItemType Directory -Force $d | Out-Null
+        Set-Content (Join-Path $d 'Secrets.java') -Encoding ascii -Value @"
+package dev.r2hack.agent;
+// Generated by apps/build.ps1 -- do not edit or commit.
+final class Secrets {
+    static final String TOKEN = "$token";
+    static final String VERSION = "$versionName";
+    private Secrets() {}
+}
+"@
+    }
+}
+
+if ($App -in 'main', 'all') {
+    Build-App 'main' (Join-Path $PSScriptRoot 'main') 'R2Main.apk' {
+        param($gen)
+        $d = Join-Path $gen 'dev\r2hack\main'; New-Item -ItemType Directory -Force $d | Out-Null
+        Set-Content (Join-Path $d 'BuildInfo.java') -Encoding ascii -Value @"
+package dev.r2hack.main;
+// Generated by apps/build.ps1.
+final class BuildInfo {
+    static final String VERSION = "$versionName";
+    private BuildInfo() {}
+}
+"@
+    }
+}
