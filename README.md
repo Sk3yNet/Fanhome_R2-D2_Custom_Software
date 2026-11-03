@@ -89,3 +89,7 @@ Other `tools\r2.ps1` commands: `log`, `logcat [text]`, `dmesg [text]`, `adb`, `s
 Right now the API is protected only by a shared token over plain HTTP. adb over Wi-Fi gives a root shell
 with **no authentication** to anyone on the same network. Only use this on a network you trust. Better
 authentication is the first item on the [roadmap](ROADMAP.md).
+
+## License
+[MIT](LICENSE). This covers the code in this repository only. The robot's factory software is not
+included and is not covered by it.
