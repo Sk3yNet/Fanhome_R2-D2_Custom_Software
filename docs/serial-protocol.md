@@ -36,7 +36,8 @@ newline-delimited JSON. This is what R2 Agent speaks on the robot's behalf.
 0 stop · 2 turn around · 3 turn left · 4 turn right · 5 go forward · 9 patrol · 12 walk a circle ·
 13 flash front LCD · 14 flash back LCD
 
-Movement modes are blocked while charging.
+Movement modes are blocked while charging. Mode 13 is a toggle: sending it again ends the flash
+(confirmed on hardware; 14 probably works the same way). Mode 0 does not stop it.
 
 Richer behaviors such as dance, shake head, wake-up and who-are-you are not controller modes. The main
 board builds them from timed sequences of `head-angle`, `mode`, `lightsaber`, `arm`, `projector`, `lcd`
@@ -54,4 +55,5 @@ and sounds. Recreating them is on the [roadmap](../ROADMAP.md).
 - Ranges and units for `power`, `angle`, `dir`, and the `led` values.
 - Whether the controller needs regular `gin` or `reset-wdt` traffic to keep running. R2 Agent keeps polling `gin`
   every 5 s to be safe.
-- Not yet confirmed against a powered controller: the commands above are untested on real hardware.
+- Confirmed on hardware so far: `gin` status replies, `mode` 13 (toggle), and `mode` 3 then 0 (turn left,
+  stop). The other commands are untested.
