@@ -213,19 +213,30 @@ or run it straight from the card as a soft-mod that disappears when the card is 
     until then, write them as the projector's stored clip.
 - [ ] Plugin permissions, so an integration can't install software or reboot unless allowed.
 
-## 10. Hardware mods: custom holoprojector content
+## 10. Hardware mods: holoprojector
 The holoprojector is a small transmissive LCD with a white LED behind it, run by its own microcontroller.
 The robot's controller only switches each projector on and off, and the clip it plays is most likely
-stored on the projector board's SPI flash chip.
+stored on the projector board's SPI flash chip. Hardware details, options and streaming design:
+[docs/holoprojector.md](docs/holoprojector.md).
+
+### Custom content on the existing projector
 - [ ] Back up the projector's flash chip with an SPI programmer, then work out the frame format
       (probably raw frames at the panel's resolution).
 - [ ] A tool that converts images or a short video clip into that format and writes it back, so each
       projector plays a custom clip. Pair it with custom audio (section 2).
-- [ ] Later, live control: new projector firmware, or a replacement controller board that drives the same
-      LCD, connected to the main board, so images can be chosen or streamed on demand (needed for video
-      from Home Assistant, section 9).
 - [ ] Document the projector's wiring and a safe procedure: 3.3 V only, and keep the board unpowered while
       programming.
+
+### Replacement that streams from the main board
+- [ ] Measure the projector housing and lens path; find where the main board sits relative to the dome,
+      what passes through the dome joint, and the projector cable's supply voltage.
+- [ ] New projector controller on an ESP32-S3: drives the existing LCD first, then a 240 × 240 panel with
+      its backlight removed. Still honours the controller's EN line, playing a stored default clip.
+- [ ] Frame streaming from R2 Main: decode media (sandboxed), scale, encode as JPEG, and send timestamped
+      frames over Wi-Fi (or a spare UART as a wired fallback), paced by the audio clock so sound and
+      picture stay in sync.
+- [ ] Video from Home Assistant to the projector (section 9), and image or clip steps in routines (section 6).
+- [ ] Optional, if there's room: a pico DLP light engine with its own small Linux board for real video.
 
 ## 11. Usability and housekeeping
 - [ ] **Uninstall without a PC:** a button combination on the robot that switches the factory app back
