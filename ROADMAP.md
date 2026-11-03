@@ -200,8 +200,33 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       routines; switches for lightsaber, arm and projector; robot availability.
 - [ ] Alternatively, a Home Assistant integration over a local REST/WebSocket API, using the security
       work in section 3.
+- [ ] **R2 as a Home Assistant media destination** (a `media_player` entity):
+  - **Audio:** play music, alerts and text-to-speech announcements through the robot's speaker, with
+    volume, pause/stop, and "now playing" state. HA's MQTT integration has no media player type, so this
+    needs something else: a DLNA/UPnP renderer (which HA discovers on its own), a player that Music
+    Assistant supports, or a small custom integration.
+  - Media from Home Assistant counts as untrusted content (section 4): decode it in a sandboxed player,
+    accept only expected formats and sources, and never let it interrupt a safety stop.
+  - Optionally play droid reactions (or turn the head toward the room) before announcements.
+  - **Video (depends on the projector work in section 10):** send short clips or images to the
+    holoprojector, scaled to the panel's resolution. Once the projector can be driven live, stream them;
+    until then, write them as the projector's stored clip.
 - [ ] Plugin permissions, so an integration can't install software or reboot unless allowed.
 
-## 10. Usability and housekeeping
+## 10. Hardware mods: custom holoprojector content
+The holoprojector is a small transmissive LCD with a white LED behind it, run by its own microcontroller.
+The robot's controller only switches each projector on and off, and the clip it plays is most likely
+stored on the projector board's SPI flash chip.
+- [ ] Back up the projector's flash chip with an SPI programmer, then work out the frame format
+      (probably raw frames at the panel's resolution).
+- [ ] A tool that converts images or a short video clip into that format and writes it back, so each
+      projector plays a custom clip. Pair it with custom audio (section 2).
+- [ ] Later, live control: new projector firmware, or a replacement controller board that drives the same
+      LCD, connected to the main board, so images can be chosen or streamed on demand (needed for video
+      from Home Assistant, section 9).
+- [ ] Document the projector's wiring and a safe procedure: 3.3 V only, and keep the board unpowered while
+      programming.
+
+## 11. Usability and housekeeping
 - [ ] **Uninstall without a PC:** a button combination on the robot that switches the factory app back
       on and reboots.
