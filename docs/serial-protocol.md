@@ -24,7 +24,7 @@ newline-delimited JSON. This is what R2 Agent speaks on the robot's behalf.
 | `arm` | `power` | |
 | `lightsaber` | `power` | |
 | `led` | any of `r`, `b`, `y`, `g` | leave a field out to keep that LED unchanged |
-| `lcd` | any of `s`, `l` | short / long LCD; leave a field out to keep it unchanged |
+| `lcd` | any of `s`, `l` | short / long dot-matrix display (the long one is on the rear), 1 = off, 2 = on; leave a field out to keep it unchanged |
 | `d-head-power` | `power` | |
 | `d-leg-power` | `power` | |
 | `reset-wdt` | — | probably a watchdog reset |
@@ -34,10 +34,11 @@ newline-delimited JSON. This is what R2 Agent speaks on the robot's behalf.
 
 ### `mode` values the controller handles
 0 stop · 2 turn around · 3 turn left · 4 turn right · 5 go forward · 9 patrol · 12 walk a circle ·
-13 flash front LCD · 14 flash back LCD
+13 flash front light · 14 flash back light
 
-Movement modes are blocked while charging. Mode 13 is a toggle: sending it again ends the flash
-(confirmed on hardware; 14 probably works the same way). Mode 0 does not stop it.
+Movement modes are blocked while charging. The front and back "LCDs" are colour lights. Modes 13 and 14
+are toggles: send the same mode again to end the flash (front flashes red/blue and rests violet; back
+flashes green/yellow and rests lime green). Mode 0 does not stop them.
 
 Richer behaviors such as dance, shake head, wake-up and who-are-you are not controller modes. The main
 board builds them from timed sequences of `head-angle`, `mode`, `lightsaber`, `arm`, `projector`, `lcd`
@@ -55,5 +56,6 @@ and sounds. Recreating them is on the [roadmap](../ROADMAP.md).
 - Ranges and units for `power`, `angle`, `dir`, and the `led` values.
 - Whether the controller needs regular `gin` or `reset-wdt` traffic to keep running. R2 Agent keeps polling `gin`
   every 5 s to be safe.
-- Confirmed on hardware so far: `gin` status replies, `mode` 13 (toggle), and `mode` 3 then 0 (turn left,
-  stop). The other commands are untested.
+- Confirmed on hardware so far: `gin` status replies, `mode` 13 and 14 (toggles), `mode` 3 then 0 (turn
+  left, stop), and `lcd` `s`/`l` on and off. The other commands are untested.
+- Where exactly the short display sits.

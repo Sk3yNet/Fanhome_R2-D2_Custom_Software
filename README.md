@@ -5,8 +5,8 @@ keep developing on the robot itself: updates go over Wi-Fi, and a small always-o
 the robot reachable and stops it safely if your code crashes.
 
 > **Status: early and experimental.** The update, recovery and diagnostics layers work on real hardware.
-> The link to the motor/LED controller works in a powered robot (status reports, LCD flash, turning and
-> stopping); the other controller commands are not tested yet.
+> The link to the motor/LED controller works in a powered robot (status reports, lights, displays, turning
+> and stopping); the other controller commands are not tested yet.
 > It does **not yet have the factory software's features**: no sounds, actions, voice commands, face
 > tracking or phone app support so far. You can switch back to the factory software at any time
 > (`tools\r2.ps1 stock-on`). See [ROADMAP.md](ROADMAP.md).
