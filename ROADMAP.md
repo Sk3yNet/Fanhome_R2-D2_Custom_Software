@@ -3,8 +3,12 @@
 Planned features in priority order. Nothing here is implemented yet unless it's checked off.
 
 The order follows dependencies. Everything that moves the robot depends on a confirmed controller
-protocol. Security comes before other people install this. Publishing prebuilt releases depends on the
+protocol. A replacement has to do at least what the factory software does before it's useful to other
+owners. Security comes before other people install this. Publishing prebuilt releases depends on the
 security work. Integrations come after there are features worth integrating.
+
+Until feature parity is reached, `tools\r2.ps1 stock-on` + `reboot` switches back to the factory software
+at any time; the agent stays installed.
 
 ## 1. Foundations and safety
 - [ ] **Confirm the controller protocol on a powered robot.** Check the `ready`/`gin` handshake, that
@@ -19,7 +23,64 @@ security work. Integrations come after there are features worth integrating.
 - [ ] **Low-battery stop:** stop movement and routines below a battery threshold reported by `gin`.
 - [ ] **Event log that survives reboots,** so you can see what happened before a crash or power loss.
 
-## 2. Security: authenticated communication
+## 2. Feature parity with the factory software
+Today R2 Main only receives controller messages and logs them, so the robot does much less than with
+its factory software. Everything below is behavior the factory software has. Build the behaviors on a
+small internal sequencer (timed steps of commands, head moves and sounds) that later grows into the
+routine engine in section 5.
+
+### Core behaviors
+- [ ] **Actions:** wake up, turn left/right/around, go forward, walk a circle, patrol (ends after 60 s),
+      dance, shake head, who-are-you, make some noise, and a "didn't understand" reaction. Each one is a
+      timed sequence of head moves, controller modes and sounds.
+- [ ] **Toggles:** lightsaber, arm, short/long LCD, and projector 1/2. The projector plays its audio
+      clip, then switches itself off when the clip ends.
+- [ ] **Drive sounds:** periodic droid sounds while driving straight, and the head re-centers after a
+      forward move.
+- [ ] **Stop always means stop:** starting any action cancels the one in progress and sends stop first.
+
+### Sound
+- [ ] Play droid sounds when the controller sends `play_sound`, and as part of actions (IDs 0–18, the
+      projector clips 100 and 101, and two hidden extras).
+- [ ] Load the sounds at runtime from the factory files on the robot, the same way as the serial library,
+      so nothing gets redistributed. Later, optional user sound packs.
+- [ ] Mute and volume, kept across reboots.
+
+### Buttons, status and lights
+- [ ] **Robot buttons:** power off (a clean shutdown of both the controller and Android), hotspot/Wi-Fi
+      toggle, pairing mode, lightsaber, arm, patrol.
+- [ ] **Status tracking from `gin`:** battery, charging (debounced when charging stops), arm, lightsaber,
+      projector, LCDs, errors.
+- [ ] **LED patterns:** ready, charging, charged, low battery (below 20%), patrol, sleep, pairing,
+      pairing failed, connecting to Wi-Fi, face detected, power off.
+- [ ] **Sleep after 3 minutes idle** (sleep lights, voice and camera paused); any action wakes the robot.
+
+### Voice commands
+- [ ] Offline voice commands for the actions and toggles above, including "Princess Leia" and
+      "Skywalker" for the two projector clips. The factory software supports English, Spanish, French,
+      Italian, Japanese, Brazilian Portuguese, Russian and Chinese.
+- [ ] Decide between loading the factory speech models from the robot at runtime and using an open-source
+      offline recognizer with its own models.
+- [ ] Pause listening during projector audio, patrol, pairing and sleep.
+
+### Camera
+- [ ] **Face detection:** on a new face, play a sound and show the face LED pattern, and turn the head
+      to follow the face.
+- [ ] **QR code Wi-Fi setup** in pairing mode.
+- [ ] Turning face detection on and off.
+
+### Companion phone app
+- [ ] Keep the official phone app working with the same local protocol: discovery, driving and actions,
+      live camera video, Wi-Fi setup, renaming the robot, mute/voice/face toggles, and the list of paired
+      phones.
+- [ ] The original pairing has no cryptography, so treat it as an optional compatibility mode: off by
+      default, or limited to pairing mode and the robot's own hotspot. See section 3.
+
+### Identity and network
+- [ ] Keep the robot's name and ID, so the phone app and Bluetooth still recognize it.
+- [ ] Hotspot named like the factory one, but with a per-robot password instead of a fixed default.
+
+## 3. Security: authenticated communication
 The agent can install software and reboot the robot, and adb over Wi-Fi is a root shell, so being on
 the local network should not be enough on its own.
 
@@ -33,7 +94,7 @@ Today:
 - [ ] **Local network only, enforced.** Reject connections from non-private source addresses and from
       outside the robot's own subnet.
 - [ ] **Token out of the APK.** Each robot gets its own credentials at pairing or install time instead of a
-      token built into the build. This is required before prebuilt releases can be published (section 3).
+      token built into the build. This is required before prebuilt releases can be published (section 4).
 
 ### Phase 2
 - [ ] **Pairing with physical presence.** A new client is only accepted after a button press on the robot
@@ -47,36 +108,33 @@ Today:
 - [ ] Look into enabling adb key authentication.
 - [ ] Per-client permission levels, e.g. read-only status vs. install/reboot. Revocation, and a log of
       who did what.
+- [ ] Phone app compatibility mode (section 2) limited to the permissions it needs: no installs, no reboots.
 
-## 3. Releases and tooling
+## 4. Releases and tooling
 - [ ] **CI:** a GitHub Actions build of both APKs on every push. This needs a Linux version of the build script.
 - [ ] **Signed releases** on GitHub, so users don't have to set up a build toolchain. Depends on
-      "token out of the APK" (section 2).
+      "token out of the APK" (section 3).
 - [ ] **Cross-platform PC tool:** replace the PowerShell scripts with one small Python CLI (status, push,
       logs, adb, install, restore) for Windows, macOS and Linux.
 - [ ] Setup script for the build toolchain (JDK, Android SDK, platform-tools).
-- [ ] Later: the agent updates itself from GitHub releases. This needs signed updates (section 2).
+- [ ] Later: the agent updates itself from GitHub releases. This needs signed updates (section 3).
 
-## 4. Scripted movement routines
+## 5. Scripted movement routines
 - [ ] Routine format (e.g. JSON): steps of `cmd` (any controller command), `wait`, `wait_until`
-      (a condition on `gin` state), `repeat`, sound and LED cues.
+      (a condition on `gin` state), `repeat`, sound and LED cues. The built-in actions from section 2
+      become editable routines in this format.
 - [ ] Interpreter in R2 Main, with safety built in: stop if the controller reports an error or the robot
       is charging, an overall timeout, and an emergency stop (API, button, or loss of the agent connection).
 - [ ] Upload, list, run and stop routines through the agent API and the PC tool.
-- [ ] Triggers: robot buttons, a schedule, or external events (see section 8).
+- [ ] Triggers: robot buttons, voice commands, a schedule, or external events (see section 8).
 - [ ] Test routines against the controller simulator (section 1).
 - [ ] Later: record a routine by driving the robot, then play it back.
 
-## 5. Sound playback
-- [ ] Play sounds when the controller sends `play_sound`, and from routines.
-- [ ] Load the sounds at runtime from the factory files already on the robot, the same way as the serial
-      library, so nothing gets redistributed. Also support user-supplied sound packs.
-- [ ] Volume control and a mute option through the API.
-
 ## 6. Web control page
 - [ ] A phone-friendly page served by the robot: live status (battery, charging, arm/head/lightsaber),
-      a joystick for driving and head, mode buttons, routine triggers, and an emergency stop.
-- [ ] Uses the same authentication as the API (section 2).
+      a joystick for driving and head, action buttons, routine triggers, an emergency stop, and the
+      camera view.
+- [ ] Uses the same authentication as the API (section 3).
 - [ ] Later: gamepad support.
 
 ## 7. SD card installation (soft-mod)
@@ -85,7 +143,7 @@ or run it straight from the card as a soft-mod that disappears when the card is 
 
 - [ ] **Research spike (cheap, can happen any time):** check whether the H3 boot ROM tries the microSD
       slot before the eMMC on this board, and whether card-detect is wired up. The answer decides
-      whether the soft-mod below can work, and it affects pairing (section 2).
+      whether the soft-mod below can work, and it affects pairing (section 3).
 - [ ] **Soft-mod mode:** a bootable SD card with its own bootloader and a boot image whose ramdisk
       bind-mounts R2 Agent/R2 Main over the factory system at boot and disables the factory app.
       Nothing is written to the eMMC; remove the card to get the untouched robot back.
@@ -99,10 +157,10 @@ or run it straight from the card as a soft-mod that disappears when the card is 
 - [ ] Plugin interface in R2 Main: plugins subscribe to controller events and robot state, can send
       commands and run routines, and have their own config and lifecycle. Pick a loading model:
       built into R2 Main, or separate APKs found by an intent filter.
-- [ ] **Home Assistant via MQTT discovery:** battery and charging sensors; buttons for modes and
+- [ ] **Home Assistant via MQTT discovery:** battery and charging sensors; buttons for actions and
       routines; switches for lightsaber, arm and projector; robot availability.
 - [ ] Alternatively, a Home Assistant integration over a local REST/WebSocket API, using the security
-      work in section 2.
+      work in section 3.
 - [ ] Plugin permissions, so an integration can't install software or reboot unless allowed.
 
 ## 9. Usability and housekeeping

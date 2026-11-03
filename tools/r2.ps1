@@ -8,7 +8,7 @@
 #   push-main [apk]          install a main-app build (default apps\out\R2Main.apk), on probation
 #   push-agent [apk]         update the agent itself
 #   rollback | restart       main app: reinstall last good build / restart it
-#   serial '<json>'          send one command to the controller, e.g. '{"cmd":"mode","mode":15}'
+#   serial '<json>'          send one command to the controller, e.g. '{"cmd":"mode","mode":13}' (flash front LCD)
 #   safe-on | safe-off       stop / resume supervising the main app
 #   wifi-station | wifi-ap   switch network mode
 #   stock-on | stock-off     re-enable / disable the original Fanhome app (takes effect after reboot)

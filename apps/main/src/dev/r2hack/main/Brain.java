@@ -5,7 +5,7 @@ import org.json.JSONObject;
 
 /**
  * Robot behavior goes here. Commands are listed in notes/serial-protocol.md.
- * Example: brainService.send(new JSONObject().put("cmd", "mode").put("mode", 15)); // shake head
+ * Example: io.send(new JSONObject().put("cmd", "head-angle").put("angle", 40)); // turn the head
  */
 final class Brain {
     private static final String TAG = "R2Brain";

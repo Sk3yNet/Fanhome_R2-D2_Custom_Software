@@ -6,7 +6,9 @@ the robot reachable and stops it safely if your code crashes.
 
 > **Status: early and experimental.** The update, recovery and diagnostics layers work on real hardware.
 > Talking to the motor/LED controller is implemented but **not yet confirmed against a powered robot**.
-> See [ROADMAP.md](ROADMAP.md).
+> It does **not yet have the factory software's features**: no sounds, actions, voice commands, face
+> tracking or phone app support so far. You can switch back to the factory software at any time
+> (`tools\r2.ps1 stock-on`). See [ROADMAP.md](ROADMAP.md).
 
 Unofficial community project, not affiliated with or endorsed by Fanhome or Lucasfilm. It does not
 include any of the robot's factory software. Modifying your robot may void its warranty, and you do it

@@ -32,12 +32,15 @@ newline-delimited JSON. This is what R2 Agent speaks on the robot's behalf.
 | `shut-down` | — | power off |
 | `status` | — | purpose unknown |
 
-### `mode` values
-0 stop · 1 wake · 2 turn around · 3 turn left · 4 turn right · 5 go forward · 6 lightsaber ·
-7 who-are-you · 8 not-recognized · 9 patrol · 10 dance · 12 circle · 13 flash front LCD ·
-14 flash back LCD · 15 shake head · 16 hand · 17 short LCD · 18 long LCD · 19 projector 1 · 20 projector 2
+### `mode` values the controller handles
+0 stop · 2 turn around · 3 turn left · 4 turn right · 5 go forward · 9 patrol · 12 walk a circle ·
+13 flash front LCD · 14 flash back LCD
 
-Blocked while charging: 1, 2, 3, 4, 5, 9, 10, 12, 15.
+Movement modes are blocked while charging.
+
+Richer behaviors such as dance, shake head, wake-up and who-are-you are not controller modes. The main
+board builds them from timed sequences of `head-angle`, `mode`, `lightsaber`, `arm`, `projector`, `lcd`
+and sounds. Recreating them is on the [roadmap](../ROADMAP.md).
 
 ## Controller → main board
 | cmd | fields | meaning |
