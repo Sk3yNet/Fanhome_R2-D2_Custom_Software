@@ -103,6 +103,9 @@ final class MqttClient {
         }
     }
 
+    /** Whether the message being handed to Callback.onMessage is a retained one the broker replayed. */
+    volatile boolean lastRetained;
+
     void publish(String topic, String payload, boolean retain) throws IOException {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         writeString(body, topic);
@@ -155,6 +158,7 @@ final class MqttClient {
                         }
                         byte[] payload = new byte[b.length - pos];
                         System.arraycopy(b, pos, payload, 0, payload.length);
+                        lastRetained = (type & 1) != 0;
                         cb.onMessage(topic, payload);
                         break;
                     }

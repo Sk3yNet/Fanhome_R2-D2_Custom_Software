@@ -60,10 +60,14 @@ final class Routine {
     /** Runs while R2 is on the charger (sounds, lights, head); the controller ignores driving then anyway. */
     final boolean whileCharging;
     final List<Step> steps;
+    /** What starts it besides an explicit run (Triggers): buttons, voice, schedules, events, MQTT. */
+    final List<Triggers.Trigger> triggers;
     final JSONObject source;
 
-    private Routine(String name, String description, long timeoutMs, boolean whileCharging, List<Step> steps, JSONObject source) {
+    private Routine(String name, String description, long timeoutMs, boolean whileCharging, List<Step> steps,
+                    List<Triggers.Trigger> triggers, JSONObject source) {
         this.name = name;
+        this.triggers = Collections.unmodifiableList(triggers);
         this.description = description;
         this.timeoutMs = timeoutMs;
         this.whileCharging = whileCharging;
@@ -91,8 +95,8 @@ final class Routine {
         for (Iterator<String> it = j.keys(); it.hasNext(); ) {
             String k = it.next();
             if (!k.equals("name") && !k.equals("description") && !k.equals("timeout") && !k.equals("steps")
-                    && !k.equals("while_charging")) {
-                throw new Invalid("unknown key \"" + k + "\" (allowed: name, description, timeout, while_charging, steps)");
+                    && !k.equals("while_charging") && !k.equals("triggers")) {
+                throw new Invalid("unknown key \"" + k + "\" (allowed: name, description, timeout, while_charging, triggers, steps)");
             }
         }
         double timeout = number(j, "timeout", DEFAULT_TIMEOUT_S, 1, MAX_TIMEOUT_S, "timeout");
@@ -101,8 +105,10 @@ final class Routine {
         int[] count = {0};
         List<Step> steps = parseSteps(arr, actions, 1, "steps", count);
         if (steps.isEmpty()) throw new Invalid("steps is empty");
+        if (j.has("triggers") && j.optJSONArray("triggers") == null) throw new Invalid("triggers must be a list");
+        List<Triggers.Trigger> triggers = Triggers.parse(j.optJSONArray("triggers"));
         return new Routine(name, j.optString("description", ""), (long) (timeout * 1000),
-                j.optBoolean("while_charging", false), steps, j);
+                j.optBoolean("while_charging", false), steps, triggers, j);
     }
 
     private static List<Step> parseSteps(JSONArray arr, Set<String> actions, int depth, String where, int[] count) throws Invalid {

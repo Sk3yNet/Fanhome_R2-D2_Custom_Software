@@ -33,6 +33,9 @@ final class Voice {
     interface Host {
         void onVoiceCommand(String action);
 
+        /** A routine's own voice phrase (a "voice" trigger, docs/routines.md) was heard after the wake phrase. */
+        void onVoiceRoutine(String routine);
+
         /** Listening on/off, for the back light. */
         void onVoiceAwake(boolean awake);
 
@@ -57,6 +60,8 @@ final class Voice {
     private static final int RATE = 16000;
     private static final long AWAKE_MS = 15_000;
     private static final String WAKE = "wake";
+    /** Spotting threshold for routines' phrases: between the built-in commands' values. */
+    private static final String ROUTINE_THRESHOLD = "1e-20";
 
     /** Phrase -> action, with the keyword-spotting threshold (lower finds more, but also more false alarms). */
     private static final Object[][] PHRASES = {
@@ -79,6 +84,12 @@ final class Voice {
     private volatile String problem = "starting";
     private volatile long awakeUntil;
     private volatile Stream stream;
+    private volatile Map<String, String> routinePhrases = new LinkedHashMap<>(); // phrase -> routine, as spotted now
+    private volatile Map<String, String> wantedPhrases = new LinkedHashMap<>();  // as the routines want them
+    private volatile boolean reload;
+    private volatile String phraseProblem = "";
+    private File modelDir;
+    private int searchGen;
 
     Voice(Context ctx, Host host) {
         this.ctx = ctx;
@@ -99,7 +110,16 @@ final class Voice {
     }
 
     String status() {
-        return "voice: " + (problem != null ? problem : !enabled ? "off" : awake() ? "listening for a command" : "waiting for \"hey R2-D2\"");
+        int n = routinePhrases.size();
+        return "voice: " + (problem != null ? problem : !enabled ? "off" : awake() ? "listening for a command" : "waiting for \"hey R2-D2\"")
+                + (n > 0 ? ", " + n + " routine phrase" + (n == 1 ? "" : "s") : "") + phraseProblem;
+    }
+
+    /** The routines' voice phrases (phrase -> routine name). The recognizer picks them up between utterances. */
+    void setRoutinePhrases(Map<String, String> phrases) {
+        if (phrases.equals(wantedPhrases)) return;
+        wantedPhrases = new LinkedHashMap<>(phrases);
+        reload = true;
     }
 
     void start() {
@@ -120,6 +140,7 @@ final class Voice {
 
     private void loop() throws Exception {
         File dir = prepareModel();
+        modelDir = dir;
         long config = PocketSphinxJNI.Decoder_defaultConfig();
         SphinxBaseJNI.Config_setString(config, null, "-hmm", new File(dir, "ptm").getPath());
         SphinxBaseJNI.Config_setString(config, null, "-dict", new File(dir, "cmudict.dict").getPath());
@@ -127,8 +148,9 @@ final class Voice {
         SphinxBaseJNI.Config_setString(config, null, "-logfn", "/dev/null");
         long decoder = PocketSphinxJNI.new_Decoder__SWIG_1(config, null);
         if (decoder == 0) throw new Exception("recognizer would not start");
-        PocketSphinxJNI.Decoder_setKws(decoder, null, "command", keywordsFile().getPath());
-        PocketSphinxJNI.Decoder_setSearch(decoder, null, "command");
+        reload = false;
+        PocketSphinxJNI.Decoder_setKws(decoder, null, "command0", keywordsFile().getPath());
+        PocketSphinxJNI.Decoder_setSearch(decoder, null, "command0");
 
         int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
         short[] buf = new short[RATE * 4 / 10]; // 0.4 s, like the factory recognizer
@@ -154,6 +176,11 @@ final class Voice {
             boolean streamed = false;
             try {
                 while (enabled && host.mayListen()) {
+                    if (reload) { // routines' phrases changed: switch to a new keyword search between utterances
+                        PocketSphinxJNI.Decoder_endUtt(decoder, null);
+                        switchSearch(decoder);
+                        PocketSphinxJNI.Decoder_startUtt(decoder, null);
+                    }
                     int n = rec.read(buf, 0, buf.length);
                     if (n < 0) throw new Exception("microphone read failed (" + n + ")");
                     if (n == 0) continue;
@@ -189,6 +216,18 @@ final class Voice {
         }
     }
 
+    /**
+     * Loads the keyword list again under a new search name and switches to it. The two names take
+     * turns, so the search being replaced is never the one in use.
+     */
+    private void switchSearch(long decoder) throws Exception {
+        reload = false;
+        String name = "command" + (++searchGen % 2);
+        PocketSphinxJNI.Decoder_setKws(decoder, null, name, keywordsFile().getPath());
+        PocketSphinxJNI.Decoder_setSearch(decoder, null, name);
+        Log.i(TAG, "voice phrases reloaded: " + routinePhrases.keySet());
+    }
+
     private static String hypothesis(long decoder) {
         long hyp = PocketSphinxJNI.Decoder_hyp(decoder, null);
         if (hyp == 0) return null;
@@ -208,7 +247,23 @@ final class Voice {
                 break;
             }
         }
-        Log.i(TAG, "heard \"" + text + "\" -> " + action);
+        String routine = null;
+        if (action == null) {
+            for (Map.Entry<String, String> e : routinePhrases.entrySet()) {
+                if (text.startsWith(e.getKey())) {
+                    routine = e.getValue();
+                    break;
+                }
+            }
+        }
+        Log.i(TAG, "heard \"" + text + "\" -> " + (routine != null ? "routine " + routine : action));
+        if (routine != null) {
+            if (awake()) {
+                awakeUntil = System.currentTimeMillis() + AWAKE_MS;
+                host.onVoiceRoutine(routine);
+            }
+            return;
+        }
         if (action == null) return;
         if (WAKE.equals(action)) {
             Stream st = stream;
@@ -231,20 +286,75 @@ final class Voice {
         host.onVoiceAwake(false);
     }
 
-    /** Our phrase list as a PocketSphinx keyword file, unless files/voice/keywords.txt overrides it. */
+    /**
+     * Our phrase list as a PocketSphinx keyword file (files/voice/keywords.txt replaces the built-in
+     * part), plus the routines' phrases whose words are all in the speech model's dictionary.
+     */
     private File keywordsFile() throws Exception {
         File custom = new File(ctx.getFilesDir(), "voice/keywords.txt");
+        StringBuilder sb = new StringBuilder();
         if (custom.exists()) {
             Log.i(TAG, "using " + custom);
-            return custom;
+            sb.append(new String(readAll(custom), "UTF-8").trim()).append('\n');
+        } else {
+            for (Object[] p : PHRASES) sb.append(p[0]).append(" /").append(p[2]).append("/\n");
         }
+        Map<String, String> wanted = wantedPhrases, usable = new LinkedHashMap<>();
+        java.util.Set<String> known = knownWords(wanted.keySet());
+        StringBuilder skipped = new StringBuilder();
+        for (Map.Entry<String, String> e : wanted.entrySet()) {
+            String missing = null;
+            for (String w : e.getKey().split(" ")) if (!known.contains(w)) missing = w;
+            if (missing != null) {
+                skipped.append(skipped.length() > 0 ? "; " : "").append("\"").append(e.getKey()).append("\" (")
+                        .append(e.getValue()).append("): \"").append(missing).append("\" isn't in the dictionary");
+                continue;
+            }
+            usable.put(e.getKey(), e.getValue());
+            sb.append(e.getKey()).append(" /").append(ROUTINE_THRESHOLD).append("/\n");
+        }
+        phraseProblem = skipped.length() > 0 ? ", skipped " + skipped : "";
+        if (skipped.length() > 0) Log.w(TAG, "routine phrases" + phraseProblem);
+        routinePhrases = usable;
         File f = new File(ctx.getFilesDir(), "voice/r2-keywords");
-        StringBuilder sb = new StringBuilder();
-        for (Object[] p : PHRASES) sb.append(p[0]).append(" /").append(p[2]).append("/\n");
         OutputStream out = new FileOutputStream(f);
         out.write(sb.toString().getBytes("UTF-8"));
         out.close();
         return f;
+    }
+
+    /** The words of these phrases that the speech model's dictionary knows (keyword search fails on any other). */
+    private java.util.Set<String> knownWords(java.util.Collection<String> phrases) throws Exception {
+        java.util.Set<String> want = new java.util.HashSet<>(), found = new java.util.HashSet<>();
+        for (String p : phrases) want.addAll(java.util.Arrays.asList(p.split(" ")));
+        if (want.isEmpty() || modelDir == null) return found;
+        java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(
+                new java.io.FileInputStream(new File(modelDir, "cmudict.dict")), "UTF-8"));
+        try {
+            String line;
+            while ((line = r.readLine()) != null) {
+                int sp = line.indexOf(' ');
+                if (sp <= 0) continue;
+                String w = line.substring(0, sp);
+                if (want.contains(w)) found.add(w);
+            }
+        } finally {
+            r.close();
+        }
+        return found;
+    }
+
+    private static byte[] readAll(File f) throws Exception {
+        InputStream in = new java.io.FileInputStream(f);
+        try {
+            java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
+            return b.toByteArray();
+        } finally {
+            in.close();
+        }
     }
 
     /**
