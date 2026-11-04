@@ -2,6 +2,7 @@
 # secrets, downloaded toolchains, factory firmware files, build output) stays local.
 /*
 !/.gitignore
+!/.github/
 !/README.md
 !/ROADMAP.md
 !/LICENSE

@@ -29,13 +29,10 @@ if ($Action -eq 'install') {
     Sh 'chmod 644 /system/priv-app/R2Agent.apk' | Out-Null
     Sh 'sync; mount -o remount,ro /system' | Out-Null
     & $adb install -r (Join-Path $root 'apps\out\R2Main.apk')
-    # Root adb over Wi-Fi from the next boot. On KitKat adbd then listens on TCP *instead of* USB;
-    # `adb usb` switches back until the next reboot, `setprop persist.adb.tcp.port 0` (serial console) for good.
-    Sh 'setprop persist.adb.tcp.port 5555' | Out-Null
-    if ((Sh 'getprop ro.adb.secure').Trim() -ne '1') {
-        Write-Host 'Note: adb has no key check on this build; anyone on the same Wi-Fi can get a root shell on port 5555.'
-    }
-    Write-Host 'Rebooting. Give it ~60 s, then: tools\r2.ps1 status ; tools\r2.ps1 adb'
+    # adb over Wi-Fi is off by default from now on: the agent switches it on only when asked
+    # (tools\r2.ps1 adb, for 30 minutes), because this build's adb is a root shell with no key check.
+    Sh 'setprop persist.adb.tcp.port -1' | Out-Null
+    Write-Host 'Rebooting. Give it ~60 s, then: tools\r2.ps1 status ; tools\r2.ps1 adb (switches Wi-Fi adb on for 30 min)'
     & $adb reboot
 }
 elseif ($Action -eq 'refresh-agent') {

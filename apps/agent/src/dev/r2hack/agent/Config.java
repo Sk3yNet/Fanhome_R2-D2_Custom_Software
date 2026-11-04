@@ -34,6 +34,8 @@ final class Config {
     static final long HEAD_HOLD_MS = 1200;
     static final int LOW_BATTERY_PCT = 10;            // below this, drive commands are refused
 
+    static final int ADB_DEFAULT_MINUTES = 30;       // POST /adb?on=1 without minutes=
+    static final int ADB_MAX_MINUTES = 240;
     static final long SETUP_WINDOW_MS = 120_000;     // pairing button: token-free Wi-Fi setup for this long
 
     private Config() {}

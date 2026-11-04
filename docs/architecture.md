@@ -43,13 +43,18 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `GET /camera.mjpg` · `GET /camera.jpg` · `POST /action?name=<action>` (runs an R2 Main action) · `POST /stop` · `POST /safe-mode?on=1|0` ·
 `POST /wifi?mode=station|ap` · `POST /stock?enable=1|0` · `POST /reboot` · `POST /shutdown` · `GET /setup` · `POST /setup/open` ·
 `GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `POST /identity` ·
-`POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2`
+`POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2` ·
+`POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...`
 
-Only clients with private, link-local or loopback addresses are served. The token travels in plain HTTP,
-so keep it to your home network.
+Only clients on the robot's own subnet (its Wi-Fi network or its hotspot), loopback, or IPv6 link-local are
+served. A client on another private network, such as a guest network, another VLAN or a VPN, is refused
+and logged. If Home Assistant or your PC sits on a different subnet, allow it:
+`tools\r2.ps1 allow-subnets 10.0.20.0/24` (comma-separated; a bare address means one host; `''` clears the
+list). The token travels in plain HTTP, so keep it to your home network.
 
 **Tokens:** each robot makes its own random token on first start (`files/api-token` in the agent's data).
-`tools\r2.ps1 fetch-token` copies it to `secrets\robot-token.txt` over root adb, and `r2.ps1` then
+`tools\r2.ps1 fetch-token` copies it to `secrets\robot-token.txt` (in the pairing button's setup window
+without any token, otherwise over root adb), and `r2.ps1` then
 uses it. Your own builds also accept the development token from `secrets\agent-token.txt`;
 `apps\build.ps1 -Release` builds without it.
 
@@ -72,10 +77,15 @@ battery levels. The power button is ignored there. `sim-off` and a reboot go bac
 | Kernel log (read via root adb; this kernel blocks apps) | `tools\r2.ps1 dmesg` · `tools\r2.ps1 dmesg mmc` |
 | Root shell, push/pull files | `tools\r2.ps1 adb`, then `tools\platform-tools\adb shell` |
 
-The install script sets `persist.adb.tcp.port=5555`, so root adb listens on Wi-Fi port 5555 from the next boot.
-On KitKat this replaces adb over USB: `adb usb` switches back until the next reboot, and
-`setprop persist.adb.tcp.port 0` (serial console or adb) turns Wi-Fi adb off for good. This build has no adb key
-check, so anyone on the same network can get root: keep it to your home network.
+**adb over Wi-Fi is off by default.** This build has no adb key check, so while it's on, anyone on the same
+network gets a root shell. `tools\r2.ps1 adb` asks the agent (`POST /adb?on=1`) to switch it on for 30 minutes
+(`tools\r2.ps1 adb 120` for longer, up to 240), then connects; it switches itself off when the time runs out,
+and calling it again restarts the timer. `adb-off` switches it off now. Every agent start switches it off too.
+On KitKat Wi-Fi adb replaces adb over USB, so USB adb works whenever Wi-Fi adb is off. The `dmesg`,
+`fetch-token` and `import-identity` commands switch it on by themselves.
+
+For development on a trusted network, `tools\r2.ps1 adb-always` keeps it on across reboots (shown as
+`adb_wifi_always` in `status`); `adb-off` undoes that.
 Only the serial console sees the bootloader/early kernel output, or works when Android itself doesn't boot.
 
 ## Actions and sounds (R2 Main)

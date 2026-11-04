@@ -8,8 +8,14 @@
 #   volume <0-100>           droid sounds and music volume (kept across reboots)
 #   logcat [text] [-Lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
 #   dmesg [text] [-Lines N]  kernel log
-#   adb                      connect adb over Wi-Fi (root shell: tools\platform-tools\adb shell)
-#   fetch-token              copy this robot's own API token to secrets\robot-token.txt (over root adb)
+#   adb [minutes]            switch on adb over Wi-Fi for a while (default 30 min) and connect
+#                            (root shell: tools\platform-tools\adb shell). It switches itself off again.
+#   adb-off                  switch adb over Wi-Fi off now (adb is back on USB)
+#   adb-always               keep adb over Wi-Fi on, also after reboots (trusted networks only)
+#   allow-subnets [list]     also accept API clients from these subnets, e.g. 10.0.20.0/24,10.0.30.5
+#                            (empty: only the robot's own subnet; no argument: show the list)
+#   fetch-token              copy this robot's own API token to secrets\robot-token.txt (in the pairing
+#                            button's setup window, or over root adb)
 #   push-main [apk]          install a main-app build (default apps\out\R2Main.apk), on probation
 #   push-agent [apk]         update the agent itself
 #   rollback | restart       main app: reinstall last good build / restart it
@@ -64,6 +70,22 @@ function Get-Robot {
     return $found
 }
 
+# adb over Wi-Fi is off by default: ask the agent to switch it on, then connect. Returns the adb target.
+function Connect-Adb([int]$Minutes = 30) {
+    $ip = Get-Robot
+    $r = Call POST "/adb?on=1&minutes=$Minutes"
+    Write-Host $r.result
+    $adbExe = Join-Path $PSScriptRoot 'platform-tools\adb.exe'
+    $target = "${ip}:5555"
+    for ($i = 0; $i -lt 5; $i++) {   # adbd restarts on the robot; give it a moment
+        $out = & $adbExe connect $target
+        if ($out -match 'connected to') { break }
+        Start-Sleep -Seconds 1
+    }
+    $out | Write-Host
+    return $target
+}
+
 function Call([string]$Method, [string]$Path, $Body, [string]$InFile, [int]$Timeout = 30) {
     $ip = Get-Robot
     $p = @{ Uri = "http://${ip}:7700$Path"; Method = $Method; Headers = @{ 'X-R2-Token' = $token }; TimeoutSec = $Timeout }
@@ -87,8 +109,7 @@ switch ($Command) {
         if ($Command -eq 'dmesg' -and $out -match '^klogctl') {
             # This kernel restricts dmesg to root, so read it through root adb instead.
             $adb = Join-Path $PSScriptRoot 'platform-tools\adb.exe'
-            $target = "$(Get-Robot):5555"
-            & $adb connect $target | Out-Null
+            $target = Connect-Adb
             $out = & $adb -s $target shell dmesg
             if ($Arg) { $out = $out | Where-Object { $_ -like "*$Arg*" } }
             $out = $out | Select-Object -Last $Lines
@@ -96,15 +117,26 @@ switch ($Command) {
         $out
     }
     'fetch-token'  {
-        $adb = Join-Path $PSScriptRoot 'platform-tools\adb.exe'; $target = "$(Get-Robot):5555"
-        & $adb connect $target | Out-Null
-        $t = (& $adb -s $target shell cat /data/data/dev.r2hack.agent/files/api-token).Trim()
+        # During the pairing button's setup window the agent hands the token out without one;
+        # otherwise read it over root adb (which needs a working token or the built-in one).
+        $t = ''
+        try { $t = (Invoke-RestMethod "http://$(Get-Robot):7700/setup/token" -TimeoutSec 5).token } catch { }
+        if (-not $t) {
+            $adb = Join-Path $PSScriptRoot 'platform-tools\adb.exe'; $target = Connect-Adb
+            $t = (& $adb -s $target shell cat /data/data/dev.r2hack.agent/files/api-token).Trim()
+        }
         if ($t -notmatch '^[0-9a-f]{48}$') { throw "no token found (is the agent updated and running?)" }
         New-Item -ItemType Directory -Force (Join-Path $root 'secrets') | Out-Null
         Set-Content (Join-Path $root 'secrets\robot-token.txt') $t -NoNewline -Encoding ascii
         'saved to secrets\robot-token.txt'
     }
-    'adb'          { & (Join-Path $PSScriptRoot 'platform-tools\adb.exe') connect "$(Get-Robot):5555" }
+    'adb'          { $m = if ($Arg) { [int]$Arg } else { 30 }; Connect-Adb $m | Out-Null }
+    'adb-off'      { Call POST '/adb?on=0' }
+    'adb-always'   { Call POST '/adb?always=1' }
+    'allow-subnets' {
+        if ($PSBoundParameters.ContainsKey('Arg')) { Call POST "/clients/allow?subnets=$([uri]::EscapeDataString($Arg))" }
+        else { (Call GET /clients/allow).extra_subnets }
+    }
     'push-main'    { $f = if ($Arg) { $Arg } else { Join-Path $root 'apps\out\R2Main.apk' }; Call POST /main/install -InFile $f -Timeout 300 }
     'push-agent'   { $f = if ($Arg) { $Arg } else { Join-Path $root 'apps\out\R2Agent.apk' }; Call POST /agent/install -InFile $f -Timeout 300 }
     'rollback'     { Call POST /main/rollback -Timeout 120 }
@@ -122,8 +154,7 @@ switch ($Command) {
         $plain = $null
     }
     'import-identity' {
-        $adb = Join-Path $PSScriptRoot 'platform-tools\adb.exe'; $target = "$(Get-Robot):5555"
-        & $adb connect $target | Out-Null
+        $adb = Join-Path $PSScriptRoot 'platform-tools\adb.exe'; $target = Connect-Adb
         $xmlText = (& $adb -s $target shell cat /data/data/com.bullb.r2d2_nanopisystem/shared_prefs/robot.xml) -join "`n"
         if ($xmlText -notmatch '<map') { throw 'factory app settings not found on the robot' }
         $map = ([xml]$xmlText).map
