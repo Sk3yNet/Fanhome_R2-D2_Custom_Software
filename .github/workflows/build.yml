@@ -36,3 +36,15 @@ jobs:
             "$BT/aapt2" dump badging "$apk" | head -1
           done
           unzip -l apps/out/R2Agent.apk | grep -q 'assets/web-index.html'
+
+      # The release workflow's path: a keystore handed in through R2_KEYSTORE, and a version name from a tag.
+      # Uses a throwaway key with a different alias, so it can't fall back to the one in secrets/ by accident.
+      - name: Build with an outside key, as releases do
+        run: |
+          export R2_KEYSTORE="$RUNNER_TEMP/test-release.keystore" R2_KEYSTORE_PASS=test-pass-$RANDOM R2_KEY_ALIAS=release
+          keytool -genkeypair -keystore "$R2_KEYSTORE" -storepass "$R2_KEYSTORE_PASS" -keypass "$R2_KEYSTORE_PASS" \
+            -alias release -keyalg RSA -keysize 2048 -validity 1 -dname CN=ci-test
+          R2_VERSION_NAME=0.0.0-ci apps/build.sh main --release
+          BT="$ANDROID_HOME/build-tools/35.0.1"
+          "$BT/aapt2" dump badging apps/out/R2Main.apk | grep -q "versionName='0.0.0-ci'"
+          "$BT/apksigner" verify --print-certs apps/out/R2Main.apk | grep -q 'CN=ci-test'

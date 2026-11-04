@@ -154,7 +154,11 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
 ## 5. Releases and tooling
 - [x] **CI:** a GitHub Actions build of both APKs on every push, using `apps/build.sh`, the Linux/macOS version of the build script.
 - [ ] **Signed releases** on GitHub, so users don't have to set up a build toolchain. Depends on
-      "token out of the APK" (section 3).
+      "token out of the APK" (section 3). *Built, not yet tested on the robot.* A `v*` tag builds both APKs
+      without a token, signs them with the key in the repository's secrets, and publishes them; forks
+      release with their own key. Setup and switching between signers: [docs/releases.md](docs/releases.md).
+- [ ] **Switch between signers without manual steps** (e.g. upstream releases ↔ a fork's): a
+      `switch-source` command that keeps settings. Plan in [docs/releases.md](docs/releases.md).
 - [ ] **Cross-platform PC tool:** replace the PowerShell scripts with one small Python CLI (status, push,
       logs, adb, install, restore) for Windows, macOS and Linux.
 - [ ] Setup script for the build toolchain (JDK, Android SDK, platform-tools).
