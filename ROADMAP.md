@@ -201,7 +201,7 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       (idle chatter and head turns, reactions to loud sounds, drive sounds, how long he stays awake), on the
       web page and as a select in Home Assistant. *Built, not yet tested on the robot.* It is the
       `liveliness` setting; see [docs/liveliness.md](docs/liveliness.md).
-- [ ] Later: gamepad support.
+- [ ] Gamepad support: drive with the left stick, head with the right, STOP and actions on buttons. *Built, not yet tested on the robot.* See docs/architecture.md (Web control page).
 
 ## 8. SD card installation (soft-mod)
 New users should be able to put an SD card into an untouched robot and either install this software,
