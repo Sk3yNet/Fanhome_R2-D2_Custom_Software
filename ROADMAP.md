@@ -46,7 +46,7 @@ routine engine in section 6.
       projector clips 100 and 101, and two hidden extras). *Built, not yet tested on the robot.* The two hidden extras aren't mapped yet.
 - [ ] Load the sounds at runtime from the factory files on the robot, the same way as the serial library,
       so nothing gets redistributed. *Built, not yet tested on the robot.* Later, optional user sound packs.
-- [ ] Mute and volume, kept across reboots. *Built, not yet tested on the robot.* Mute is reachable as an action; volume has no control yet.
+- [ ] Mute and volume, kept across reboots. *Built, not yet tested on the robot.* Mute is reachable as an action; volume is set with `POST /volume`, the DLNA renderer and Home Assistant.
 
 ### Buttons, status and lights
 - [ ] **Robot buttons:** power off (a clean shutdown of both the controller and Android), hotspot/Wi-Fi
