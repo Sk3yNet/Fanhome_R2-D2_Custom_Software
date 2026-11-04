@@ -10,7 +10,7 @@ import org.json.JSONObject;
  * user control), status lights, the robot's buttons, and the official phone app (PhoneLink).
  * Run an action with  tools\r2.ps1 action <name>  (names in ACTIONS below).
  */
-final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
+final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assist.Host {
     private static final String TAG = "R2Brain";
 
     static final String[] ACTIONS = {
@@ -48,6 +48,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
     private final Lights lights;
     private final PhoneLink phone;
     private final Voice voice;
+    private final Assist assist;
     private final FaceTracker face;
 
     private volatile long lastActivity = System.currentTimeMillis();
@@ -94,12 +95,15 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
             }
         });
         this.voice = new Voice(io, this);
+        this.assist = new Assist(io, this);
+        voice.setStream(assist);
         this.face = new FaceTracker(this);
         camera.setRawListener(face);
         dlna.start();
         camera.start();
         phone.start();
         voice.start();
+        assist.start();
         startTimers();
     }
 
@@ -107,6 +111,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
         String[] modes = {"?", "ready", "sleeping", "pairing", "patrol", "phone control"};
         return "mode: " + modes[robot.mode] + ", action: " + seq.running() + "\n" + sounds.status() + "\n"
                 + dlna.status() + "\n" + camera.status() + "\n" + phone.status() + "\n" + voice.status()
+                + "\n" + assist.status()
                 + "\nface: " + (face.tracking() ? "tracking a face" : faceActive ? "looking" : "off") + "\nname: " + robot.name()
                 + "\nbattery: " + (robot.battery < 0 ? "?" : robot.battery + "%");
     }
@@ -123,7 +128,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
     private void reportSettings() {
         try {
             io.send(new JSONObject().put("agent", "settings").put("volume", sounds.volume()).put("muted", sounds.muted())
-                    .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection()));
+                    .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
+                    .put("assist", assist.status()));
         } catch (Exception ignored) {
         }
     }
@@ -170,6 +176,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
                 sounds.setVolume(msg.optInt("percent", sounds.volume()));
                 Log.i(TAG, "volume " + sounds.volume() + "%");
                 break;
+            case "assist": // POST /assist?mode=off|robot|ha[&host=ip]
+                Log.i(TAG, assist.configure(msg.optString("mode"), msg.has("host") ? msg.optString("host") : null));
+                break;
             case "identity":
                 robot.importIdentity(msg.optString("name"), msg.optString("uuid"), msg.optJSONArray("clients"));
                 Log.i(TAG, "identity imported: " + robot.name());
@@ -207,6 +216,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
             case "stop":
                 seq.cancel();
                 dlna.stopMedia();
+                assist.stop();
                 stopMotion();
                 sounds.play(S_ACK, true);
                 return;
@@ -529,7 +539,42 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
     public boolean mayListen() {
         int m = robot.mode;
         return m != Robot.PATROL && m != Robot.PAIR && !seq.isRunning("leia") && !seq.isRunning("luke")
-                && !dlna.playing();
+                && !dlna.playing() && !assist.speaking();
+    }
+
+    // ---- Assist.Host (Home Assistant's voice pipeline) ----------------------------------------
+
+    @Override
+    public void onAssistWake(boolean sound) {
+        wake();
+        if (sound) sounds.play(S_ACK, true); // a short chirp: R2 heard "hey R2-D2" and is listening
+    }
+
+    @Override
+    public void onAssistState(int state) {
+        robot.assistState = state;
+        lastActivity = System.currentTimeMillis(); // a conversation keeps R2 awake
+        lights.refresh();
+    }
+
+    @Override
+    public void onAssistStatus() {
+        reportSettings();
+    }
+
+    @Override
+    public void onAssistError(String text) {
+        sounds.play(S_HUH, true);
+    }
+
+    @Override
+    public boolean playingSound() {
+        return sounds.isPlaying();
+    }
+
+    @Override
+    public String robotName() {
+        return robot.name();
     }
 
     @Override

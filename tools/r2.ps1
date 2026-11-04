@@ -29,6 +29,9 @@
 #   stock-on | stock-off     re-enable / disable the original Fanhome app (takes effect after reboot)
 #   sim-on | sim-off         use the pretend controller instead of the real one (applies after reboot)
 #   sim-button <n>           pretend a robot button was pressed (simulator only)
+#   assist <off|robot|ha>    Home Assistant voice pipeline (docs/home-assistant-voice.md): off, wake word on the
+#                            robot ("hey R2-D2", then the request goes to Home Assistant), or wake word in Home Assistant
+#   assist-only [ip]         accept the voice connection only from this address (Home Assistant); no ip: anyone on R2's subnet
 #   reboot | shutdown
 param(
     [Parameter(Position = 0, Mandatory = $true)][string]$Command,
@@ -100,7 +103,7 @@ switch ($Command) {
     'log'          { Call GET /log }
     'log-previous' { Call GET '/log?previous=1' }
     'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off' -split ' ' }
-    'action'       { if (-not $Arg) { throw 'usage: r2.ps1 action <name>  (see: r2.ps1 actions)' }; Call POST "/action?name=$([uri]::EscapeDataString($Arg))" }
+    'action'       { if (-not $Arg) { throw 'usage: r2.ps1 action <name>  (see: r2.ps1 actions)' }; Call POST "/action?name=$([uri]::EscapeDataString("$Arg"))" }
     'stop'         { Call POST /stop }
     'volume'       { if ($Arg -notmatch '^\d+$') { throw 'usage: r2.ps1 volume <0-100>' }; Call POST "/volume?percent=$Arg" }
     { $_ -in 'logcat', 'dmesg' } {
@@ -134,7 +137,7 @@ switch ($Command) {
     'adb-off'      { Call POST '/adb?on=0' }
     'adb-always'   { Call POST '/adb?always=1' }
     'allow-subnets' {
-        if ($PSBoundParameters.ContainsKey('Arg')) { Call POST "/clients/allow?subnets=$([uri]::EscapeDataString($Arg))" }
+        if ($PSBoundParameters.ContainsKey('Arg')) { Call POST "/clients/allow?subnets=$([uri]::EscapeDataString("$Arg"))" }
         else { (Call GET /clients/allow).extra_subnets }
     }
     'push-main'    { $f = if ($Arg) { $Arg } else { Join-Path $root 'apps\out\R2Main.apk' }; Call POST /main/install -InFile $f -Timeout 300 }
@@ -168,6 +171,11 @@ switch ($Command) {
     'wifi-ap'      { Call POST '/wifi?mode=ap' }
     'stock-on'     { Call POST '/stock?enable=1' }
     'stock-off'    { Call POST '/stock?enable=0' }
+    'assist'       {
+        if ($Arg -notin 'off', 'robot', 'ha') { throw 'usage: r2.ps1 assist <off|robot|ha>' }
+        Call POST "/assist?mode=$Arg"
+    }
+    'assist-only'  { Call POST "/assist?host=$([uri]::EscapeDataString("$Arg"))" }
     'reboot'       { Call POST /reboot }
     'shutdown'     { Call POST /shutdown }
     'sim-on'       { Call POST '/sim?on=1' }

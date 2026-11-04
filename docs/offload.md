@@ -45,6 +45,8 @@ projector clip.
 On-robot keyword spotting stays as the default and the fallback: if the satellite connection is down,
 "hey R2-D2" still works. Only one of the two listens at a time, chosen in R2's settings.
 
+Built: see [home-assistant-voice.md](home-assistant-voice.md) for setup (`tools\r2.ps1 assist robot`).
+
 ## Vision
 R2's camera is already an MJPEG stream (``/camera.mjpg``), which most vision containers accept.
 - **Face recognition:** e.g. CompreFace or Double Take with Frigate. They recognize who is in front of R2.

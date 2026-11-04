@@ -44,7 +44,8 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `POST /wifi?mode=station|ap` · `POST /stock?enable=1|0` · `POST /reboot` · `POST /shutdown` · `GET /setup` · `POST /setup/open` ·
 `GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `POST /identity` ·
 `POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2` ·
-`POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...`
+`POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...` ·
+`POST /assist?mode=off|robot|ha&host=<ip>` (Home Assistant voice satellite, see [home-assistant-voice.md](home-assistant-voice.md))
 
 Only clients on the robot's own subnet (its Wi-Fi network or its hotspot), loopback, or IPv6 link-local are
 served. A client on another private network, such as a guest network, another VLAN or a VPN, is refused
@@ -115,6 +116,11 @@ Music Assistant sends audio, so R2 Main fetches each stream itself and hands it 
 stream and reconnects). R2 advertises MP3 only, and asks Music Assistant for MP3 instead of FLAC (its
 stream server picks the format from the file extension). Confirmed with Home Assistant's own media
 (radio) and with Music Assistant.
+
+## Voice satellite for Home Assistant (R2 Main)
+R2 Main can be a Wyoming voice satellite on port 10700, so Home Assistant's Assist pipelines, including AI
+conversation agents, answer through R2's microphone and speaker. Off by default. Setup, modes and privacy:
+[home-assistant-voice.md](home-assistant-voice.md).
 
 ## Camera
 R2 Main streams R2's camera as MJPEG (480×640 portrait, up to 10 frames a second). The camera is mounted on its side, so R2 turns each frame a quarter turn clockwise; the phone app's video stays as the camera delivers it, as in the factory software. It listens on
