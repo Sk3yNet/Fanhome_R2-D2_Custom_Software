@@ -1,0 +1,16 @@
+{
+  "name": "sentry",
+  "description": "Scan left and right three times, then make some noise",
+  "timeout": 60,
+  "while_charging": true,
+  "steps": [
+    {"led": {"r": 5, "b": 1}},
+    {"repeat": 3, "steps": [
+      {"head": -60}, {"wait": 1.5},
+      {"head": 60}, {"wait": 1.5}
+    ]},
+    {"head": 0},
+    {"sound": 6},
+    {"led": {"r": 2, "b": 2}}
+  ]
+}

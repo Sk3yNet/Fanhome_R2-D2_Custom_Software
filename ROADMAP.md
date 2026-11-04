@@ -163,10 +163,15 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
 ## 6. Scripted movement routines
 - [ ] Routine format (e.g. JSON): steps of `cmd` (any controller command), `wait`, `wait_until`
       (a condition on `gin` state), `repeat`, sound and LED cues. The built-in actions from section 2
-      become editable routines in this format.
+      become editable routines in this format. *Built, not yet tested on the robot.* See
+      [docs/routines.md](docs/routines.md). Also `head`, `mode`, `drive`, `action` (a built-in action) and
+      `routine` (another routine) steps. A routine named like a built-in action replaces it; the built-in
+      actions themselves are still Java, with `shake-head` as a worked example in `docs/routines/`.
 - [ ] Interpreter in R2 Main, with safety built in: stop if the controller reports an error or the robot
       is charging, an overall timeout, and an emergency stop (API, button, or loss of the agent connection).
-- [ ] Upload, list, run and stop routines through the agent API and the PC tool.
+      *Built, not yet tested on the robot.* Also stops below 10% battery. Off-robot tests: `apps/test.sh`.
+- [ ] Upload, list, run and stop routines through the agent API and the PC tool. *Built, not yet tested on the robot.*
+      `GET /routines`, `POST /routine`, `POST /routine/run`, `tools\r2.ps1 routines`, and buttons on the web page.
 - [ ] Triggers: robot buttons, voice commands, a schedule, or external events (see section 9).
 - [ ] Test routines against the controller simulator (section 1).
 - [ ] Later: record a routine by driving the robot, then play it back.

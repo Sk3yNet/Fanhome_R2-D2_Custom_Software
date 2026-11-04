@@ -4,8 +4,8 @@ import android.util.Log;
 
 /**
  * Runs one action at a time on its own thread. Starting an action cancels the one in progress,
- * and a cancelled action always ends with stop, so "stop" really stops. Grows into the routine
- * engine later (roadmap section 6).
+ * and a cancelled action always ends with stop, so "stop" really stops. Routines (RoutineRunner)
+ * run on it too, so the same rules hold for them.
  */
 final class Sequencer {
     interface Job {
@@ -16,9 +16,20 @@ final class Sequencer {
     private final Runnable stop;
     private volatile Thread worker;
     private volatile String running = "idle";
+    private volatile Runnable onChange;
 
     Sequencer(Runnable stop) {
         this.stop = stop;
+    }
+
+    /** Called (on any thread) whenever what's running changes, e.g. to report it to the agent. */
+    void setOnChange(Runnable r) {
+        onChange = r;
+    }
+
+    private void changed() {
+        Runnable r = onChange;
+        if (r != null) r.run();
     }
 
     String running() {
@@ -33,6 +44,7 @@ final class Sequencer {
     synchronized void start(final String name, final Job job) {
         cancel();
         running = name;
+        changed();
         worker = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -45,7 +57,10 @@ final class Sequencer {
                     stop.run();
                 } finally {
                     // No lock here: cancel() holds it while waiting for this thread to end.
-                    if (worker == Thread.currentThread()) running = "idle";
+                    if (worker == Thread.currentThread()) {
+                        running = "idle";
+                        changed();
+                    }
                 }
             }
         }, "action-" + name);
@@ -65,7 +80,9 @@ final class Sequencer {
             }
             stop.run();
         }
+        boolean was = !"idle".equals(running);
         running = "idle";
+        if (was) changed();
     }
 
     /** Pause inside a job; throws when the job is cancelled. */

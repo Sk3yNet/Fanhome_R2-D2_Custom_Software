@@ -1,0 +1,14 @@
+{
+  "name": "back-and-forth",
+  "description": "Creep forward, beep, and back up to where it started",
+  "timeout": 30,
+  "steps": [
+    {"sound": 7},
+    {"wait": 0.7},
+    {"drive": {"power": 30, "angle": 0, "seconds": 2}},
+    {"wait": 0.5},
+    {"sound": 5, "until_done": true},
+    {"drive": {"power": 30, "angle": 180, "seconds": 2}},
+    {"head": 0}
+  ]
+}

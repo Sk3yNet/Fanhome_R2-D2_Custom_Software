@@ -1,0 +1,12 @@
+{
+  "name": "shake-head",
+  "description": "The built-in shake-head action written as a routine (saving it replaces the built-in one; delete it to get that back)",
+  "steps": [
+    {"sound": 7},
+    {"wait": 0.6}, {"head": -45},
+    {"wait": 0.6}, {"head": 45},
+    {"wait": 0.6}, {"head": -45},
+    {"wait": 0.6}, {"head": 45},
+    {"wait": 0.6}, {"head": 0}
+  ]
+}
