@@ -120,7 +120,12 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     @Override
     public void onAgentMessage(JSONObject msg) {
         String kind = msg.optString("agent");
-        if ("heartbeat".equals(kind) || "hello".equals(kind)) supervisor.onHeartbeat();
+        if ("heartbeat".equals(kind)) supervisor.onHeartbeat();
+        else if ("hello".equals(kind)) {
+            supervisor.onHeartbeat();
+            sendMqttSettings(); // R2 Main keeps them in memory only
+        }
+        else if ("mqtt-status".equals(kind)) mqttState = msg.optString("state");
         else if ("shutdown".equals(kind)) shutdown("requested by the main app");
         else if ("settings".equals(kind)) settings = msg;
         else if ("wifi-scan".equals(kind)) {
@@ -164,6 +169,8 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     /** Clean power-off: stop, flush storage, tell the controller, then shut Android down. */
     /** The main app's latest settings ({"agent":"settings","volume","muted","voice","face"}). */
     private volatile JSONObject settings;
+    /** R2 Main's Home Assistant (MQTT) connection state. */
+    private volatile String mqttState = "";
 
     private void shutdown(String why) {
         EventLog.i("shutting down: " + why);
@@ -463,8 +470,36 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 for (HttpApi.Subnet n : list) stored.append(stored.length() == 0 ? "" : ",").append(n);
                 getSharedPreferences("agent", MODE_PRIVATE).edit().putString("extra-subnets", stored.toString()).commit();
                 EventLog.i("http: extra allowed subnets now [" + stored + "]");
+                sendMqttSettings(); // the MQTT broker follows the same rule
                 return result(list.isEmpty() ? "only clients on the robot's own subnet are accepted"
                         : "also accepting clients from " + stored);
+            }
+            case "GET /mqtt":
+                return HttpApi.Response.json(200, mqttPublic().toString(2));
+            case "POST /mqtt": { // {"host","port","username","password","prefix","enabled"}; {"host":""} turns it off
+                JSONObject j = new JSONObject(req.bodyText.isEmpty() ? "{}" : req.bodyText);
+                JSONObject old = mqttSettings();
+                String host = j.optString("host", old.optString("host")).trim();
+                if (host.length() > 253 || !host.matches("[A-Za-z0-9.:_\\-]*")) return bad("host must be a host name or IP address");
+                int port = j.optInt("port", old.optInt("port", 1883));
+                if (port < 1 || port > 65535) return bad("port must be 1 to 65535");
+                String prefix = j.optString("prefix", old.optString("prefix", "homeassistant")).trim();
+                if (prefix.isEmpty()) prefix = "homeassistant";
+                if (prefix.length() > 64 || !prefix.matches("[A-Za-z0-9_\\-]+(/[A-Za-z0-9_\\-]+)*")) {
+                    return bad("prefix may contain letters, digits, _ - and /");
+                }
+                String user = j.optString("username", old.optString("username"));
+                // Leaving out the password keeps the stored one, so it never has to be shown again.
+                String pw = j.has("password") ? j.optString("password") : old.optString("password");
+                if (user.length() > 256 || pw.length() > 256) return bad("user name and password: at most 256 characters");
+                boolean enabled = j.optBoolean("enabled", true) && !host.isEmpty();
+                JSONObject stored = new JSONObject().put("host", host).put("port", port).put("username", user)
+                        .put("password", pw).put("prefix", prefix).put("enabled", enabled);
+                getSharedPreferences("agent", MODE_PRIVATE).edit().putString("mqtt", stored.toString()).commit();
+                EventLog.i("mqtt: " + (enabled ? "broker " + host + ":" + port : "off"));
+                boolean sent = sendMqttSettings();
+                return result((enabled ? "Home Assistant over MQTT: broker " + host + ":" + port : "Home Assistant over MQTT off")
+                        + (sent ? "; GET /mqtt shows the connection" : "; applies when the main app connects"));
             }
             case "POST /safe-mode":
                 supervisor.setSafeMode("1".equals(req.query.get("on")));
@@ -582,6 +617,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         s.put("adb_wifi_always", adb.always());
         s.put("adb_wifi_seconds_left", adb.secondsLeft());
         s.put("extra_subnets", subnetList());
+        s.put("mqtt", mqttState.isEmpty() ? "unknown" : mqttState);
         if (serial != null) {
             s.put("serial_open", serial.isOpen());
             long rx = serial.lastRxAt();
@@ -600,6 +636,31 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             s.put("face_tracking", set.optBoolean("face"));
         }
         return s;
+    }
+
+    /** MQTT broker settings for R2 Main's Home Assistant link, kept here so R2 Main updates don't lose them. */
+    private JSONObject mqttSettings() {
+        try {
+            return new JSONObject(getSharedPreferences("agent", MODE_PRIVATE).getString("mqtt", "{}"));
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
+    /** The settings without the password, plus R2 Main's connection state. */
+    private JSONObject mqttPublic() throws Exception {
+        JSONObject m = mqttSettings();
+        boolean hasPw = !m.optString("password").isEmpty();
+        m.remove("password");
+        return m.put("has_password", hasPw).put("state", mqttState.isEmpty() ? "unknown (main app not connected)" : mqttState);
+    }
+
+    private boolean sendMqttSettings() {
+        try {
+            return toMain(mqttSettings().put("agent", "mqtt").put("extra_subnets", subnetList()));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void loadExtraSubnets() {

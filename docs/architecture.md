@@ -44,7 +44,8 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `POST /wifi?mode=station|ap` · `POST /stock?enable=1|0` · `POST /reboot` · `POST /shutdown` · `GET /setup` · `POST /setup/open` ·
 `GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `POST /identity` ·
 `POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2` ·
-`POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...`
+`POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...` ·
+`GET /mqtt` · `POST /mqtt` (`{"host","port","username","password","prefix","enabled"}`)
 
 Only clients on the robot's own subnet (its Wi-Fi network or its hotspot), loopback, or IPv6 link-local are
 served. A client on another private network, such as a guest network, another VLAN or a VPN, is refused
@@ -115,6 +116,45 @@ Music Assistant sends audio, so R2 Main fetches each stream itself and hands it 
 stream and reconnects). R2 advertises MP3 only, and asks Music Assistant for MP3 instead of FLAC (its
 stream server picks the format from the file extension). Confirmed with Home Assistant's own media
 (radio) and with Music Assistant.
+
+## Home Assistant over MQTT (R2 Main)
+R2 shows up in Home Assistant as a device through MQTT discovery, using the broker Home Assistant already
+uses (for example the Mosquitto add-on). Set it once:
+
+```
+powershell -ExecutionPolicy Bypass -File tools\r2.ps1 mqtt 192.168.1.10 -User r2d2
+```
+
+That asks for the broker password and stores the settings in the agent, so R2 Main updates keep them.
+`tools\r2.ps1 mqtt` shows the settings and whether R2 is connected, and `tools\r2.ps1 mqtt off` switches it
+off. Other ports: `mqtt 192.168.1.10:1884`. The discovery prefix is `homeassistant` unless you send
+`"prefix"` to `POST /mqtt`. Leaving out the password in `POST /mqtt` keeps the stored one; `GET /mqtt` never
+shows it.
+
+The device (named after the robot) has:
+- **Sensors:** battery (%), charging, mode (ready, sleeping, pairing, patrol, phone control), the action
+  that is running, and the controller's error (diagnostic).
+- **Buttons:** stop, wake up, turn left / right / around, go forward, walk a circle, patrol, dance, shake
+  head, who are you, make some noise, flash front / back light.
+- **Switches:** lightsaber, arm, projector Princess Leia, projector Skywalker, short and long display,
+  mute, voice commands, face tracking. A switch runs the matching action only if R2 isn't already in that
+  state. The lightsaber, arm, projector and display states come from the controller's status, which R2
+  reads every 5 s, so a switch can take a few seconds to show its new state.
+- **Volume** (0–100 %), shared with the droid sounds and the media player.
+- **Availability:** R2 is shown as unavailable when R2 Main stops or loses the broker (MQTT last will).
+
+Topics are under `r2d2/<robot id>/`: state in `battery`, `charging`, `mode`, `action`, `error`,
+`volume`, `switch/<name>`; commands in `action/run` (payload: the action name), `switch/<name>/set`
+(`ON`/`OFF`) and `volume/set`. When Home Assistant restarts (`homeassistant/status` = `online`), R2 sends
+discovery and state again.
+
+**Safety and security:** MQTT commands run as ordinary actions, so the agent's motion watchdog,
+low-battery stop and emergency stop apply. Only the buttons and switches above can be used: no pairing,
+no phone app switch, nothing that installs software or reboots. The broker must be on the robot's own
+subnet, or in a subnet allowed with `tools\r2.ps1 allow-subnets`, the same rule as for API clients; any
+other broker address is refused and shown in `tools\r2.ps1 mqtt`. Anyone who can publish to the broker
+can run these actions, so give the broker a password (Home Assistant's Mosquitto add-on requires one).
+The connection is plain MQTT on your network (no TLS yet: the robot's TLS stack is from 2013, see the roadmap).
 
 ## Camera
 R2 Main streams R2's camera as MJPEG (480×640 portrait, up to 10 frames a second). The camera is mounted on its side, so R2 turns each frame a quarter turn clockwise; the phone app's video stays as the camera delivers it, as in the factory software. It listens on

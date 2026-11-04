@@ -14,6 +14,9 @@
 #   adb-always               keep adb over Wi-Fi on, also after reboots (trusted networks only)
 #   allow-subnets [list]     also accept API clients from these subnets, e.g. 10.0.20.0/24,10.0.30.5
 #                            (empty: only the robot's own subnet; no argument: show the list)
+#   mqtt [host[:port]] [-User name]
+#                            Home Assistant over MQTT: set the broker (asks for the password with -User),
+#                            'off' switches it off, no argument shows the settings and connection state
 #   fetch-token              copy this robot's own API token to secrets\robot-token.txt (in the pairing
 #                            button's setup window, or over root adb)
 #   push-main [apk]          install a main-app build (default apps\out\R2Main.apk), on probation
@@ -34,6 +37,7 @@ param(
     [Parameter(Position = 0, Mandatory = $true)][string]$Command,
     [Parameter(Position = 1)][string]$Arg,
     [string]$Robot,
+    [string]$User,
     [int]$Lines = 500
 )
 $ErrorActionPreference = 'Stop'
@@ -136,6 +140,23 @@ switch ($Command) {
     'allow-subnets' {
         if ($PSBoundParameters.ContainsKey('Arg')) { Call POST "/clients/allow?subnets=$([uri]::EscapeDataString($Arg))" }
         else { (Call GET /clients/allow).extra_subnets }
+    }
+    'mqtt'         {
+        if (-not $Arg) { Call GET /mqtt | ConvertTo-Json }
+        elseif ($Arg -eq 'off') { Call POST /mqtt '{"enabled":false}' }
+        else {
+            $hostName, $port = $Arg -split ':', 2
+            $body = @{ host = $hostName; port = $(if ($port) { [int]$port } else { 1883 }) }
+            if ($PSBoundParameters.ContainsKey('User')) {
+                $body.username = $User
+                if ($User) {
+                    $secure = Read-Host "MQTT password for $User" -AsSecureString
+                    $body.password = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+                } else { $body.password = '' }
+            }
+            Call POST /mqtt ($body | ConvertTo-Json -Compress)
+            $body = $null
+        }
     }
     'push-main'    { $f = if ($Arg) { $Arg } else { Join-Path $root 'apps\out\R2Main.apk' }; Call POST /main/install -InFile $f -Timeout 300 }
     'push-agent'   { $f = if ($Arg) { $Arg } else { Join-Path $root 'apps\out\R2Agent.apk' }; Call POST /agent/install -InFile $f -Timeout 300 }

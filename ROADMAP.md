@@ -199,7 +199,10 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       commands and run routines, and have their own config and lifecycle. Pick a loading model:
       built into R2 Main, or separate APKs found by an intent filter.
 - [ ] **Home Assistant via MQTT discovery:** battery and charging sensors; buttons for actions and
-      routines; switches for lightsaber, arm and projector; robot availability.
+      routines; switches for lightsaber, arm and projector; robot availability. *Built, not yet tested on the robot.*
+      Also mode, current action and error sensors, display, mute, voice and face switches, and volume.
+      Set the broker with `tools\r2.ps1 mqtt`; it must be on the robot's subnet or an allowed one.
+      Routine buttons come with the routine engine (section 6).
 - [ ] Alternatively, a Home Assistant integration over a local REST/WebSocket API, using the security
       work in section 3.
 - [ ] **R2 as a Home Assistant media destination** (a `media_player` entity):
