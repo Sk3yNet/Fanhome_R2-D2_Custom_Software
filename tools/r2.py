@@ -1,0 +1,644 @@
+#!/usr/bin/env python3
+"""Talk to the R2 Agent over Wi-Fi, from Windows, macOS or Linux.
+
+The Python version of tools/r2.ps1 and tools/install-on-robot.ps1, with the same commands.
+Needs Python 3.8+ and nothing else (the serial-* commands also need pyserial).
+
+Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lines N]
+  find                     listen for the robot's UDP announcement (port 7702)
+  status | log             agent state / agent event log
+  log-previous             agent event log from the previous boot (e.g. after a crash or power loss)
+  action <name>            run a robot action, e.g. dance, wake, lightsaber, leia (list: actions)
+  stop                     emergency stop (the agent stops the robot itself, then cancels the action)
+  routines                 list the stored routines (docs/routines.md) and what's running
+  routine <name>           show one routine's JSON
+  routine-put <file.json>  upload a routine (checked on the robot; replaces one with the same name)
+  routine-run <name>       run a routine (also: action <name>)
+  routine-stop             end the running routine or action
+  routine-delete <name>    delete a routine (a replaced built-in action comes back)
+  volume <0-100>           droid sounds and music volume (kept across reboots)
+  logcat [text] [--lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
+  dmesg [text] [--lines N]  kernel log
+  adb [minutes]            switch on adb over Wi-Fi for a while (default 30 min) and connect
+                           (root shell: adb shell). It switches itself off again.
+  adb-off                  switch adb over Wi-Fi off now (adb is back on USB)
+  adb-always               keep adb over Wi-Fi on, also after reboots (trusted networks only)
+  allow-subnets [list]     also accept API clients from these subnets, e.g. 10.0.20.0/24,10.0.30.5
+                           (empty string '': only the robot's own subnet; no argument: show the list)
+  mqtt [host[:port]] [--user name]
+                           Home Assistant over MQTT: set the broker (asks for the password with --user),
+                           'off' switches it off, no argument shows the settings and connection state
+  fetch-token              copy this robot's own API token to secrets/robot-token.txt (in the pairing
+                           button's setup window, or over root adb)
+  push-main [apk]          install a main-app build (default apps/out/R2Main.apk), on probation
+  push-agent [apk]         update the agent itself
+  rollback | restart       main app: reinstall last good build / restart it
+  serial '<json>'          send one command to the controller, e.g. '{"cmd":"mode","mode":13}' (flash front LCD)
+  safe-on | safe-off       stop / resume supervising the main app
+  wifi-station | wifi-ap   switch network mode
+  wifi-scan                networks R2 can see
+  wifi-join <ssid>         join a network (asks for its password; R2 falls back to its hotspot if it fails)
+  import-identity          copy the factory app's robot name, ID and paired phones to R2 Main (over root adb),
+                           so the official phone app still recognizes the robot
+  stock-on | stock-off     re-enable / disable the original Fanhome app (takes effect after reboot)
+  sim-on | sim-off         use the pretend controller instead of the real one (applies after reboot)
+  sim-button <n>           pretend a robot button was pressed (simulator only)
+  assist <off|robot|ha>    Home Assistant voice pipeline (docs/home-assistant-voice.md)
+  assist-only [ip]         accept the voice connection only from this address; no ip: anyone on R2's subnet
+  reboot | shutdown
+
+First-time install over adb (USB, or Wi-Fi adb after 'adb'), as tools/install-on-robot.ps1:
+  install                  disable the stock app, put R2Agent in /system/priv-app, install R2Main, reboot
+  refresh-agent            replace the /system/priv-app agent with apps/out/R2Agent.apk and reboot
+  restore                  undo everything: factory software back, agent and main removed, adb on USB
+
+Serial console (needs: pip install pyserial), as tools/capture-serial.ps1 and tools/serial-cmd.ps1:
+  serial-capture --port P [--baud 115200] [--seconds 180] [--out boot.log]
+  serial-cmd --port P --file tools/serial-commands/x.txt [--baud 115200] [--wait-ms 3000] [--out serial-cmd.log]
+
+adb is taken from tools/platform-tools/ if it's there, otherwise from your PATH.
+"""
+
+import argparse
+import getpass
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+
+TOOLS = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(TOOLS)
+SECRETS = os.path.join(ROOT, 'secrets')
+CACHE = os.path.join(SECRETS, 'last-robot-ip.txt')
+HOTSPOT_IP = '192.168.43.1'
+API_PORT = 7700
+ANNOUNCE_PORT = 7702
+
+ACTIONS = ('stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise '
+           'not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair '
+           'phone-app-on phone-app-off voice-on voice-off face-on face-off').split()
+
+
+class R2Error(Exception):
+    pass
+
+
+def q(value):
+    return urllib.parse.quote(str(value), safe='')
+
+
+def read_token():
+    """The robot's own token if fetched, otherwise the development token built into your agent."""
+    for name in ('robot-token.txt', 'agent-token.txt'):
+        path = os.path.join(SECRETS, name)
+        if os.path.isfile(path):
+            with open(path, encoding='utf-8-sig') as f:
+                return f.read().strip()
+    return ''
+
+
+def write_secret(name, text):
+    os.makedirs(SECRETS, exist_ok=True)
+    with open(os.path.join(SECRETS, name), 'w', encoding='ascii', newline='') as f:
+        f.write(text)
+
+
+def find_robot(seconds=8):
+    """Listen for the agent's UDP announcement; returns the robot's address or None."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(('', ANNOUNCE_PORT))
+        s.settimeout(1.0)
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                data, (ip, _) = s.recvfrom(4096)
+            except socket.timeout:
+                continue
+            try:
+                msg = json.loads(data.decode('utf-8'))
+            except ValueError:
+                continue
+            if isinstance(msg, dict) and msg.get('r2agent'):
+                write_secret('last-robot-ip.txt', ip)
+                return ip
+    finally:
+        s.close()
+    return None
+
+
+def ping(ip, timeout=2):
+    try:
+        with urllib.request.urlopen('http://%s:%d/ping' % (ip, API_PORT), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+class Robot:
+    def __init__(self, ip=None, token=None):
+        self._ip = ip
+        self.token = read_token() if token is None else token
+
+    @property
+    def ip(self):
+        if not self._ip:
+            candidates = []
+            if os.path.isfile(CACHE):
+                with open(CACHE, encoding='utf-8-sig') as f:
+                    candidates.append(f.read().strip())
+            candidates.append(HOTSPOT_IP)
+            for ip in candidates:
+                if ip and ping(ip):
+                    self._ip = ip
+                    break
+            else:
+                self._ip = find_robot()
+            if not self._ip:
+                raise R2Error('Robot not found. Join the same network as the robot (or its hotspot), '
+                              'or pass --robot <ip>.')
+        return self._ip
+
+    def call(self, method, path, body=None, in_file=None, timeout=30, token=True):
+        headers = {}
+        if token:
+            headers['X-R2-Token'] = self.token
+        data = None
+        if in_file is not None:
+            with open(in_file, 'rb') as f:
+                data = f.read()
+            headers['Content-Type'] = 'application/vnd.android.package-archive'
+        elif body is not None:
+            data = body.encode('utf-8') if isinstance(body, str) else body
+            headers['Content-Type'] = 'application/json'
+        elif method == 'POST':
+            data = b''
+        req = urllib.request.Request('http://%s:%d%s' % (self.ip, API_PORT, path), data=data,
+                                     headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return decode(resp.read(), resp.headers.get('Content-Type', ''))
+        except urllib.error.HTTPError as e:
+            reply = decode(e.read(), e.headers.get('Content-Type', ''))
+            msg = reply.get('error') if isinstance(reply, dict) and reply.get('error') else reply
+            raise R2Error('HTTP %d: %s' % (e.code, msg))
+        except urllib.error.URLError as e:
+            raise R2Error('cannot reach the robot at %s: %s' % (self.ip, e.reason))
+
+
+def decode(raw, content_type):
+    text = raw.decode('utf-8', errors='replace')
+    if 'json' in content_type:
+        try:
+            return json.loads(text)
+        except ValueError:
+            pass
+    return text
+
+
+def show(value):
+    """Print an API reply: text as is, a bare {"result": ...} as its text, other JSON indented."""
+    if value is None:
+        return
+    if isinstance(value, dict) and list(value) == ['result']:
+        value = value['result']
+    if isinstance(value, (dict, list)):
+        print(json.dumps(value, indent=2, ensure_ascii=False))
+    else:
+        text = str(value)
+        print(text, end='' if text.endswith('\n') else '\n')
+
+
+def table(rows, columns):
+    rows = [['' if r.get(c) is None else str(r.get(c)) for c in columns] for r in rows]
+    widths = [max([len(c)] + [len(r[i]) for r in rows]) for i, c in enumerate(columns)]
+    lines = ['  '.join(c.ljust(w) for c, w in zip(columns, widths)).rstrip(),
+             '  '.join('-' * w for w in widths)]
+    lines += ['  '.join(v.ljust(w) for v, w in zip(r, widths)).rstrip() for r in rows]
+    return '\n'.join(lines)
+
+
+# ---- adb -------------------------------------------------------------------------------------------
+
+def adb_exe():
+    for name in ('adb.exe', 'adb'):
+        path = os.path.join(TOOLS, 'platform-tools', name)
+        if os.path.isfile(path):
+            return path
+    found = shutil.which('adb')
+    if not found:
+        raise R2Error('adb not found: unzip Android platform-tools to tools/platform-tools, or put adb on your PATH')
+    return found
+
+
+def adb(*args, check=False):
+    p = subprocess.run([adb_exe()] + list(args), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       universal_newlines=True, encoding='utf-8', errors='replace')
+    if check and p.returncode != 0:
+        raise R2Error('adb %s failed:\n%s' % (' '.join(args), p.stdout))
+    return p.stdout
+
+
+def connect_adb(robot, minutes=30):
+    """adb over Wi-Fi is off by default: ask the agent to switch it on, then connect. Returns the target."""
+    show(robot.call('POST', '/adb?on=1&minutes=%d' % minutes))
+    target = '%s:5555' % robot.ip
+    out = ''
+    for _ in range(5):  # adbd restarts on the robot; give it a moment
+        out = adb('connect', target)
+        if 'connected to' in out:
+            break
+        time.sleep(1)
+    print(out.strip())
+    return target
+
+
+# ---- commands --------------------------------------------------------------------------------------
+
+def need(arg, usage):
+    if not arg:
+        raise R2Error('usage: r2.py ' + usage)
+    return arg
+
+
+def cmd_find(robot, a):
+    ip = find_robot(10)
+    print('robot at %s' % ip if ip else 'no announcement heard')
+
+
+def cmd_routines(robot, a):
+    d = robot.call('GET', '/routines')
+    line = 'running: %s' % (d.get('running') or '')
+    if d.get('last_routine'):
+        line += '   last: %s' % d['last_routine']
+    print(line)
+    print(table(d.get('routines') or [],
+                ['name', 'steps', 'timeout', 'while_charging', 'replaces_action', 'description', 'error']))
+
+
+def cmd_routine(robot, a):
+    name = need(a.arg, 'routine <name>')
+    show(robot.call('GET', '/routine?name=' + q(name)).get('routine'))
+
+
+def cmd_routine_put(robot, a):
+    if not a.arg or not os.path.isfile(a.arg):
+        raise R2Error('usage: r2.py routine-put <file.json>  (examples: docs/routines/)')
+    with open(a.arg, encoding='utf-8-sig') as f:
+        show(robot.call('POST', '/routine', f.read()))
+
+
+def cmd_volume(robot, a):
+    if not (a.arg or '').isdigit():
+        raise R2Error('usage: r2.py volume <0-100>')
+    show(robot.call('POST', '/volume?percent=' + a.arg))
+
+
+def cmd_logs(robot, a):
+    query = '?lines=%d' % a.lines
+    if a.arg:
+        query += '&grep=' + q(a.arg)
+    out = robot.call('GET', '/%s%s' % (a.command, query))
+    if a.command == 'dmesg' and isinstance(out, str) and out.startswith('klogctl'):
+        # This kernel restricts dmesg to root, so read it through root adb instead.
+        target = connect_adb(robot)
+        lines = adb('-s', target, 'shell', 'dmesg').splitlines()
+        if a.arg:
+            lines = [l for l in lines if a.arg in l]
+        out = '\n'.join(lines[-a.lines:])
+    show(out)
+
+
+def cmd_fetch_token(robot, a):
+    # During the pairing button's setup window the agent hands the token out without one;
+    # otherwise read it over root adb (which needs a working token or the built-in one).
+    t = ''
+    try:
+        reply = robot.call('GET', '/setup/token', timeout=5, token=False)
+        if isinstance(reply, dict):
+            t = reply.get('token') or ''
+    except R2Error:
+        pass
+    if not t:
+        target = connect_adb(robot)
+        t = adb('-s', target, 'shell', 'cat /data/data/dev.r2hack.agent/files/api-token').strip()
+    if len(t) != 48 or any(c not in '0123456789abcdef' for c in t):
+        raise R2Error('no token found (is the agent updated and running?)')
+    write_secret('robot-token.txt', t)
+    print('saved to ' + os.path.join('secrets', 'robot-token.txt'))
+
+
+def cmd_adb(robot, a):
+    if a.arg and not a.arg.isdigit():
+        raise R2Error('usage: r2.py adb [minutes]')
+    connect_adb(robot, int(a.arg) if a.arg else 30)
+
+
+def cmd_allow_subnets(robot, a):
+    if a.arg is not None:
+        show(robot.call('POST', '/clients/allow?subnets=' + q(a.arg)))
+    else:
+        show(robot.call('GET', '/clients/allow').get('extra_subnets'))
+
+
+def cmd_mqtt(robot, a):
+    if not a.arg:
+        show(robot.call('GET', '/mqtt'))
+    elif a.arg == 'off':
+        show(robot.call('POST', '/mqtt', '{"enabled":false}'))
+    else:
+        host, _, port = a.arg.partition(':')
+        body = {'host': host, 'port': int(port) if port else 1883}
+        if a.user is not None:
+            body['username'] = a.user
+            body['password'] = getpass.getpass('MQTT password for %s: ' % a.user) if a.user else ''
+        show(robot.call('POST', '/mqtt', json.dumps(body, separators=(',', ':'))))
+
+
+def cmd_push(robot, a):
+    default = 'R2Main.apk' if a.command == 'push-main' else 'R2Agent.apk'
+    apk = a.arg or os.path.join(ROOT, 'apps', 'out', default)
+    if not os.path.isfile(apk):
+        raise R2Error('missing %s (build it with apps/build.sh, or pass the apk)' % apk)
+    path = '/main/install' if a.command == 'push-main' else '/agent/install'
+    show(robot.call('POST', path, in_file=apk, timeout=300))
+
+
+def cmd_serial(robot, a):
+    show(robot.call('POST', '/serial', need(a.arg, "serial '<json>'")))
+
+
+def cmd_wifi_scan(robot, a):
+    nets = robot.call('GET', '/wifi/scan').get('networks') or []
+    nets.sort(key=lambda n: n.get('rssi') if isinstance(n.get('rssi'), (int, float)) else -999, reverse=True)
+    print(table(nets, ['ssid', 'rssi']))
+
+
+def cmd_wifi_join(robot, a):
+    ssid = need(a.arg, 'wifi-join <ssid>')
+    password = getpass.getpass('Password for %s (Enter for an open network): ' % ssid)
+    show(robot.call('POST', '/wifi/join', json.dumps({'ssid': ssid, 'password': password},
+                                                     separators=(',', ':'))))
+
+
+def identity_body(xml_text):
+    """The /identity request body from the factory app's shared_prefs/robot.xml."""
+    if '<map' not in xml_text:
+        raise R2Error('factory app settings not found on the robot')
+    root = ET.fromstring(xml_text[xml_text.index('<'):])
+    strings = {s.get('name'): (s.text or '') for s in root.iter('string')}
+    body = {'name': strings.get('robot_name'), 'uuid': strings.get('robot_udid')}
+    clients = strings.get('clientList')
+    if clients:
+        body['clients'] = json.loads(clients)
+    return json.dumps(body, separators=(',', ':'))
+
+
+def cmd_import_identity(robot, a):
+    target = connect_adb(robot)
+    xml_text = adb('-s', target, 'shell', 'cat /data/data/com.bullb.r2d2_nanopisystem/shared_prefs/robot.xml')
+    show(robot.call('POST', '/identity', identity_body(xml_text)))
+
+
+def cmd_assist(robot, a):
+    if a.arg not in ('off', 'robot', 'ha'):
+        raise R2Error('usage: r2.py assist <off|robot|ha>')
+    show(robot.call('POST', '/assist?mode=' + a.arg))
+
+
+def simple(method, path):
+    return lambda robot, a: show(robot.call(method, path))
+
+
+def with_name(path, usage):
+    return lambda robot, a: show(robot.call('POST', path + q(need(a.arg, usage))))
+
+
+# ---- first-time install (install-on-robot.ps1) -----------------------------------------------------
+
+def sh(cmd):
+    out = adb('shell', cmd)
+    print('  > ' + cmd)
+    for line in out.splitlines():
+        print('    ' + line)
+    return out
+
+
+def apk_path(name):
+    return os.path.join(ROOT, 'apps', 'out', name)
+
+
+def install_preflight():
+    devices = adb('devices')
+    if not any(l.rstrip().endswith('\tdevice') for l in devices.splitlines()):
+        raise R2Error('No adb device. Connect the robot over USB first.')
+    if 'uid=0' not in sh('id'):
+        raise R2Error('adb is not running as root on the robot.')
+
+
+def push_system_agent():
+    sh('mount -o remount,rw /system')
+    print(adb('push', apk_path('R2Agent.apk'), '/system/priv-app/R2Agent.apk', check=True).strip())
+    sh('chmod 644 /system/priv-app/R2Agent.apk')
+    sh('sync; mount -o remount,ro /system')
+
+
+def cmd_install(robot, a):
+    for f in (apk_path('R2Agent.apk'), apk_path('R2Main.apk'), os.path.join(ROOT, 'backup', 'mmcblk0_full.img')):
+        if not os.path.isfile(f):
+            raise R2Error('missing ' + os.path.relpath(f, ROOT))
+    install_preflight()
+    sh('pm disable com.bullb.r2d2_nanopisystem')
+    push_system_agent()
+    print(adb('install', '-r', apk_path('R2Main.apk'), check=True).strip())
+    # adb over Wi-Fi is off by default from now on: the agent switches it on only when asked
+    # (r2.py adb, for 30 minutes), because this build's adb is a root shell with no key check.
+    sh('setprop persist.adb.tcp.port -1')
+    print('Rebooting. Give it ~60 s, then: r2.py status ; r2.py adb (switches Wi-Fi adb on for 30 min)')
+    adb('reboot')
+
+
+def cmd_refresh_agent(robot, a):
+    if not os.path.isfile(apk_path('R2Agent.apk')):
+        raise R2Error('missing apps/out/R2Agent.apk')
+    install_preflight()
+    push_system_agent()
+    # On boot Android sees the system copy is newer than the over-the-air copy in /data, drops that copy
+    # and keeps the agent's data (token, last good build).
+    print('Rebooting. Give it ~60 s, then: r2.py status')
+    adb('reboot')
+
+
+def cmd_restore(robot, a):
+    install_preflight()
+    sh('pm uninstall dev.r2hack.main')
+    sh('pm uninstall dev.r2hack.agent')  # removes an over-the-air agent update, if any
+    sh('mount -o remount,rw /system')
+    sh('rm /system/priv-app/R2Agent.apk')
+    sh('sync; mount -o remount,ro /system')
+    sh('pm enable com.bullb.r2d2_nanopisystem')
+    sh('setprop persist.adb.tcp.port 0')  # adb back on USB after the reboot
+    print('Factory software restored. Rebooting.')
+    adb('reboot')
+
+
+# ---- serial console (capture-serial.ps1, serial-cmd.ps1) -------------------------------------------
+
+def open_serial(a):
+    try:
+        import serial  # pyserial
+    except ImportError:
+        raise R2Error('the serial commands need pyserial: python3 -m pip install pyserial')
+    if not a.port:
+        raise R2Error('pass --port, e.g. COM4, /dev/ttyUSB0 or /dev/tty.usbserial-XXXX')
+    return serial.Serial(a.port, a.baud, bytesize=8, parity='N', stopbits=1, timeout=0)
+
+
+def cmd_serial_capture(robot, a):
+    out = a.out or 'boot.log'
+    port = open_serial(a)
+    total = 0
+    deadline = time.monotonic() + a.seconds
+    try:
+        with open(out, 'w', encoding='utf-8', newline='') as w:
+            while time.monotonic() < deadline:
+                data = port.read(4096)
+                if data:
+                    text = data.decode('utf-8', errors='replace')
+                    w.write(text)
+                    w.flush()
+                    total += len(text)
+                else:
+                    time.sleep(0.05)
+    finally:
+        port.close()
+    print('Captured %d characters to %s' % (total, out))
+
+
+def cmd_serial_cmd(robot, a):
+    if not a.file or not os.path.isfile(a.file):
+        raise R2Error('usage: r2.py serial-cmd --port P --file <commands.txt>  (examples: tools/serial-commands/)')
+    with open(a.file, encoding='utf-8-sig') as f:
+        commands = [l.rstrip('\r\n') for l in f if l.strip() and not l.startswith('#')]
+    out = a.out or 'serial-cmd.log'
+    port = open_serial(a)
+
+    def drain(ms):
+        end = time.monotonic() + ms / 1000.0
+        buf = b''
+        while time.monotonic() < end:
+            d = port.read(4096)
+            if d:
+                buf += d
+                end = time.monotonic() + min(ms, 1500) / 1000.0
+            else:
+                time.sleep(0.05)
+        return buf.decode('utf-8', errors='replace')
+
+    try:
+        with open(out, 'a', encoding='utf-8', newline='') as w:
+            # Quiet kernel messages on the console so command output stays readable.
+            port.write(b'\n'); drain(500)
+            port.write(b'echo 1 > /proc/sys/kernel/printk\n'); drain(500)
+            for c in commands:
+                w.write('===== %s =====\n' % c)
+                port.write((c + '\n').encode('utf-8'))
+                w.write(drain(a.wait_ms))
+                w.write('\n')
+                w.flush()
+    finally:
+        port.close()
+    print('Done: ' + out)
+
+
+COMMANDS = {
+    'find': cmd_find,
+    'status': simple('GET', '/status'),
+    'log': simple('GET', '/log'),
+    'log-previous': simple('GET', '/log?previous=1'),
+    'actions': lambda robot, a: print('\n'.join(ACTIONS)),
+    'action': with_name('/action?name=', 'action <name>  (see: r2.py actions)'),
+    'stop': simple('POST', '/stop'),
+    'routines': cmd_routines,
+    'routine': cmd_routine,
+    'routine-put': cmd_routine_put,
+    'routine-run': with_name('/routine/run?name=', 'routine-run <name>'),
+    'routine-stop': simple('POST', '/routine/stop'),
+    'routine-delete': with_name('/routine/delete?name=', 'routine-delete <name>'),
+    'volume': cmd_volume,
+    'logcat': cmd_logs,
+    'dmesg': cmd_logs,
+    'fetch-token': cmd_fetch_token,
+    'adb': cmd_adb,
+    'adb-off': simple('POST', '/adb?on=0'),
+    'adb-always': simple('POST', '/adb?always=1'),
+    'allow-subnets': cmd_allow_subnets,
+    'mqtt': cmd_mqtt,
+    'push-main': cmd_push,
+    'push-agent': cmd_push,
+    'rollback': lambda robot, a: show(robot.call('POST', '/main/rollback', timeout=120)),
+    'restart': simple('POST', '/main/restart'),
+    'serial': cmd_serial,
+    'safe-on': simple('POST', '/safe-mode?on=1'),
+    'safe-off': simple('POST', '/safe-mode?on=0'),
+    'wifi-station': simple('POST', '/wifi?mode=station'),
+    'wifi-ap': simple('POST', '/wifi?mode=ap'),
+    'wifi-scan': cmd_wifi_scan,
+    'wifi-join': cmd_wifi_join,
+    'import-identity': cmd_import_identity,
+    'stock-on': simple('POST', '/stock?enable=1'),
+    'stock-off': simple('POST', '/stock?enable=0'),
+    'assist': cmd_assist,
+    'assist-only': lambda robot, a: show(robot.call('POST', '/assist?host=' + q(a.arg or ''))),
+    'reboot': simple('POST', '/reboot'),
+    'shutdown': simple('POST', '/shutdown'),
+    'sim-on': simple('POST', '/sim?on=1'),
+    'sim-off': simple('POST', '/sim?on=0'),
+    'sim-button': lambda robot, a: show(robot.call('POST', '/sim/button?value=' + q(need(a.arg, 'sim-button <n>')))),
+    'install': cmd_install,
+    'refresh-agent': cmd_refresh_agent,
+    'restore': cmd_restore,
+    'serial-capture': cmd_serial_capture,
+    'serial-cmd': cmd_serial_cmd,
+}
+
+
+def parse(argv):
+    p = argparse.ArgumentParser(prog='r2.py', description=__doc__.split('\n\n', 1)[0],
+                                epilog=__doc__.split('\n\n', 2)[2], formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('command', metavar='command', choices=sorted(COMMANDS), help='see the list below')
+    p.add_argument('arg', nargs='?', help='the command\'s argument, if it takes one')
+    p.add_argument('--robot', '-r', help='robot IP (default: last one found, its hotspot, or listen for it)')
+    p.add_argument('--user', '-u', help='mqtt: broker user name (asks for the password); "" clears it')
+    p.add_argument('--lines', '-n', type=int, default=500, help='logcat/dmesg: how many lines (default 500)')
+    p.add_argument('--port', help='serial-*: serial port, e.g. COM4 or /dev/ttyUSB0')
+    p.add_argument('--baud', type=int, default=115200, help='serial-*: baud rate (default 115200)')
+    p.add_argument('--seconds', type=int, default=180, help='serial-capture: how long (default 180)')
+    p.add_argument('--file', help='serial-cmd: one shell command per line (# comments)')
+    p.add_argument('--wait-ms', type=int, default=3000, help='serial-cmd: wait per command (default 3000)')
+    p.add_argument('--out', help='serial-*: log file')
+    return p.parse_args(argv)
+
+
+def main(argv=None):
+    a = parse(sys.argv[1:] if argv is None else argv)
+    try:
+        COMMANDS[a.command](Robot(a.robot), a)
+    except R2Error as e:
+        print('r2.py: %s' % e, file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

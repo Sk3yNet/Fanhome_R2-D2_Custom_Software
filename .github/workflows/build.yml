@@ -8,6 +8,25 @@ permissions:
   contents: read
 
 jobs:
+  # tools/r2.py, the cross-platform PC tool, against a pretend agent (no robot needed).
+  pc-tool:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, python: '3.8' }   # the oldest Python r2.py supports
+          - { os: ubuntu-latest, python: '3.x' }
+          - { os: macos-latest, python: '3.x' }
+          - { os: windows-latest, python: '3.x' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: PC tool tests
+        run: python -m unittest discover -s tools -p "test_*.py" -v
+
   build:
     runs-on: ubuntu-latest
     steps:
