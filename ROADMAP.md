@@ -56,6 +56,8 @@ routine engine in section 6.
 - [ ] **LED patterns:** ready, charging, charged, low battery (below 20%), patrol, sleep, pairing,
       pairing failed, connecting to Wi-Fi, face detected, power off. *Built, not yet tested on the robot.* Face detected waits for face detection.
 - [ ] **Sleep after 3 minutes idle** (sleep lights, voice and camera paused); any action wakes the robot. *Built, not yet tested on the robot.*
+- [ ] **Idle personality:** while awake and idle, random sounds from mood banks and an occasional look around, set by
+      one liveliness switch (off, quiet, chatty, full) that other features share ([liveliness.md](docs/liveliness.md)). *Built, not yet tested on the robot.*
 
 ### Voice commands
 - [x] Offline voice commands for the actions and toggles above, including "Princess Leia" and
