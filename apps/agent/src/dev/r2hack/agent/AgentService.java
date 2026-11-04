@@ -74,7 +74,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         adb = new AdbControl(getSharedPreferences("agent", MODE_PRIVATE));
         adb.start();
         supervisor = new Supervisor(this, this);
-        wifi = new WifiFailover(this);
+        wifi = new WifiFailover(this, passive);
         wifi.start();
         new HttpApi(this, supervisor.uploadDir()).start();
         startAnnouncer();
@@ -205,6 +205,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     private void openSetup() {
         setupUntil = SystemClock.elapsedRealtime() + Config.SETUP_WINDOW_MS;
         EventLog.i("setup window open for " + Config.SETUP_WINDOW_MS / 1000 + " s (pairing button)");
+        wifi.factoryWindow(Config.SETUP_WINDOW_MS); // the way back in when the hotspot password is forgotten
     }
 
     private long setupSecondsLeft() {
@@ -216,7 +217,8 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         String route = req.method + " " + req.path;
         if ("GET /setup".equals(route)) return true; // only says whether the window is open
         boolean setupRoute = "GET /setup/token".equals(route) || "GET /wifi/scan".equals(route)
-                || "POST /wifi/join".equals(route) || "GET /wifi/last-join".equals(route);
+                || "POST /wifi/join".equals(route) || "GET /wifi/last-join".equals(route)
+                || "GET /hotspot".equals(route);
         return setupRoute && setupSecondsLeft() > 0;
     }
 
@@ -477,6 +479,26 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 return result("joining " + ssid + " in ~2 s. Connect this device to " + ssid
                         + " too; if R2 can't join, its hotspot comes back within about a minute.");
             }
+            case "GET /hotspot":
+                return HttpApi.Response.json(200, hotspotInfo().toString(2));
+            case "POST /hotspot": { // {"password":"..."} sets it, {} or "" makes a new random one
+                JSONObject j = new JSONObject(req.bodyText.trim().isEmpty() ? "{}" : req.bodyText);
+                String pw = j.optString("password");
+                Hotspot h = wifi.hotspot();
+                if (pw.isEmpty()) {
+                    pw = Hotspot.generate(new java.security.SecureRandom());
+                } else {
+                    String why = Hotspot.problem(pw);
+                    if (why != null) return bad(why);
+                }
+                h.setPassword(pw);
+                EventLog.i("hotspot: password changed over the API");
+                if (!h.usingFactory()) wifi.restartApLater(1500);
+                JSONObject r = hotspotInfo().put("result", wifi.isAp() && !h.usingFactory()
+                        ? "hotspot restarting in ~2 s; join " + h.ssid() + " again with the new password"
+                        : "saved; used the next time the hotspot comes up");
+                return HttpApi.Response.json(200, r.toString(2));
+            }
             case "GET /wifi/last-join":
                 return result(lastJoin.isEmpty() ? "no join attempted since the agent started" : lastJoin);
             case "POST /identity": { // the factory app's name, ID and paired phones, for the phone app
@@ -578,6 +600,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 // enable=1: factory fallback (stock app back on, agent passive after reboot); enable=0: undo
                 boolean enable = "1".equals(req.query.get("enable"));
                 String r = Supervisor.run("pm", enable ? "enable" : "disable", Config.STOCK_PACKAGE);
+                if (enable) wifi.hotspot().restoreFactory(); // the factory software gets its own hotspot back
                 return result(r + " -- reboot to apply (POST /reboot)");
             }
             case "POST /reboot":
@@ -659,6 +682,16 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         return sb.toString();
     }
 
+    /** The hotspot's name and passwords (token or setup window only: this is how a forgotten one is found). */
+    private JSONObject hotspotInfo() throws Exception {
+        Hotspot h = wifi.hotspot();
+        return new JSONObject().put("ssid", h.ssid()).put("password", h.password())
+                .put("using", h.usingFactory() ? "factory" : "own")
+                .put("factory_seconds_left", passive ? -1 : h.factorySecondsLeft())
+                .put("factory_password", h.factoryPassword())
+                .put("on", wifi.isAp());
+    }
+
     private JSONObject status() throws Exception {
         JSONObject s = new JSONObject();
         s.put("agent", Secrets.VERSION);
@@ -668,6 +701,8 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         s.put("ip", WifiFailover.ipAddress());
         s.put("wifi", wifi.state());
         s.put("wifi_preferred", wifi.preferredMode());
+        s.put("hotspot", wifi.hotspot().ssid());
+        s.put("hotspot_factory_settings", wifi.hotspot().usingFactory());
         s.put("main_version", supervisor.mainVersion());
         s.put("main_alive", supervisor.mainAlive());
         s.put("main_probation", supervisor.onProbation());
