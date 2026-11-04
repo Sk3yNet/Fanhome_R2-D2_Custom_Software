@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Off-robot tests for R2 Main's routine engine (Routine, RoutineRunner, RoutineStore) and idle personality.
+# Off-robot tests for R2 Main's routine engine (Routine, RoutineRunner, RoutineStore), idle personality
+# and Home Assistant link (HomeAssistant, without a broker).
 # Usage: apps/test.sh
 # Needs a JDK and Android's real org.json, taken from Robolectric's android-all jar for Android 4.4
 # (the SDK's android.jar only has stubs). The jar is downloaded once to tools/test-libs/, or set
@@ -26,7 +27,9 @@ mkdir -p "$OUT"
 SRC=$APPS_DIR/main/src/dev/r2hack/main
 javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \
     "$SRC/Routine.java" "$SRC/RoutineRunner.java" "$SRC/RoutineStore.java" \
-    "$SRC/IdlePersonality.java" \
-    "$APPS_DIR/main/test/dev/r2hack/main/RoutineTest.java" "$APPS_DIR/main/test/dev/r2hack/main/IdleTest.java"
+    "$SRC/IdlePersonality.java" "$SRC/HomeAssistant.java" "$SRC/MqttClient.java" "$SRC/LocalNet.java" \
+    "$APPS_DIR/main/test/dev/r2hack/main/RoutineTest.java" "$APPS_DIR/main/test/dev/r2hack/main/IdleTest.java" \
+    "$APPS_DIR/main/test/dev/r2hack/main/HomeAssistantTest.java"
 java -cp "$OUT:$JAR" dev.r2hack.main.RoutineTest "$ROOT/docs/routines"
 java -cp "$OUT:$JAR" dev.r2hack.main.IdleTest
+java -cp "$OUT:$JAR" dev.r2hack.main.HomeAssistantTest

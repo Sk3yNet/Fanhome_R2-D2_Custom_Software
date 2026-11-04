@@ -19,8 +19,8 @@ import org.json.JSONObject;
  *
  * The broker is set with POST /mqtt on the agent, which passes the settings here. Like API clients,
  * the broker must be on the robot's own subnet or in an allowed extra subnet (POST /clients/allow).
- * Only the actions in BUTTONS and the switches below can be run from MQTT: no pairing, no phone-app
- * switch, nothing that installs or reboots.
+ * Only the actions in BUTTONS, the switches below and the activity select can be run from MQTT: no pairing,
+ * no phone-app switch, nothing that installs or reboots.
  *
  * No Android classes, so it can be tested on a plain JVM against a real broker.
  */
@@ -29,7 +29,8 @@ final class HomeAssistant {
         /**
          * The robot's state: battery (int, -1 unknown), charging (0/1/2), lightsaber, arm, lcd_s, lcd_l
          * (booleans), projector (0/1/2), mode (string), action (string), error (string), muted, voice,
-         * face (booleans), volume (0-100), name, uuid, version (strings).
+         * face (booleans), volume (0-100), liveliness (one of LIVELINESS, the activity preset), name, uuid,
+         * version (strings).
          */
         JSONObject haState();
 
@@ -70,6 +71,12 @@ final class HomeAssistant {
     };
 
     static final String[] MODES = {"ready", "sleeping", "pairing", "patrol", "phone control"};
+
+    /**
+     * Activity presets (the "liveliness" setting), published as one select. Choosing one runs the
+     * action "liveliness-<level>", the same as the web page and POST /action.
+     */
+    static final String[] LIVELINESS = {"off", "quiet", "chatty", "full"};
 
     private static final Charset UTF8 = Charset.forName("UTF-8");
     private static final int KEEPALIVE_S = 60;
@@ -242,6 +249,7 @@ final class HomeAssistant {
                     discoveredFor = "";
                 }
                 c.subscribe(base() + "/action/run", base() + "/routine/run", base() + "/switch/+/set", base() + "/volume/set",
+                        base() + "/liveliness/set",
                         s.prefix + "/status");
                 client = c;
                 setStatus("connected to " + addr.getHostAddress() + ":" + s.port);
@@ -330,6 +338,19 @@ final class HomeAssistant {
                 int v = (int) Math.round(Double.parseDouble(payload));
                 if (v >= 0 && v <= 100) host.setVolume(v);
             } catch (NumberFormatException ignored) {
+            }
+            stateChanged();
+            return;
+        }
+        if (topic.equals(b + "/liveliness/set")) {
+            String level = payload.toLowerCase(java.util.Locale.US);
+            if (java.util.Arrays.asList(LIVELINESS).contains(level)) {
+                if (!level.equals(host.haState().optString("liveliness"))) {
+                    host.log("home assistant: activity " + level);
+                    host.action("liveliness-" + level);
+                }
+            } else {
+                host.log("home assistant: ignored unknown activity " + clip(payload));
             }
             stateChanged();
             return;
@@ -466,6 +487,8 @@ final class HomeAssistant {
         String err = st.optString("error", "");
         m.put(b + "/error", err.isEmpty() ? "none" : err);
         m.put(b + "/volume", String.valueOf(st.optInt("volume")));
+        String live = st.optString("liveliness", "");
+        if (!live.isEmpty()) m.put(b + "/liveliness", live); // left out until R2 Main reports it
         for (String[] sw : SWITCHES) m.put(b + "/switch/" + sw[0], switchState(sw[0], st) ? "ON" : "OFF");
         return m;
     }
@@ -502,6 +525,11 @@ final class HomeAssistant {
                 .put("state_topic", b + "/volume").put("command_topic", b + "/volume/set")
                 .put("min", 0).put("max", 100).put("step", 5).put("unit_of_measurement", "%")
                 .put("icon", "mdi:volume-high"));
+        JSONArray levels = new JSONArray();
+        for (String l : LIVELINESS) levels.put(l);
+        m.put(p + "/select/" + node + "/liveliness/config", entity("Activity", node, "liveliness", device, origin)
+                .put("state_topic", b + "/liveliness").put("command_topic", b + "/liveliness/set")
+                .put("options", levels).put("icon", "mdi:emoticon-happy-outline"));
         for (String[] btn : BUTTONS) {
             String obj = "action_" + btn[0].replace('-', '_');
             JSONObject e = entity(btn[1], node, obj, device, origin)
