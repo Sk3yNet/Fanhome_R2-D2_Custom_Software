@@ -1,0 +1,16 @@
+{
+  "name": "greet",
+  "description": "Wake-up sound, look around, then show the lightsaber for a few seconds",
+  "timeout": 60,
+  "steps": [
+    {"sound": 8},
+    {"wait": 0.6}, {"head": -40},
+    {"wait": 0.6}, {"head": 40},
+    {"wait": 0.6}, {"head": 0},
+    {"cmd": {"cmd": "lightsaber", "power": 1}},
+    {"wait_until": {"field": "lightsaber", "eq": 1}, "timeout": 10, "else": "continue"},
+    {"sound": 1, "until_done": true},
+    {"wait": 2},
+    {"cmd": {"cmd": "lightsaber", "power": 0}}
+  ]
+}

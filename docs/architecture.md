@@ -45,7 +45,8 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `POST /identity` ·
 `POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2` ·
 `POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...` ·
-`POST /assist?mode=off|robot|ha&host=<ip>` (Home Assistant voice satellite, see [home-assistant-voice.md](home-assistant-voice.md))
+`POST /assist?mode=off|robot|ha&host=<ip>` (Home Assistant voice satellite, see [home-assistant-voice.md](home-assistant-voice.md)) ·
+`GET /routines` · `GET /routine?name=` · `POST /routine` (JSON body) · `POST /routine/run?name=` · `POST /routine/stop` · `POST /routine/delete?name=` (see [routines.md](routines.md))
 
 Only clients on the robot's own subnet (its Wi-Fi network or its hotspot), loopback, or IPv6 link-local are
 served. A client on another private network, such as a guest network, another VLAN or a VPN, is refused
@@ -97,6 +98,14 @@ and starting one cancels the last and sends stop. Run one with `tools\r2.ps1 act
 Sounds are played from the factory app already installed on the robot; nothing is bundled. The
 sound-number map lives in `apps\main\assets\sounds.json` (`{"7": "<resource name>", ...}`), which is
 not part of this repository. Without it R2 Main still runs every action, just silently.
+
+## Routines (R2 Main)
+Routines are JSON step lists (sounds, head moves, modes, driving, lights, built-in actions, waits on
+the robot's state, repeats) that R2 Main stores and runs on the same sequencer as the actions, with
+safety checks (timeout, controller error, charger, low battery). A routine named like a built-in action
+replaces it. Format, API and examples: [routines.md](routines.md). The agent passes the routine API to
+R2 Main over the bridge (`{"agent":"routines","seq":N,...}`, answered by `routines-reply`), and R2 Main
+reports what's running (`{"agent":"running",...}`) for `/status`.
 
 ## Media player for Home Assistant (R2 Main)
 R2 Main is a DLNA/UPnP media renderer on port 7710 (AVTransport, RenderingControl, ConnectionManager,
@@ -187,5 +196,7 @@ To keep phones that were paired with the factory software working, copy the robo
 ## Files
 - `secrets\` – signing key, its password, and the API token. Keep private; losing the key means
   the agent/main can't be updated in place (uninstall + reinstall over adb instead).
+  GitHub releases are signed with the key in the repository's Actions secrets
+  ([releases.md](releases.md)).
 - The UART library `libr2d2.so` is not part of this repository: the agent loads the robot's own
   `/system/lib/libr2d2.so` (or extracts it from the factory app on the device).

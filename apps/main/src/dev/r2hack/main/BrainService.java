@@ -123,6 +123,7 @@ public class BrainService extends Service {
                 Log.w(TAG, "bridge connection failed", e);
             }
             out = null;
+            if (s != null) brain.onDisconnected();
             if (s != null) lastOk = System.currentTimeMillis(); // was connected until just now
             connState = "agent not reachable, retrying";
             try {

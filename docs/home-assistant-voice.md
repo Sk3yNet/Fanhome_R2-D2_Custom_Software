@@ -145,6 +145,10 @@ lists:
 
   R2's own droid sounds are the reply, so the intent's spoken answer is empty.
 
+**Routines** ([routines.md](routines.md)) run the same way, because `POST /action?name=` also runs a stored routine
+by name. Add your routine names to the script's `options` (`GET /routines` lists them) and to the
+`r2_action` list, and the AI or "hey R2-D2, <routine>" runs them.
+
 If the Home Assistant MQTT integration for R2 is installed, its action buttons can be exposed to Assist
 instead of the script.
 

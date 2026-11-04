@@ -35,6 +35,15 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     private volatile long setupUntil;
     private volatile String lastJoin = "";
     private PowerManager.WakeLock wakeLock;
+    /** What the main app runs ({"agent":"running","name":...,"last_routine":...}), for /status. */
+    private volatile JSONObject running;
+    private final MainRequests mainRequests = new MainRequests(new MainRequests.Sender() {
+        @Override
+        public boolean toMain(JSONObject msg) {
+            return AgentService.this.toMain(msg);
+        }
+    });
+    private static final long ROUTINE_REPLY_MS = 5_000;
 
     @Override
     public void onCreate() {
@@ -123,6 +132,8 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         if ("heartbeat".equals(kind) || "hello".equals(kind)) supervisor.onHeartbeat();
         else if ("shutdown".equals(kind)) shutdown("requested by the main app");
         else if ("settings".equals(kind)) settings = msg;
+        else if ("running".equals(kind)) running = msg;
+        else if ("routines-reply".equals(kind)) mainRequests.onReply(msg);
         else if ("wifi-scan".equals(kind)) {
             try {
                 toMain(new JSONObject().put("agent", "wifi-list").put("seq", msg.optInt("seq"))
@@ -218,6 +229,22 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 EventLog.i("wifi setup: " + lastJoin);
             }
         }, "wifi-setup-join").start();
+    }
+
+    /** Hands a routine request to the main app (Brain.onRoutinesRequest) and returns its answer. */
+    private HttpApi.Response routines(JSONObject ask) throws Exception {
+        if (passive) return passiveError();
+        String op = ask.optString("op");
+        if (("get".equals(op) || "delete".equals(op) || "run".equals(op)) && ask.optString("name").isEmpty()) {
+            return bad("name= is required, e.g. ?name=greet");
+        }
+        JSONObject reply = mainRequests.ask(ask.put("agent", "routines"), ROUTINE_REPLY_MS);
+        if (reply == null) return HttpApi.Response.json(503, "{\"error\":\"the main app is not connected or did not answer\"}");
+        boolean ok = reply.optBoolean("ok");
+        reply.remove("agent");
+        reply.remove("seq");
+        reply.remove("ok");
+        return HttpApi.Response.json(ok ? 200 : 400, reply.toString(2));
     }
 
     /** Tells the main app over the bridge, e.g. to run an action. */
@@ -371,6 +398,31 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 if (hasHost) m.put("host", req.query.get("host"));
                 return toMain(m) ? result("sent to the main app; see \"assist\" in GET /status") : bad("main app not connected");
             }
+            case "GET /routines":
+                return routines(new JSONObject().put("op", "list"));
+            case "GET /routine":
+                return routines(new JSONObject().put("op", "get").put("name", req.query.get("name")));
+            case "POST /routine": { // body: the routine as JSON; ?name= optional (the body's name otherwise)
+                if (passive) return passiveError();
+                JSONObject body;
+                try {
+                    body = new JSONObject(req.bodyText);
+                } catch (Exception e) {
+                    return bad("the body must be the routine as a JSON object: " + e.getMessage());
+                }
+                JSONObject ask = new JSONObject().put("op", "put").put("routine", body);
+                if (req.query.containsKey("name")) ask.put("name", req.query.get("name"));
+                return routines(ask);
+            }
+            case "POST /routine/delete":
+                if (passive) return passiveError();
+                return routines(new JSONObject().put("op", "delete").put("name", req.query.get("name")));
+            case "POST /routine/run":
+                if (passive) return passiveError();
+                return routines(new JSONObject().put("op", "run").put("name", req.query.get("name")));
+            case "POST /routine/stop": // ends the running routine or action (POST /stop also stops the robot here)
+                if (passive) return passiveError();
+                return routines(new JSONObject().put("op", "stop"));
             case "POST /shutdown":
                 new Thread(new Runnable() {
                     @Override
@@ -609,6 +661,11 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             s.put("voice", set.optBoolean("voice"));
             s.put("face_tracking", set.optBoolean("face"));
             s.put("assist", set.optString("assist"));
+        }
+        JSONObject run = running;
+        if (run != null && supervisor.mainAlive()) {
+            s.put("running", run.optString("name", "idle"));
+            s.put("last_routine", run.optString("last_routine"));
         }
         return s;
     }

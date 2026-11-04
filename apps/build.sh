@@ -5,6 +5,11 @@
 # Tools: JDK from $JAVA_HOME (or tools/jdk), Android SDK from $ANDROID_HOME / $ANDROID_SDK_ROOT
 # (or tools/android-sdk) with "build-tools;35.0.1" and "platforms;android-19".
 # Output: apps/out/R2Agent.apk, apps/out/R2Main.apk
+# Optional environment (used by .github/workflows/release.yml; local builds don't need any of it):
+#   R2_KEYSTORE        sign with this keystore instead of secrets/r2hack.keystore (it is never created)
+#   R2_KEYSTORE_PASS   its password (store and key password are the same, like the generated keystore)
+#   R2_KEY_ALIAS       key alias in it, default r2hack
+#   R2_VERSION_NAME    versionName instead of the build date, e.g. a release tag
 set -euo pipefail
 
 APP=all
@@ -46,16 +51,29 @@ TOKEN_FILE=$SECRETS/agent-token.txt
 random_hex() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 [ -f "$PASS_FILE" ] || { random_hex 16 > "$PASS_FILE"; chmod 600 "$PASS_FILE"; }
 [ -f "$TOKEN_FILE" ] || { random_hex 24 > "$TOKEN_FILE"; chmod 600 "$TOKEN_FILE"; }
-PASS=$(tr -d ' \r\n' < "$PASS_FILE")
 if [ "$RELEASE" = 1 ]; then TOKEN=""; else TOKEN=$(tr -d ' \r\n' < "$TOKEN_FILE"); fi
-if [ ! -f "$KEYSTORE" ]; then
-    keytool -genkeypair -keystore "$KEYSTORE" -storepass "$PASS" -keypass "$PASS" \
-        -alias r2hack -keyalg RSA -keysize 2048 -validity 10000 -dname CN=r2hack
+KEY_ALIAS=${R2_KEY_ALIAS:-r2hack}
+if [ -n "${R2_KEYSTORE:-}" ]; then
+    # A release key handed in from outside: use it as is, never generate one in its place.
+    KEYSTORE=$R2_KEYSTORE
+    [ -f "$KEYSTORE" ] || { echo "R2_KEYSTORE not found: $KEYSTORE" >&2; exit 1; }
+    [ -n "${R2_KEYSTORE_PASS:-}" ] || { echo "R2_KEYSTORE is set but R2_KEYSTORE_PASS is empty" >&2; exit 1; }
+    PASS=$R2_KEYSTORE_PASS
+else
+    PASS=$(tr -d ' \r\n' < "$PASS_FILE")
+    if [ ! -f "$KEYSTORE" ]; then
+        keytool -genkeypair -keystore "$KEYSTORE" -storepass "$PASS" -keypass "$PASS" \
+            -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -dname CN=r2hack
+    fi
 fi
+export R2_SIGN_PASS=$PASS   # apksigner reads it from the environment, so it never shows up in ps
 
 # versionCode = minutes since 2025-01-01, so every build can replace the previous one.
 VERSION_CODE=$(( ($(date -u +%s) - $(date -u -d 2025-01-01 +%s 2>/dev/null || date -u -j -f %Y-%m-%d 2025-01-01 +%s)) / 60 ))
-VERSION_NAME=$(date +%Y.%m.%d-%H%M)
+VERSION_NAME=${R2_VERSION_NAME:-$(date +%Y.%m.%d-%H%M)}
+case "$VERSION_NAME" in
+    *[!A-Za-z0-9._+-]*|'') echo "bad version name '$VERSION_NAME' (letters, digits and . _ + - only)" >&2; exit 1 ;;
+esac
 
 # build_app <name> <dir> <apk name> <generate function>
 build_app() {
@@ -89,7 +107,7 @@ build_app() {
     (cd "$work/dex" && zip -q -j "$work/unsigned.apk" classes.dex)
 
     "$BT/zipalign" -f -p 4 "$work/unsigned.apk" "$work/aligned.apk"
-    "$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass "pass:$PASS" --ks-key-alias r2hack \
+    "$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass env:R2_SIGN_PASS --ks-key-alias "$KEY_ALIAS" \
         --min-sdk-version 19 --out "$OUT_DIR/$apk" "$work/aligned.apk"
     echo "   -> $OUT_DIR/$apk"
 }

@@ -37,6 +37,13 @@ it up. Details: [docs/architecture.md](docs/architecture.md). The controller pro
   programmers, connect TX→TX and RX→RX.
 - The controller board is on `/dev/ttyS2` at 115200.
 
+## Prebuilt releases
+Tagged versions are published as signed APKs on the repository's GitHub Releases page, so you can skip the
+build toolchain below if you only want to install: put `R2Agent.apk` and `R2Main.apk` in `apps\out\` and
+follow [First install](#first-install). A robot updates in place only from APKs signed with the same key it
+has, so switching between your own builds, these releases and a fork's takes a one-time reinstall:
+[docs/releases.md](docs/releases.md).
+
 ## Setup (Windows, PowerShell)
 Everything lives under `tools\` and is ignored by git:
 

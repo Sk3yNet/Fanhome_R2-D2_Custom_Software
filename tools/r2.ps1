@@ -5,6 +5,12 @@
 #   log-previous             agent event log from the previous boot (e.g. after a crash or power loss)
 #   action <name>            run a robot action, e.g. dance, wake, lightsaber, leia (list: actions)
 #   stop                     emergency stop (the agent stops the robot itself, then cancels the action)
+#   routines                 list the stored routines (docs/routines.md) and what's running
+#   routine <name>           show one routine's JSON
+#   routine-put <file.json>  upload a routine (checked on the robot; replaces one with the same name)
+#   routine-run <name>       run a routine (also: action <name>)
+#   routine-stop             end the running routine or action
+#   routine-delete <name>    delete a routine (a replaced built-in action comes back)
 #   volume <0-100>           droid sounds and music volume (kept across reboots)
 #   logcat [text] [-Lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
 #   dmesg [text] [-Lines N]  kernel log
@@ -105,6 +111,19 @@ switch ($Command) {
     'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off' -split ' ' }
     'action'       { if (-not $Arg) { throw 'usage: r2.ps1 action <name>  (see: r2.ps1 actions)' }; Call POST "/action?name=$([uri]::EscapeDataString("$Arg"))" }
     'stop'         { Call POST /stop }
+    'routines'     {
+        $d = Call GET /routines
+        "running: $($d.running)" + $(if ($d.last_routine) { "   last: $($d.last_routine)" } else { '' })
+        $d.routines | Format-Table name, steps, timeout, while_charging, replaces_action, description, error -AutoSize
+    }
+    'routine'      { if (-not $Arg) { throw 'usage: r2.ps1 routine <name>' }; (Call GET "/routine?name=$([uri]::EscapeDataString($Arg))").routine | ConvertTo-Json -Depth 20 }
+    'routine-put'  {
+        if (-not $Arg -or -not (Test-Path $Arg)) { throw 'usage: r2.ps1 routine-put <file.json>  (examples: docs\routines\)' }
+        Call POST /routine (Get-Content $Arg -Raw -Encoding UTF8)
+    }
+    'routine-run'  { if (-not $Arg) { throw 'usage: r2.ps1 routine-run <name>' }; Call POST "/routine/run?name=$([uri]::EscapeDataString($Arg))" }
+    'routine-stop' { Call POST /routine/stop }
+    'routine-delete' { if (-not $Arg) { throw 'usage: r2.ps1 routine-delete <name>' }; Call POST "/routine/delete?name=$([uri]::EscapeDataString($Arg))" }
     'volume'       { if ($Arg -notmatch '^\d+$') { throw 'usage: r2.ps1 volume <0-100>' }; Call POST "/volume?percent=$Arg" }
     { $_ -in 'logcat', 'dmesg' } {
         $q = "?lines=$Lines"; if ($Arg) { $q += '&grep=' + [uri]::EscapeDataString($Arg) }

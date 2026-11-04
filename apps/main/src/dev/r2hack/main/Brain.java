@@ -1,6 +1,10 @@
 package dev.r2hack.main;
 
 import android.util.Log;
+import java.io.File;
+import java.util.Arrays;
+import java.util.Set;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
@@ -9,6 +13,8 @@ import org.json.JSONObject;
  * with the factory timing (each step waits before it runs). Also: modes (ready, sleep, pairing, patrol,
  * user control), status lights, the robot's buttons, and the official phone app (PhoneLink).
  * Run an action with  tools\r2.ps1 action <name>  (names in ACTIONS below).
+ * Routines (docs/routines.md) are stored JSON step lists run by RoutineRunner on the same sequencer.
+ * A routine named like one of ROUTINE_ACTIONS replaces that action everywhere (voice, buttons, phone app).
  */
 final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assist.Host {
     private static final String TAG = "R2Brain";
@@ -19,6 +25,12 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             "lightsaber", "arm", "short-lcd", "long-lcd", "flash-front", "flash-back", "leia", "luke",
             "mute", "unmute", "pair", "phone-app-on", "phone-app-off", "voice-on", "voice-off", "face-on", "face-off",
     };
+
+    /**
+     * Built-in actions a routine can run as a step, and that a routine of the same name replaces.
+     * The rest of ACTIONS (stop, settings, pairing, patrol) are reserved names.
+     */
+    static final Set<String> ROUTINE_ACTIONS = Routine.STEP_ACTIONS;
 
     // The phone app's action numbers (the factory `mode` command) -> action names.
     private static final String[] APP_MODES = {
@@ -50,6 +62,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private final Voice voice;
     private final Assist assist;
     private final FaceTracker face;
+    private final RoutineStore routines;
+    private volatile String lastRoutine = "";   // how the last routine ended, for listings and /status
 
     private volatile long lastActivity = System.currentTimeMillis();
     private volatile long pairUntil;
@@ -77,6 +91,13 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 stopMotion();
             }
         });
+        seq.setOnChange(new Runnable() {
+            @Override
+            public void run() {
+                reportRunning();
+            }
+        });
+        this.routines = new RoutineStore(new File(io.getFilesDir(), "routines"), ROUTINE_ACTIONS);
         this.dlna = new DlnaRenderer(io, sounds);
         sounds.onChange = new Runnable() {
             @Override
@@ -113,7 +134,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 + dlna.status() + "\n" + camera.status() + "\n" + phone.status() + "\n" + voice.status()
                 + "\n" + assist.status()
                 + "\nface: " + (face.tracking() ? "tracking a face" : faceActive ? "looking" : "off") + "\nname: " + robot.name()
-                + "\nbattery: " + (robot.battery < 0 ? "?" : robot.battery + "%");
+                + "\nbattery: " + (robot.battery < 0 ? "?" : robot.battery + "%")
+                + "\nroutines: " + routines.names().size() + (lastRoutine.isEmpty() ? "" : ", last: " + lastRoutine);
     }
 
     /** Called each time the bridge connection to the agent is (re)established. */
@@ -122,6 +144,23 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         lights.reset();
         lights.refresh();
         reportSettings();
+        reportRunning();
+    }
+
+    /** The bridge to the agent dropped: nothing can reach the controller, so end whatever runs. */
+    void onDisconnected() {
+        if (!"idle".equals(seq.running())) {
+            Log.w(TAG, "agent connection lost, cancelling " + seq.running());
+            seq.cancel();
+        }
+    }
+
+    /** Tells the agent what's running (an action or routine, or idle), for its /status and Home Assistant. */
+    private void reportRunning() {
+        try {
+            io.send(new JSONObject().put("agent", "running").put("name", seq.running()).put("last_routine", lastRoutine));
+        } catch (Exception ignored) {
+        }
     }
 
     /** Tells the agent the volume, mute, voice and face settings, for its /status (the web page's controls). */
@@ -182,6 +221,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "identity":
                 robot.importIdentity(msg.optString("name"), msg.optString("uuid"), msg.optJSONArray("clients"));
                 Log.i(TAG, "identity imported: " + robot.name());
+                break;
+            case "routines":
+                onRoutinesRequest(msg);
                 break;
             case "wifi-list":
             case "wifi-join-result":
@@ -256,6 +298,11 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 break;
             default:
                 break;
+        }
+        // A stored routine replaces a built-in action of the same name, and adds new names.
+        if ((ROUTINE_ACTIONS.contains(name) || job(name) == null) && routines.exists(name)) {
+            runRoutine(name);
+            return;
         }
         Sequencer.Job job = job(name);
         if (job == null) {
@@ -349,6 +396,191 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "luke": return hologram(2, S_LUKE);
             default: return null;
         }
+    }
+
+    // ---- routines ----------------------------------------------------------------------
+
+    /** Starts a stored routine on the sequencer (cancelling what runs). Returns an error, or null. */
+    String runRoutine(final String name) {
+        final Routine r;
+        try {
+            r = routines.load(name);
+        } catch (Routine.Invalid e) {
+            lastRoutine = name + ": not run, " + e.getMessage();
+            Log.w(TAG, "routine " + lastRoutine);
+            reportRunning();
+            return lastRoutine;
+        }
+        if (r == null) return "no routine named " + name;
+        wake();
+        Log.i(TAG, "routine " + name);
+        final RoutineRunner runner = new RoutineRunner(routineHost, RoutineRunner.REAL_CLOCK);
+        seq.start(name, new Sequencer.Job() {
+            public void run() throws Exception {
+                try {
+                    runner.run(r);
+                    lastRoutine = name + ": finished";
+                } catch (RoutineRunner.Abort a) {
+                    lastRoutine = name + ": stopped, " + a.getMessage();
+                    Log.w(TAG, "routine " + lastRoutine);
+                    stopMotion();
+                } catch (InterruptedException cancelled) {
+                    lastRoutine = name + ": cancelled";
+                    throw cancelled;
+                } catch (Exception e) {
+                    lastRoutine = name + ": failed, " + e;
+                    throw e;
+                }
+            }
+        });
+        return null;
+    }
+
+    private final RoutineRunner.Host routineHost = new RoutineRunner.Host() {
+        @Override
+        public void send(JSONObject cmd) {
+            io.send(cmd);
+        }
+
+        @Override
+        public void playSound(int number) {
+            sounds.play(number, true);
+        }
+
+        @Override
+        public boolean soundPlaying() {
+            return sounds.isPlaying();
+        }
+
+        @Override
+        public void stopSound() {
+            sounds.stop();
+        }
+
+        @Override
+        public void runAction(String name) throws Exception {
+            Sequencer.Job j = ROUTINE_ACTIONS.contains(name) ? job(name) : null; // always the built-in one
+            if (j != null) j.run();
+        }
+
+        @Override
+        public Routine load(String name) {
+            try {
+                return routines.load(name);
+            } catch (Routine.Invalid e) {
+                return null;
+            }
+        }
+
+        @Override
+        public int field(String name) {
+            switch (name) {
+                case "battery": return robot.battery;
+                case "charging": return robot.charging;
+                case "arm": return robot.arm;
+                case "lightsaber": return robot.lightsaber;
+                case "projector": return robot.projector;
+                case "lcd_s": return robot.lcdS;
+                case "lcd_l": return robot.lcdL;
+                default: return -1;
+            }
+        }
+
+        @Override
+        public String error() {
+            return robot.error;
+        }
+    };
+
+    /**
+     * The agent's routine API: {"agent":"routines","seq":N,"op":"list|get|put|delete|run|stop",...}.
+     * The reply is {"agent":"routines-reply","seq":N,"ok":true|false,...} (error: "error").
+     */
+    private void onRoutinesRequest(JSONObject msg) {
+        JSONObject reply = new JSONObject();
+        try {
+            reply.put("agent", "routines-reply").put("seq", msg.optInt("seq"));
+            String op = msg.optString("op"), name = msg.optString("name");
+            switch (op) {
+                case "list": {
+                    JSONArray list = new JSONArray();
+                    for (String n : routines.names()) {
+                        JSONObject e = new JSONObject().put("name", n).put("replaces_action", ROUTINE_ACTIONS.contains(n));
+                        try {
+                            Routine r = routines.load(n);
+                            if (r == null) continue;
+                            e.put("description", r.description).put("steps", r.stepCount())
+                                    .put("timeout", r.timeoutMs / 1000.0).put("while_charging", r.whileCharging);
+                        } catch (Routine.Invalid bad) {
+                            e.put("error", bad.getMessage());
+                        }
+                        list.put(e);
+                    }
+                    reply.put("ok", true).put("routines", list).put("actions", new JSONArray(Arrays.asList(ACTIONS)))
+                            .put("running", seq.running()).put("last_routine", lastRoutine);
+                    break;
+                }
+                case "get": {
+                    Routine r = routines.load(name);
+                    if (r == null) reply.put("ok", false).put("error", "no routine named " + name);
+                    else reply.put("ok", true).put("routine", r.source);
+                    break;
+                }
+                case "put": {
+                    JSONObject j = msg.optJSONObject("routine");
+                    if (j == null) throw new Routine.Invalid("send the routine as a JSON object");
+                    if (name.isEmpty()) name = j.optString("name");
+                    else if (!j.has("name")) j.put("name", name);
+                    if (!name.equals(j.optString("name"))) throw new Routine.Invalid("the name in the URL and in the routine differ");
+                    for (String a : ACTIONS) {
+                        if (a.equals(name) && !ROUTINE_ACTIONS.contains(name)) {
+                            throw new Routine.Invalid("\"" + name + "\" is a reserved action name");
+                        }
+                    }
+                    boolean existed = routines.exists(name);
+                    Routine r = routines.save(j);
+                    Log.i(TAG, "routine saved: " + r.name);
+                    reply.put("ok", true).put("result", (existed ? "replaced " : "saved ") + r.name + " (" + r.stepCount() + " steps)"
+                            + (ROUTINE_ACTIONS.contains(r.name) ? "; it now replaces the built-in " + r.name + " action" : ""));
+                    break;
+                }
+                case "delete":
+                    if (seq.isRunning(name)) seq.cancel();
+                    if (routines.delete(name)) {
+                        reply.put("ok", true).put("result", "deleted " + name
+                                + (ROUTINE_ACTIONS.contains(name) ? "; the built-in " + name + " action is back" : ""));
+                    } else {
+                        reply.put("ok", false).put("error", "no routine named " + name);
+                    }
+                    break;
+                case "run": {
+                    String err = routines.exists(name) ? runRoutine(name) : "no routine named " + name;
+                    if (err == null) reply.put("ok", true).put("result", "running " + name);
+                    else reply.put("ok", false).put("error", err);
+                    break;
+                }
+                case "stop": {
+                    String was = seq.running();
+                    seq.cancel();
+                    reply.put("ok", true).put("result", "idle".equals(was) ? "nothing was running" : "stopped " + was);
+                    break;
+                }
+                default:
+                    reply.put("ok", false).put("error", "unknown op " + op);
+            }
+        } catch (Routine.Invalid e) {
+            try {
+                reply.put("ok", false).put("error", e.getMessage());
+            } catch (Exception ignored) {
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "routines request failed", e);
+            try {
+                reply.put("ok", false).put("error", String.valueOf(e));
+            } catch (Exception ignored) {
+            }
+        }
+        io.send(reply);
     }
 
     /** The factory turns: an acknowledgement, then the controller's own movement. */
