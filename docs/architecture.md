@@ -181,5 +181,7 @@ To keep phones that were paired with the factory software working, copy the robo
 ## Files
 - `secrets\` – signing key, its password, and the API token. Keep private; losing the key means
   the agent/main can't be updated in place (uninstall + reinstall over adb instead).
+  GitHub releases are signed with the key in the repository's Actions secrets
+  ([releases.md](releases.md)).
 - The UART library `libr2d2.so` is not part of this repository: the agent loads the robot's own
   `/system/lib/libr2d2.so` (or extracts it from the factory app on the device).
