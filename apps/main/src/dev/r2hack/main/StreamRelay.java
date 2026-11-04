@@ -84,9 +84,17 @@ final class StreamRelay {
                 return n;
             }
             if (pos > readTotal || ended) return -1;     // asked for data that hasn't arrived, or the stream is over
-            int n = in.read(buf);
+            int n;
+            try {
+                n = in.read(buf);
+            } catch (Exception e) {
+                ended = true;
+                Log.w(TAG, "source failed after " + readTotal + " bytes: " + e);
+                return -1;
+            }
             if (n <= 0) {
                 ended = true;
+                Log.i(TAG, "source ended after " + readTotal + " bytes");
                 return -1;
             }
             if (keptLen < HEAD) {
@@ -99,6 +107,11 @@ final class StreamRelay {
             if (n > first) System.arraycopy(buf, first, ring, 0, n - first);
             readTotal += n;
             return n;
+        }
+
+        /** True if the stream is over and nothing at pos can be served. */
+        synchronized boolean isOver(long pos) {
+            return ended && pos >= readTotal && pos >= keptLen;
         }
 
         void close() {
@@ -168,6 +181,11 @@ final class StreamRelay {
                 return;
             }
             long pos = Math.max(0, range[0]);
+            if (src.isOver(pos)) {
+                // Nothing more will come: say so, or the player asks again and again.
+                out.write("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(UTF8));
+                return;
+            }
             Log.i(TAG, "player request" + (range[0] >= 0 ? " from byte " + range[0] : "") + ": " + src.type
                     + (src.length > 0 ? ", " + src.length + " bytes" : ", live stream"));
             if (pos > 0) {
