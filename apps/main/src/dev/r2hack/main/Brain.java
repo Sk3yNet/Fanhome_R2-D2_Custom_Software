@@ -62,6 +62,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private final Voice voice;
     private final Assist assist;
     private final FaceTracker face;
+    private final HomeAssistant ha;
     private final RoutineStore routines;
     private volatile String lastRoutine = "";   // how the last routine ended, for listings and /status
 
@@ -119,11 +120,19 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         this.assist = new Assist(io, this);
         voice.setStream(assist);
         this.face = new FaceTracker(this);
+        this.ha = new HomeAssistant(haHost());
+        robot.addListener(new Robot.Listener() {
+            @Override
+            public void onRobotChanged() {
+                ha.stateChanged();
+            }
+        });
         camera.setRawListener(face);
         dlna.start();
         camera.start();
         phone.start();
         voice.start();
+        ha.start();
         assist.start();
         startTimers();
     }
@@ -135,7 +144,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 + "\n" + assist.status()
                 + "\nface: " + (face.tracking() ? "tracking a face" : faceActive ? "looking" : "off") + "\nname: " + robot.name()
                 + "\nbattery: " + (robot.battery < 0 ? "?" : robot.battery + "%")
-                + "\nroutines: " + routines.names().size() + (lastRoutine.isEmpty() ? "" : ", last: " + lastRoutine);
+                + "\nroutines: " + routines.names().size() + (lastRoutine.isEmpty() ? "" : ", last: " + lastRoutine)
+                + "\n" + ha.status();
     }
 
     /** Called each time the bridge connection to the agent is (re)established. */
@@ -221,6 +231,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "identity":
                 robot.importIdentity(msg.optString("name"), msg.optString("uuid"), msg.optJSONArray("clients"));
                 Log.i(TAG, "identity imported: " + robot.name());
+                break;
+            case "mqtt": // broker settings from POST /mqtt (sent again each time we connect to the agent)
+                ha.configure(msg);
                 break;
             case "routines":
                 onRoutinesRequest(msg);
@@ -748,6 +761,68 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         }, "brain-timers");
         t.setDaemon(true);
         t.start();
+    }
+
+    // ---- Home Assistant ---------------------------------------------------------------------
+
+    private HomeAssistant.Host haHost() {
+        return new HomeAssistant.Host() {
+            @Override
+            public JSONObject haState() {
+                JSONObject s = new JSONObject();
+                try {
+                    int m = robot.mode;
+                    s.put("battery", robot.battery).put("charging", robot.charging)
+                            .put("lightsaber", robot.lightsaber != 0).put("arm", robot.arm != 0)
+                            .put("projector", robot.projector).put("lcd_s", robot.lcdS >= 2).put("lcd_l", robot.lcdL >= 2)
+                            .put("mode", m >= 1 && m <= HomeAssistant.MODES.length ? HomeAssistant.MODES[m - 1] : "ready")
+                            .put("action", seq.running()).put("error", robot.error)
+                            .put("muted", sounds.muted()).put("volume", sounds.volume())
+                            .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
+                            .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION);
+                } catch (Exception ignored) {
+                }
+                return s;
+            }
+
+            @Override
+            public void action(String name) {
+                Brain.this.action(name);
+            }
+
+            @Override
+            public java.util.List<String> routineNames() {
+                return routines.names();
+            }
+
+            @Override
+            public void runRoutine(String name) {
+                Brain.this.runRoutine(name);
+            }
+
+            @Override
+            public void projector(int mode) {
+                Brain.this.projector(mode);
+            }
+
+            @Override
+            public void setVolume(int percent) {
+                sounds.setVolume(percent);
+            }
+
+            @Override
+            public void log(String msg) {
+                Log.i(TAG, msg);
+            }
+
+            @Override
+            public void haStatus(String state) {
+                try {
+                    io.send(new JSONObject().put("agent", "mqtt-status").put("state", state));
+                } catch (Exception ignored) {
+                }
+            }
+        };
     }
 
     // ---- Voice.Host and FaceTracker.Host ----------------------------------------------------
