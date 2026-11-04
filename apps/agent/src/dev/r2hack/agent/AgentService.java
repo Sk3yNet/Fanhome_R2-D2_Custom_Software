@@ -28,6 +28,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     private Bridge bridge;
     private Supervisor supervisor;
     private WifiFailover wifi;
+    private AdbControl adb;
     private boolean passive;
     private boolean sim;
     /** Setup window: opened by the pairing button; Wi-Fi setup and the token work without a token meanwhile. */
@@ -60,6 +61,9 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         passive = stockAppEnabled();
         EventLog.i("agent " + Secrets.VERSION + " starting" + (passive ? " (PASSIVE: stock app enabled)" : ""));
 
+        loadExtraSubnets();
+        adb = new AdbControl(getSharedPreferences("agent", MODE_PRIVATE));
+        adb.start();
         supervisor = new Supervisor(this, this);
         wifi = new WifiFailover(this);
         wifi.start();
@@ -422,6 +426,46 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 if (!toMain(new JSONObject().put("agent", "volume").put("percent", pct))) return bad("main app not connected");
                 return result("volume " + pct + "%");
             }
+            case "POST /adb": { // on=1 [&minutes=N] for a while, always=1 across reboots, on=0 off
+                if ("1".equals(req.query.get("always"))) return result(adb.setAlways());
+                if (!"1".equals(req.query.get("on"))) return result(adb.disable());
+                int minutes = Config.ADB_DEFAULT_MINUTES;
+                if (req.query.containsKey("minutes")) {
+                    try {
+                        minutes = Integer.parseInt(req.query.get("minutes").trim());
+                    } catch (NumberFormatException e) {
+                        minutes = -1;
+                    }
+                }
+                if (minutes < 1 || minutes > Config.ADB_MAX_MINUTES) {
+                    return bad("minutes must be 1 to " + Config.ADB_MAX_MINUTES);
+                }
+                return result(adb.enable(minutes));
+            }
+            case "GET /clients/allow":
+                return HttpApi.Response.json(200, new JSONObject().put("extra_subnets", subnetList()).toString());
+            case "POST /clients/allow": { // ?subnets=10.0.20.0/24,192.168.5.10 (empty: only the robot's own subnet)
+                String raw = req.query.get("subnets");
+                java.util.List<HttpApi.Subnet> list = new java.util.ArrayList<>();
+                if (raw != null) {
+                    for (String part : raw.split(",")) {
+                        if (part.trim().isEmpty()) continue;
+                        try {
+                            list.add(HttpApi.Subnet.parse(part));
+                        } catch (Exception e) {
+                            return bad(e.getMessage());
+                        }
+                    }
+                }
+                if (list.size() > 16) return bad("at most 16 extra subnets");
+                HttpApi.setExtraSubnets(list);
+                StringBuilder stored = new StringBuilder();
+                for (HttpApi.Subnet n : list) stored.append(stored.length() == 0 ? "" : ",").append(n);
+                getSharedPreferences("agent", MODE_PRIVATE).edit().putString("extra-subnets", stored.toString()).commit();
+                EventLog.i("http: extra allowed subnets now [" + stored + "]");
+                return result(list.isEmpty() ? "only clients on the robot's own subnet are accepted"
+                        : "also accepting clients from " + stored);
+            }
             case "POST /safe-mode":
                 supervisor.setSafeMode("1".equals(req.query.get("on")));
                 return result("safe mode " + (supervisor.safeMode() ? "on" : "off"));
@@ -534,6 +578,10 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         s.put("safe_mode", supervisor.safeMode());
         s.put("last_event", supervisor.lastEvent());
         s.put("stock_app_enabled", stockAppEnabled());
+        s.put("adb_wifi", adb.isOn());
+        s.put("adb_wifi_always", adb.always());
+        s.put("adb_wifi_seconds_left", adb.secondsLeft());
+        s.put("extra_subnets", subnetList());
         if (serial != null) {
             s.put("serial_open", serial.isOpen());
             long rx = serial.lastRxAt();
@@ -552,6 +600,26 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             s.put("face_tracking", set.optBoolean("face"));
         }
         return s;
+    }
+
+    private void loadExtraSubnets() {
+        String stored = getSharedPreferences("agent", MODE_PRIVATE).getString("extra-subnets", "");
+        java.util.List<HttpApi.Subnet> list = new java.util.ArrayList<>();
+        for (String part : stored.split(",")) {
+            if (part.trim().isEmpty()) continue;
+            try {
+                list.add(HttpApi.Subnet.parse(part));
+            } catch (Exception e) {
+                EventLog.i("http: ignoring stored subnet " + part + ": " + e.getMessage());
+            }
+        }
+        HttpApi.setExtraSubnets(list);
+    }
+
+    private static org.json.JSONArray subnetList() {
+        org.json.JSONArray a = new org.json.JSONArray();
+        for (HttpApi.Subnet n : HttpApi.extraSubnets()) a.put(n.toString());
+        return a;
     }
 
     private boolean stockAppEnabled() {

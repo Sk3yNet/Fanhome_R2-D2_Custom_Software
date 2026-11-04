@@ -71,7 +71,7 @@ Everything lives under `tools\` and is ignored by git:
    powershell -ExecutionPolicy Bypass -File tools\install-on-robot.ps1 install
    ```
    This disables the factory app (nothing is deleted), puts R2 Agent in `/system/priv-app`, installs
-   R2 Main, turns on adb over Wi-Fi, and reboots. The robot then joins its saved home Wi-Fi network,
+   R2 Main, and reboots. adb over Wi-Fi is off from then on; `tools\r2.ps1 adb` switches it on for 30 minutes. The robot then joins its saved home Wi-Fi network,
    or brings up its own hotspot if it can't.
 
 ## Everyday use
@@ -84,7 +84,7 @@ Or drive it from a phone: open `http://<robot-ip>:7700/` and enter your API toke
 hotspot to your Wi-Fi, see *Wi-Fi setup without a QR code* in [docs/architecture.md](docs/architecture.md).
 
 Other `tools\r2.ps1` commands: `action <name>` (`actions` lists them), `stop`, `log`, `log-previous`,
-`logcat [text]`, `dmesg [text]`, `adb`, `serial '<json>'`, `rollback`, `restart`, `push-agent`,
+`logcat [text]`, `dmesg [text]`, `adb [minutes]`, `adb-off`, `allow-subnets <list>`, `serial '<json>'`, `rollback`, `restart`, `push-agent`,
 `safe-on`/`safe-off`, `wifi-station`/`wifi-ap`, `stock-on`/`stock-off`, `reboot`, `shutdown`, `fetch-token`.
 
 R2 also shows up in Home Assistant as a media player (DLNA), for music and announcements, and its camera can be added as an MJPEG camera (see [docs/architecture.md](docs/architecture.md)). *Not yet tested on the robot.*
@@ -102,11 +102,13 @@ power-off permission the power button uses.
 - Last resort: the serial console and your eMMC backup.
 
 ## Security warning
-Right now the API is protected only by a token over plain HTTP, and only accepts clients on private networks.
+Right now the API is protected only by a token over plain HTTP, and only accepts clients on the robot's own
+subnet (add others, such as a Home Assistant VLAN, with `tools\r2.ps1 allow-subnets`).
 Pressing the pairing button opens a 2-minute window in which anyone on the network can set up Wi-Fi and
 fetch the token. The official phone app's protocol has no real authentication; turn it off with
-`tools\r2.ps1 action phone-app-off` if you don't use the app. adb over Wi-Fi gives a root shell
-with **no authentication** to anyone on the same network. Only use this on a network you trust. Better
+`tools\r2.ps1 action phone-app-off` if you don't use the app. adb over Wi-Fi is off by default, but
+while it's on (`tools\r2.ps1 adb`, 30 minutes) it gives a root shell with **no authentication** to anyone on the
+same network. Only use this on a network you trust. Better
 authentication is the first item on the [roadmap](ROADMAP.md).
 
 ## License

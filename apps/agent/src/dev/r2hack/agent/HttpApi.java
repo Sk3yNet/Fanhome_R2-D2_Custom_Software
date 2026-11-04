@@ -8,11 +8,16 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Inet6Address;
 import java.net.InetAddress;
+import java.net.InterfaceAddress;
+import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URLDecoder;
 import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -131,6 +136,11 @@ final class HttpApi {
                 s.close();
                 return;
             }
+            if (!onOurSubnet(s.getInetAddress())) {
+                refusedOffSubnet(s.getInetAddress());
+                s.close();
+                return;
+            }
             InputStream in = new BufferedInputStream(s.getInputStream());
             req = parseHead(in);
             // The page itself is public; everything it does goes through token-protected routes.
@@ -218,6 +228,128 @@ final class HttpApi {
             }
         }
         return a.isLoopbackAddress() || a.isSiteLocalAddress() || a.isLinkLocalAddress();
+    }
+
+    /**
+     * Extra subnets allowed besides the robot's own (e.g. Home Assistant on another VLAN), as
+     * {address bytes, prefix length}. Set from the stored setting (POST /clients/allow).
+     */
+    private static volatile List<Subnet> extraSubnets = Collections.emptyList();
+    private static final Map<String, Long> lastRefusalLog = new HashMap<>();
+
+    static final class Subnet {
+        final byte[] net;
+        final int prefix;
+
+        Subnet(byte[] net, int prefix) {
+            this.net = net;
+            this.prefix = prefix;
+        }
+
+        boolean contains(byte[] a) {
+            return a.length == net.length && samePrefix(a, net, prefix);
+        }
+
+        @Override
+        public String toString() {
+            try {
+                return InetAddress.getByAddress(net).getHostAddress() + "/" + prefix;
+            } catch (Exception e) {
+                return "?/" + prefix;
+            }
+        }
+
+        /** Parses "a.b.c.d/n" (IPv4 or IPv6); a bare address means a single host. */
+        static Subnet parse(String text) throws Exception {
+            String t = text.trim();
+            int slash = t.indexOf('/');
+            String addr = slash >= 0 ? t.substring(0, slash) : t;
+            if (!addr.matches("[0-9a-fA-F:.]+")) throw new Exception("not an IP address: " + t); // no DNS lookups
+            byte[] b = InetAddress.getByName(addr).getAddress();
+            int max = b.length * 8;
+            int p = slash >= 0 ? Integer.parseInt(t.substring(slash + 1).trim()) : max;
+            if (p < 8 || p > max) throw new Exception("prefix length must be 8 to " + max + ": " + t);
+            return new Subnet(b, p);
+        }
+    }
+
+    static void setExtraSubnets(List<Subnet> subnets) {
+        extraSubnets = Collections.unmodifiableList(new ArrayList<>(subnets));
+    }
+
+    static List<Subnet> extraSubnets() {
+        return extraSubnets;
+    }
+
+    /**
+     * The client must be on a subnet of one of the robot's own interfaces (Wi-Fi or its hotspot),
+     * or loopback, or IPv6 link-local, or in an allowed extra subnet. A private address alone is not
+     * enough: another private network routed to this one (a guest network, a VPN) is refused.
+     */
+    static boolean onOurSubnet(InetAddress a) {
+        a = unmapped(a);
+        if (a == null) return false;
+        if (a.isLoopbackAddress() || (a instanceof Inet6Address && a.isLinkLocalAddress())) return true;
+        byte[] client = a.getAddress();
+        for (Subnet s : extraSubnets) {
+            if (s.contains(client)) return true;
+        }
+        try {
+            for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                if (!ni.isUp()) continue;
+                for (InterfaceAddress ia : ni.getInterfaceAddresses()) {
+                    InetAddress own = ia.getAddress();
+                    if (own == null || own.isLoopbackAddress()) continue;
+                    byte[] ours = own.getAddress();
+                    if (ours.length != client.length) continue;
+                    int prefix = ia.getNetworkPrefixLength();
+                    // Some Android 4.x builds report nonsense for IPv4 (e.g. 64 or 0); assume a /24 then.
+                    if (ours.length == 4 && (prefix <= 0 || prefix > 32)) prefix = 24;
+                    if (ours.length == 16 && (prefix <= 0 || prefix > 128)) prefix = 64;
+                    if (samePrefix(client, ours, prefix)) return true;
+                }
+            }
+        } catch (Exception e) {
+            EventLog.e("http: could not list network interfaces, allowing private client", e);
+            return true; // localClient() already passed; don't lock everyone out on a platform quirk
+        }
+        return false;
+    }
+
+    static boolean samePrefix(byte[] a, byte[] b, int prefix) {
+        int full = prefix / 8, rest = prefix % 8;
+        for (int i = 0; i < full; i++) if (a[i] != b[i]) return false;
+        if (rest == 0) return true;
+        int mask = (0xff << (8 - rest)) & 0xff;
+        return (a[full] & mask) == (b[full] & mask);
+    }
+
+    /** IPv4-mapped IPv6 (::ffff:a.b.c.d) as IPv4; null if it can't be converted. */
+    private static InetAddress unmapped(InetAddress a) {
+        if (!(a instanceof Inet6Address)) return a;
+        byte[] b = a.getAddress();
+        boolean mapped = true;
+        for (int i = 0; i < 10; i++) mapped &= b[i] == 0;
+        mapped &= b[10] == (byte) 0xff && b[11] == (byte) 0xff;
+        if (!mapped) return a;
+        try {
+            return InetAddress.getByAddress(new byte[] {b[12], b[13], b[14], b[15]});
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Logs a refused client at most once a minute per address, so a polling client can't flood the log. */
+    private static void refusedOffSubnet(InetAddress a) {
+        String ip = a.getHostAddress();
+        long now = System.currentTimeMillis();
+        synchronized (lastRefusalLog) {
+            Long last = lastRefusalLog.get(ip);
+            if (last != null && now - last < 60_000) return;
+            if (lastRefusalLog.size() > 256) lastRefusalLog.clear();
+            lastRefusalLog.put(ip, now);
+        }
+        EventLog.i("http: refused " + ip + ": not on the robot's own subnet (allow it with POST /clients/allow)");
     }
 
     private static Request parseHead(InputStream in) throws Exception {

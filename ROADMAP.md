@@ -92,9 +92,9 @@ Today:
 
 ### Phase 1: before other people install this
 - [ ] **adb off by default.** Wi-Fi adb is switched on only by an authenticated API call, for a limited
-      time, and switched off again automatically.
+      time, and switched off again automatically. *Built, not yet tested on the robot.* `tools\r2.ps1 adb` switches it on for 30 minutes (`POST /adb?on=1`); `adb-always` keeps the old behavior for development.
 - [ ] **Local network only, enforced.** Reject connections from non-private source addresses and from
-      outside the robot's own subnet. *Built, not yet tested on the robot.* Non-private addresses are refused; the same-subnet check is still to do.
+      outside the robot's own subnet. *Built, not yet tested on the robot.* Non-private addresses are refused, and so are clients outside the robot's own subnet unless allowed with `tools\r2.ps1 allow-subnets`.
 - [ ] **Token out of the APK.** Each robot gets its own credentials at pairing or install time instead of a
       token built into the build. This is required before prebuilt releases can be published (section 5). *Built, not yet tested on the robot.* Each robot now makes its own token (`tools\r2.ps1 fetch-token` copies it over root adb), and `build.ps1 -Release` leaves the built-in one out. Handing it over without adb comes with pairing (phase 2).
 
