@@ -154,7 +154,11 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
 ## 5. Releases and tooling
 - [x] **CI:** a GitHub Actions build of both APKs on every push, using `apps/build.sh`, the Linux/macOS version of the build script.
 - [ ] **Signed releases** on GitHub, so users don't have to set up a build toolchain. Depends on
-      "token out of the APK" (section 3).
+      "token out of the APK" (section 3). *Built, not yet tested on the robot.* A `v*` tag builds both APKs
+      without a token, signs them with the key in the repository's secrets, and publishes them; forks
+      release with their own key. Setup and switching between signers: [docs/releases.md](docs/releases.md).
+- [ ] **Switch between signers without manual steps** (e.g. upstream releases ↔ a fork's): a
+      `switch-source` command that keeps settings. Plan in [docs/releases.md](docs/releases.md).
 - [ ] **Cross-platform PC tool:** replace the PowerShell scripts with one small Python CLI (status, push,
       logs, adb, install, restore) for Windows, macOS and Linux.
 - [ ] Setup script for the build toolchain (JDK, Android SDK, platform-tools).
@@ -163,10 +167,15 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
 ## 6. Scripted movement routines
 - [ ] Routine format (e.g. JSON): steps of `cmd` (any controller command), `wait`, `wait_until`
       (a condition on `gin` state), `repeat`, sound and LED cues. The built-in actions from section 2
-      become editable routines in this format.
+      become editable routines in this format. *Built, not yet tested on the robot.* See
+      [docs/routines.md](docs/routines.md). Also `head`, `mode`, `drive`, `action` (a built-in action) and
+      `routine` (another routine) steps. A routine named like a built-in action replaces it; the built-in
+      actions themselves are still Java, with `shake-head` as a worked example in `docs/routines/`.
 - [ ] Interpreter in R2 Main, with safety built in: stop if the controller reports an error or the robot
       is charging, an overall timeout, and an emergency stop (API, button, or loss of the agent connection).
-- [ ] Upload, list, run and stop routines through the agent API and the PC tool.
+      *Built, not yet tested on the robot.* Also stops below 10% battery. Off-robot tests: `apps/test.sh`.
+- [ ] Upload, list, run and stop routines through the agent API and the PC tool. *Built, not yet tested on the robot.*
+      `GET /routines`, `POST /routine`, `POST /routine/run`, `tools\r2.ps1 routines`, and buttons on the web page.
 - [ ] Triggers: robot buttons, voice commands, a schedule, or external events (see section 9).
 - [ ] Test routines against the controller simulator (section 1).
 - [ ] Later: record a routine by driving the robot, then play it back.
@@ -202,7 +211,7 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       routines; switches for lightsaber, arm and projector; robot availability. *Built, not yet tested on the robot.*
       Also mode, current action and error sensors, display, mute, voice and face switches, and volume.
       Set the broker with `tools\r2.ps1 mqtt`; it must be on the robot's subnet or an allowed one.
-      Routine buttons come with the routine engine (section 6).
+      Each stored routine gets a button too.
 - [ ] Alternatively, a Home Assistant integration over a local REST/WebSocket API, using the security
       work in section 3.
 - [ ] **R2 as a Home Assistant media destination** (a `media_player` entity):

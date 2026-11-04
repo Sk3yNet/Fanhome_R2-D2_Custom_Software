@@ -35,6 +35,11 @@ final class HomeAssistant {
 
         void action(String name);
 
+        /** Stored routine names (a-z, 0-9 and -), each published as a button. */
+        List<String> routineNames();
+
+        void runRoutine(String name);
+
         void projector(int mode);
 
         void setVolume(int percent);
@@ -116,6 +121,7 @@ final class HomeAssistant {
     // Per connection: what was published, so only changes go out.
     private final Map<String, String> published = new HashMap<>();
     private String discoveredFor = "";
+    private final java.util.Set<String> discoveredTopics = new java.util.HashSet<>();
     private volatile String connectedNode = "";
     private volatile boolean republish;
 
@@ -235,7 +241,7 @@ final class HomeAssistant {
                     published.clear();
                     discoveredFor = "";
                 }
-                c.subscribe(base() + "/action/run", base() + "/switch/+/set", base() + "/volume/set",
+                c.subscribe(base() + "/action/run", base() + "/routine/run", base() + "/switch/+/set", base() + "/volume/set",
                         s.prefix + "/status");
                 client = c;
                 setStatus("connected to " + addr.getHostAddress() + ":" + s.port);
@@ -308,6 +314,15 @@ final class HomeAssistant {
                 }
             }
             host.log("home assistant: ignored unknown action " + clip(payload));
+            return;
+        }
+        if (topic.equals(b + "/routine/run")) {
+            if (host.routineNames().contains(payload)) {
+                host.log("home assistant: routine " + payload);
+                host.runRoutine(payload);
+            } else {
+                host.log("home assistant: ignored unknown routine " + clip(payload));
+            }
             return;
         }
         if (topic.equals(b + "/volume/set")) {
@@ -414,13 +429,20 @@ final class HomeAssistant {
         if (!nodeId().equals(connectedNode)) throw new Exception("robot ID changed, reconnecting");
         boolean again = republish;
         republish = false;
-        String discoveryKey = st.optString("name") + "|" + st.optString("version") + "|" + settings.prefix;
+        List<String> routineList = new ArrayList<>(host.routineNames());
+        Collections.sort(routineList);
+        String discoveryKey = st.optString("name") + "|" + st.optString("version") + "|" + settings.prefix + "|" + routineList;
         synchronized (published) {
             if (again) published.clear();
             if (again || !discoveryKey.equals(discoveredFor)) {
-                for (Map.Entry<String, JSONObject> e : discovery(st).entrySet()) {
+                Map<String, JSONObject> d = discovery(st, routineList);
+                for (Map.Entry<String, JSONObject> e : d.entrySet()) {
                     c.publish(e.getKey(), e.getValue().toString(), true);
                 }
+                // A deleted routine: an empty retained config removes its button from Home Assistant.
+                for (String old : discoveredTopics) if (!d.containsKey(old)) c.publish(old, "", true);
+                discoveredTopics.clear();
+                discoveredTopics.addAll(d.keySet());
                 c.publish(availabilityTopic(), "online", true);
                 discoveredFor = discoveryKey;
             }
@@ -449,7 +471,7 @@ final class HomeAssistant {
     }
 
     /** Discovery topic -> config, one per entity (Home Assistant's per-component discovery). */
-    Map<String, JSONObject> discovery(JSONObject st) throws Exception {
+    Map<String, JSONObject> discovery(JSONObject st, List<String> routineList) throws Exception {
         String b = base(), node = nodeId(), p = settings.prefix;
         JSONObject device = new JSONObject()
                 .put("identifiers", new JSONArray().put("r2d2_" + node))
@@ -486,6 +508,11 @@ final class HomeAssistant {
                     .put("command_topic", b + "/action/run").put("payload_press", btn[0]);
             if ("stop".equals(btn[0])) e.put("icon", "mdi:stop-circle");
             m.put(p + "/button/" + node + "/" + obj + "/config", e);
+        }
+        for (String r : routineList) {
+            String obj = "routine_" + r.replace('-', '_');
+            m.put(p + "/button/" + node + "/" + obj + "/config", entity("Routine " + r.replace('-', ' '), node, obj, device, origin)
+                    .put("command_topic", b + "/routine/run").put("payload_press", r).put("icon", "mdi:script-text-play"));
         }
         for (String[] sw : SWITCHES) {
             String obj = sw[0].replace('-', '_');

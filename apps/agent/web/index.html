@@ -107,6 +107,12 @@
   </section>
 
   <section>
+    <h2>Routines</h2>
+    <div class="hint" id="routineNow">–</div>
+    <div class="grid" id="routines"></div>
+  </section>
+
+  <section>
     <h2>Wi-Fi</h2>
     <div class="hint" id="wifiNow">–</div>
     <div class="hint" id="setupHint"></div>
@@ -148,7 +154,7 @@ const send = cmd => api("POST", "/serial", JSON.stringify(cmd));
 $("save").onclick = () => {
   token = $("token").value.trim();
   try { localStorage.setItem("r2token", token); } catch (e) {}
-  $("setup").open = false; refresh();
+  $("setup").open = false; refresh(); loadRoutines();
 };
 $("stop").onclick = () => { driving = false; api("POST", "/stop").then(() => say("stopped"), e => say("stop failed: " + e.message)); };
 
@@ -169,6 +175,25 @@ for (const id in SWITCHES) {
     api("POST", "/action?name=" + name).then(d => say(d.result), err => say(err.message));
   };
 }
+// Stored routines (docs/routines.md), one button each. Upload them with tools\r2.ps1 routine-put <file>.
+async function loadRoutines() {
+  if (!token) return;
+  try {
+    const d = await api("GET", "/routines");
+    const box = $("routines"); box.textContent = "";
+    for (const r of d.routines || []) {
+      const b = document.createElement("button");
+      b.className = "act"; b.textContent = r.name.replace(/-/g, " ");
+      b.title = r.error ? "broken: " + r.error : (r.description || "");
+      b.disabled = !!r.error;
+      b.onclick = () => api("POST", "/routine/run?name=" + encodeURIComponent(r.name)).then(x => say(x.result), e => say(e.message));
+      box.appendChild(b);
+    }
+    if (!box.children.length) $("routineNow").textContent = "no routines yet (tools\\r2.ps1 routine-put <file>)";
+  } catch (e) {
+    $("routineNow").textContent = "routines: " + e.message;
+  }
+}
 async function refresh() {
   if (!token) { $("conn").textContent = "token needed"; return; }
   try {
@@ -185,6 +210,10 @@ async function refresh() {
     $("battBar").setAttribute("aria-label", "battery " + (pct ?? "unknown") + "%" + (c === 1 ? ", charging" : ""));
     $("mov").classList.toggle("on", !!s.moving);
     $("mov").title = s.moving ? "moving" : "still";
+    if (s.running != null && $("routines").children.length) {
+      $("routineNow").textContent = (s.running === "idle" ? "idle" : "running: " + s.running)
+        + (s.last_routine ? " · last: " + s.last_routine : "");
+    }
     if (s.volume != null && Date.now() - volTouched > 3000) {
       $("vol").value = s.volume;
       $("volOut").textContent = s.muted ? "muted" : s.volume + "%";
@@ -197,7 +226,7 @@ async function refresh() {
     $("conn").textContent = e.message.includes("Token") ? "wrong token" : "offline"; $("conn").className = "pill bad";
   }
 }
-setInterval(refresh, 2000); refresh();
+setInterval(refresh, 2000); refresh(); loadRoutines();
 
 // Joystick: angle 0 = forward, 90 = spin right, -90 = spin left, 180 = back (the controller's `move`).
 // While held, the command is repeated so the agent's motion watchdog (3 s) keeps it alive.

@@ -1,0 +1,108 @@
+name: Release
+
+# Push a tag like v0.3.0 (or v0.3.0-beta.1 for a pre-release) to build both APKs, sign them with this
+# repository's release key, and publish them as a GitHub release. The key comes from repository secrets,
+# so a fork releases with its own key. Setup: docs/releases.md.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # create the release
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the signing secrets
+        env:
+          KS_B64: ${{ secrets.R2_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.R2_KEYSTORE_PASS }}
+        run: |
+          if [ -z "$KS_B64" ] || [ -z "$KS_PASS" ]; then
+            echo "::error::Secrets R2_KEYSTORE_BASE64 and R2_KEYSTORE_PASS are not set in ${{ github.repository }}. See docs/releases.md."
+            exit 1
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.1" "platforms;android-19" > /dev/null
+
+      - name: Build and sign both apps
+        env:
+          KS_B64: ${{ secrets.R2_KEYSTORE_BASE64 }}
+          R2_KEYSTORE_PASS: ${{ secrets.R2_KEYSTORE_PASS }}
+          R2_KEY_ALIAS: ${{ secrets.R2_KEY_ALIAS }}   # optional, defaults to r2hack
+          TAG: ${{ github.ref_name }}
+        run: |
+          export R2_KEYSTORE="$RUNNER_TEMP/release.keystore"
+          R2_KEYSTORE_PASS=$(printf '%s' "$R2_KEYSTORE_PASS" | tr -d '\r\n')   # a pasted secret may end in a newline
+          printf '%s' "$KS_B64" | tr -d ' \r\n' | base64 -d > "$R2_KEYSTORE"
+          export R2_VERSION_NAME="${TAG#v}"
+          # --release: no API token in the APKs; each robot uses its own.
+          apps/build.sh all --release
+          rm -f "$R2_KEYSTORE"
+
+      - name: Verify, checksums and release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          BT="$ANDROID_HOME/build-tools/35.0.1"
+          cd apps/out
+          for apk in R2Agent.apk R2Main.apk; do
+            "$BT/apksigner" verify --min-sdk-version 19 "$apk"
+          done
+          cert() { "$BT/apksigner" verify --print-certs "$1" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'; }
+          AGENT_CERT=$(cert R2Agent.apk)
+          MAIN_CERT=$(cert R2Main.apk)
+          if [ -z "$AGENT_CERT" ] || [ "$AGENT_CERT" != "$MAIN_CERT" ]; then
+            echo "::error::the two APKs are not signed with the same key ($AGENT_CERT / $MAIN_CERT)"
+            exit 1
+          fi
+          sha256sum R2Agent.apk R2Main.apk > SHA256SUMS
+          VERSION_CODE=$("$BT/aapt2" dump badging R2Main.apk | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          Built from \`${GITHUB_SHA}\` by [this workflow run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}).
+          Version ${TAG#v} (versionCode ${VERSION_CODE}). No API token is built in: each robot uses its own.
+
+          **Signed by ${GITHUB_REPOSITORY_OWNER}.** Signing certificate SHA-256:
+          \`${AGENT_CERT}\`
+
+          A robot can update in place only from APKs signed with the same certificate as the ones it has.
+          Switching to a build signed by someone else (another fork, or your own builds) needs the one-time
+          reinstall in docs/releases.md.
+
+          Install or update: \`tools\\r2.ps1 push-agent R2Agent.apk\` and \`tools\\r2.ps1 push-main R2Main.apk\`.
+          Check the download: \`sha256sum -c SHA256SUMS\`, or compare with \`Get-FileHash\` on Windows.
+          EOF
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          FILES="apps/out/R2Agent.apk apps/out/R2Main.apk apps/out/SHA256SUMS"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # The release was made on github.com together with its tag: keep its text, add ours below it.
+            { gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body; echo; echo '---'; echo;
+              cat "$RUNNER_TEMP/notes.md"; } > "$RUNNER_TEMP/notes-merged.md"
+            gh release upload "$TAG" $FILES --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes-merged.md"
+          else
+            PRE=""
+            case "$TAG" in *-*) PRE="--prerelease" ;; esac
+            gh release create "$TAG" $FILES --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "R2-D2 custom software $TAG" --notes-file "$RUNNER_TEMP/notes.md" $PRE
+          fi

@@ -45,6 +45,7 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `POST /identity` ·
 `POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2` ·
 `POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...` ·
+`GET /routines` · `GET /routine?name=` · `POST /routine` (JSON body) · `POST /routine/run?name=` · `POST /routine/stop` · `POST /routine/delete?name=` (see [routines.md](routines.md)) ·
 `GET /mqtt` · `POST /mqtt` (`{"host","port","username","password","prefix","enabled"}`)
 
 Only clients on the robot's own subnet (its Wi-Fi network or its hotspot), loopback, or IPv6 link-local are
@@ -98,6 +99,14 @@ Sounds are played from the factory app already installed on the robot; nothing i
 sound-number map lives in `apps\main\assets\sounds.json` (`{"7": "<resource name>", ...}`), which is
 not part of this repository. Without it R2 Main still runs every action, just silently.
 
+## Routines (R2 Main)
+Routines are JSON step lists (sounds, head moves, modes, driving, lights, built-in actions, waits on
+the robot's state, repeats) that R2 Main stores and runs on the same sequencer as the actions, with
+safety checks (timeout, controller error, charger, low battery). A routine named like a built-in action
+replaces it. Format, API and examples: [routines.md](routines.md). The agent passes the routine API to
+R2 Main over the bridge (`{"agent":"routines","seq":N,...}`, answered by `routines-reply`), and R2 Main
+reports what's running (`{"agent":"running",...}`) for `/status`.
+
 ## Media player for Home Assistant (R2 Main)
 R2 Main is a DLNA/UPnP media renderer on port 7710 (AVTransport, RenderingControl, ConnectionManager,
 with UPnP events). Home Assistant's DLNA Digital Media Renderer integration discovers it by itself and
@@ -135,7 +144,8 @@ The device (named after the robot) has:
 - **Sensors:** battery (%), charging, mode (ready, sleeping, pairing, patrol, phone control), the action
   that is running, and the controller's error (diagnostic).
 - **Buttons:** stop, wake up, turn left / right / around, go forward, walk a circle, patrol, dance, shake
-  head, who are you, make some noise, flash front / back light.
+  head, who are you, make some noise, flash front / back light, and one button per stored routine
+  (`Routine <name>`). A routine that is saved or deleted shows up or disappears within a second or so.
 - **Switches:** lightsaber, arm, projector Princess Leia, projector Skywalker, short and long display,
   mute, voice commands, face tracking. A switch runs the matching action only if R2 isn't already in that
   state. The lightsaber, arm, projector and display states come from the controller's status, which R2
@@ -144,7 +154,7 @@ The device (named after the robot) has:
 - **Availability:** R2 is shown as unavailable when R2 Main stops or loses the broker (MQTT last will).
 
 Topics are under `r2d2/<robot id>/`: state in `battery`, `charging`, `mode`, `action`, `error`,
-`volume`, `switch/<name>`; commands in `action/run` (payload: the action name), `switch/<name>/set`
+`volume`, `switch/<name>`; commands in `action/run` (payload: the action name), `routine/run` (payload: the routine name), `switch/<name>/set`
 (`ON`/`OFF`) and `volume/set`. When Home Assistant restarts (`homeassistant/status` = `online`), R2 sends
 discovery and state again.
 
@@ -221,5 +231,7 @@ To keep phones that were paired with the factory software working, copy the robo
 ## Files
 - `secrets\` – signing key, its password, and the API token. Keep private; losing the key means
   the agent/main can't be updated in place (uninstall + reinstall over adb instead).
+  GitHub releases are signed with the key in the repository's Actions secrets
+  ([releases.md](releases.md)).
 - The UART library `libr2d2.so` is not part of this repository: the agent loads the robot's own
   `/system/lib/libr2d2.so` (or extracts it from the factory app on the device).
