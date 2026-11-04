@@ -128,10 +128,33 @@ final class MotionGuard {
             JSONObject g = new JSONObject(line);
             battery = g.optInt("batt", battery);
             charging = g.optInt("charging-status", g.optInt("charging_status", 0)) != 0;
+            watchGin(g);
         } catch (Exception ignored) {
             return;
         }
         if (moving() && lowBattery()) stop("low battery (" + battery + "%)");
+    }
+
+    // gin fields whose meaning is known (docs/serial-protocol.md); status and error are not understood yet.
+    private static final java.util.Set<String> KNOWN_GIN = new java.util.HashSet<>(java.util.Arrays.asList(
+            "cmd", "batt", "charging-status", "charging_status", "arm", "lightsaber", "projector", "head", "mode", "lcd_l", "lcd_s"));
+    private final java.util.Map<String, String> ginSeen = new java.util.HashMap<>();
+
+    /**
+     * Sensor discovery: the robot has IR, ultrasonic and foot-drop sensors that no known message reports.
+     * Logs every change of a gin field we don't understand (status, error, anything new), and whether R2
+     * was driving at the time, so a test drive toward a wall or an edge shows what the controller says.
+     */
+    private void watchGin(JSONObject g) {
+        for (java.util.Iterator<String> it = g.keys(); it.hasNext(); ) {
+            String k = it.next();
+            if (KNOWN_GIN.contains(k)) continue;
+            String v = String.valueOf(g.opt(k));
+            String was = ginSeen.put(k, v);
+            if (was == null ? !"0".equals(v) && !"".equals(v) : !was.equals(v)) {
+                EventLog.i("gin " + k + ": " + (was == null ? "" : was + " -> ") + v + (motionUntil != 0 ? " (while driving)" : ""));
+            }
+        }
     }
 
     /** Stops driving and the controller's own movement routines. */

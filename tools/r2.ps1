@@ -11,6 +11,16 @@
 #   routine-run <name>       run a routine (also: action <name>)
 #   routine-stop             end the running routine or action
 #   routine-delete <name>    delete a routine (a replaced built-in action comes back)
+#   places                   list the taught rooms (docs/places.md) and where R2 is
+#   place <name> | place-put <file.json> | place-delete <name>
+#                            show / upload / delete one room's route
+#   goto <place>             drive R2 to a taught room, or home
+#   tour                     visit every taught room in turn, then come home
+#   here <home|place|unknown>  tell R2 where he is now (e.g. after carrying him home)
+#   teach <place>            start teaching the way from home to a room: drive with the web page's joystick, then teach-save
+#   teach-back <place>       teach the way back from a room to home
+#   teach-turn               teach a half turn on the spot (lets R2 mirror routes that have no taught way back)
+#   teach-save | teach-cancel  end teaching
 #   volume <0-100>           droid sounds and music volume (kept across reboots)
 #   logcat [text] [-Lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
 #   dmesg [text] [-Lines N]  kernel log
@@ -127,6 +137,26 @@ switch ($Command) {
     }
     'routine-run'  { if (-not $Arg) { throw 'usage: r2.ps1 routine-run <name>' }; Call POST "/routine/run?name=$([uri]::EscapeDataString($Arg))" }
     'routine-stop' { Call POST /routine/stop }
+    'places'       {
+        $d = Call GET /places
+        "R2 is at: $($d.location)" + $(if ($d.teaching) { "   teaching: $($d.teaching)" } else { '' }) + $(if ($d.last_trip) { "   last: $($d.last_trip)" } else { '' })
+        "turn-around taught: $($d.turn_around_seconds) s   charger is home: $($d.charger_is_home)   patrol tours: $($d.patrol_tour)"
+        $d.places | Format-Table name, spoken, there_seconds, there_segments, way_back, area -AutoSize
+    }
+    'place'        { if (-not $Arg) { throw 'usage: r2.ps1 place <name>' }; (Call GET "/place?name=$([uri]::EscapeDataString($Arg))").place | ConvertTo-Json -Depth 20 }
+    'place-put'    {
+        if (-not $Arg -or -not (Test-Path $Arg)) { throw 'usage: r2.ps1 place-put <file.json>' }
+        Call POST /place (Get-Content $Arg -Raw -Encoding UTF8)
+    }
+    'place-delete' { if (-not $Arg) { throw 'usage: r2.ps1 place-delete <name>' }; Call POST "/place/delete?name=$([uri]::EscapeDataString($Arg))" }
+    'goto'         { if (-not $Arg) { throw 'usage: r2.ps1 goto <place|home>' }; Call POST "/goto?place=$([uri]::EscapeDataString($Arg))" }
+    'tour'         { Call POST /tour }
+    'here'         { if (-not $Arg) { throw 'usage: r2.ps1 here <home|place|unknown>' }; Call POST "/place/here?name=$([uri]::EscapeDataString($Arg))" }
+    'teach'        { if (-not $Arg) { throw 'usage: r2.ps1 teach <place>' }; Call POST "/place/teach?what=there&name=$([uri]::EscapeDataString($Arg))" }
+    'teach-back'   { if (-not $Arg) { throw 'usage: r2.ps1 teach-back <place>' }; Call POST "/place/teach?what=back&name=$([uri]::EscapeDataString($Arg))" }
+    'teach-turn'   { Call POST "/place/teach?what=turn" }
+    'teach-save'   { Call POST /place/teach/save }
+    'teach-cancel' { Call POST /place/teach/cancel }
     'routine-delete' { if (-not $Arg) { throw 'usage: r2.ps1 routine-delete <name>' }; Call POST "/routine/delete?name=$([uri]::EscapeDataString($Arg))" }
     'volume'       { if ($Arg -notmatch '^\d+$') { throw 'usage: r2.ps1 volume <0-100>' }; Call POST "/volume?percent=$Arg" }
     { $_ -in 'logcat', 'dmesg' } {

@@ -47,7 +47,10 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...` ·
 `POST /assist?mode=off|robot|ha&host=<ip>` (Home Assistant voice satellite, see [home-assistant-voice.md](home-assistant-voice.md)) ·
 `GET /routines` · `GET /routine?name=` · `POST /routine` (JSON body) · `POST /routine/run?name=` · `POST /routine/stop` · `POST /routine/delete?name=` (see [routines.md](routines.md)) ·
-`GET /mqtt` · `POST /mqtt` (`{"host","port","username","password","prefix","enabled"}`)
+`GET /mqtt` · `POST /mqtt` (`{"host","port","username","password","prefix","enabled"}`) ·
+`GET /places` · `GET /place?name=` · `POST /place` · `POST /place/delete?name=` · `POST /goto?place=` · `POST /tour` ·
+`POST /place/here?name=` · `POST /place/teach?name=&what=there|back|turn` · `POST /place/teach/save` · `POST /place/teach/cancel` ·
+`POST /places/settings` (rooms, see [places.md](places.md))
 
 Only clients on the robot's own subnet (its Wi-Fi network or its hotspot), loopback, or IPv6 link-local are
 served. A client on another private network, such as a guest network, another VLAN or a VPN, is refused
@@ -108,6 +111,13 @@ replaces it. Format, API and examples: [routines.md](routines.md). The agent pas
 R2 Main over the bridge (`{"agent":"routines","seq":N,...}`, answered by `routines-reply`), and R2 Main
 reports what's running (`{"agent":"running",...}`) for `/status`.
 
+## Rooms (R2 Main)
+R2 drives to rooms along routes you taught by driving him there from a home spot with the joystick, and keeps
+track of where he is. Trips run as routines, so the same safety checks apply. Voice ("go to the kitchen"),
+Home Assistant, the API and the web page can send him. The agent forwards drives from `/serial` (the web
+page's joystick) to R2 Main as `{"agent":"drove","cmd":...}`, which records them while teaching. See
+[places.md](places.md).
+
 ## Media player for Home Assistant (R2 Main)
 R2 Main is a DLNA/UPnP media renderer on port 7710 (AVTransport, RenderingControl, ConnectionManager,
 with UPnP events). Home Assistant's DLNA Digital Media Renderer integration discovers it by itself and
@@ -145,8 +155,8 @@ The device (named after the robot) has:
 - **Sensors:** battery (%), charging, mode (ready, sleeping, pairing, patrol, phone control), the action
   that is running, and the controller's error (diagnostic).
 - **Buttons:** stop, wake up, turn left / right / around, go forward, walk a circle, patrol, dance, shake
-  head, who are you, make some noise, flash front / back light, and one button per stored routine
-  (`Routine <name>`). A routine that is saved or deleted shows up or disappears within a second or so.
+  head, who are you, make some noise, flash front / back light, go home, tour the rooms, and one button per
+  stored routine (`Routine <name>`). Rooms ([places.md](places.md)): a **Location** sensor and a **Go to** select. A routine that is saved or deleted shows up or disappears within a second or so.
 - **Switches:** lightsaber, arm, projector Princess Leia, projector Skywalker, short and long display,
   mute, voice commands, face tracking. A switch runs the matching action only if R2 isn't already in that
   state. The lightsaber, arm, projector and display states come from the controller's status, which R2

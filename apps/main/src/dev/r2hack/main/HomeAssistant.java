@@ -29,7 +29,7 @@ final class HomeAssistant {
         /**
          * The robot's state: battery (int, -1 unknown), charging (0/1/2), lightsaber, arm, lcd_s, lcd_l
          * (booleans), projector (0/1/2), mode (string), action (string), error (string), muted, voice,
-         * face (booleans), volume (0-100), name, uuid, version (strings).
+         * face (booleans), volume (0-100), name, uuid, version, location (strings).
          */
         JSONObject haState();
 
@@ -39,6 +39,12 @@ final class HomeAssistant {
         List<String> routineNames();
 
         void runRoutine(String name);
+
+        /** Taught places (a-z, 0-9 and -), the options of the "Go to" select besides home. */
+        List<String> placeNames();
+
+        /** Sends R2 to a place, or "home". */
+        void goTo(String place);
 
         void projector(int mode);
 
@@ -57,6 +63,7 @@ final class HomeAssistant {
             {"patrol", "Patrol"}, {"dance", "Dance"}, {"shake-head", "Shake head"},
             {"who-are-you", "Who are you"}, {"noise", "Make some noise"},
             {"flash-front", "Flash front light"}, {"flash-back", "Flash back light"},
+            {"go-home", "Go home"}, {"tour", "Tour the rooms"},
     };
 
     /** Switches: id -> display name, icon. */
@@ -241,7 +248,7 @@ final class HomeAssistant {
                     published.clear();
                     discoveredFor = "";
                 }
-                c.subscribe(base() + "/action/run", base() + "/routine/run", base() + "/switch/+/set", base() + "/volume/set",
+                c.subscribe(base() + "/action/run", base() + "/routine/run", base() + "/goto/set", base() + "/switch/+/set", base() + "/volume/set",
                         s.prefix + "/status");
                 client = c;
                 setStatus("connected to " + addr.getHostAddress() + ":" + s.port);
@@ -323,6 +330,16 @@ final class HomeAssistant {
             } else {
                 host.log("home assistant: ignored unknown routine " + clip(payload));
             }
+            return;
+        }
+        if (topic.equals(b + "/goto/set")) {
+            if ("home".equals(payload) || host.placeNames().contains(payload)) {
+                host.log("home assistant: go to " + payload);
+                host.goTo(payload);
+            } else {
+                host.log("home assistant: ignored unknown place " + clip(payload));
+            }
+            stateChanged(); // the select shows where R2 is, not what was picked
             return;
         }
         if (topic.equals(b + "/volume/set")) {
@@ -431,11 +448,13 @@ final class HomeAssistant {
         republish = false;
         List<String> routineList = new ArrayList<>(host.routineNames());
         Collections.sort(routineList);
-        String discoveryKey = st.optString("name") + "|" + st.optString("version") + "|" + settings.prefix + "|" + routineList;
+        List<String> placeList = new ArrayList<>(host.placeNames());
+        String discoveryKey = st.optString("name") + "|" + st.optString("version") + "|" + settings.prefix + "|" + routineList
+                + "|" + placeList;
         synchronized (published) {
             if (again) published.clear();
             if (again || !discoveryKey.equals(discoveredFor)) {
-                Map<String, JSONObject> d = discovery(st, routineList);
+                Map<String, JSONObject> d = discovery(st, routineList, placeList);
                 for (Map.Entry<String, JSONObject> e : d.entrySet()) {
                     c.publish(e.getKey(), e.getValue().toString(), true);
                 }
@@ -466,12 +485,13 @@ final class HomeAssistant {
         String err = st.optString("error", "");
         m.put(b + "/error", err.isEmpty() ? "none" : err);
         m.put(b + "/volume", String.valueOf(st.optInt("volume")));
+        m.put(b + "/location", st.optString("location", "unknown"));
         for (String[] sw : SWITCHES) m.put(b + "/switch/" + sw[0], switchState(sw[0], st) ? "ON" : "OFF");
         return m;
     }
 
     /** Discovery topic -> config, one per entity (Home Assistant's per-component discovery). */
-    Map<String, JSONObject> discovery(JSONObject st, List<String> routineList) throws Exception {
+    Map<String, JSONObject> discovery(JSONObject st, List<String> routineList, List<String> placeList) throws Exception {
         String b = base(), node = nodeId(), p = settings.prefix;
         JSONObject device = new JSONObject()
                 .put("identifiers", new JSONArray().put("r2d2_" + node))
@@ -514,6 +534,16 @@ final class HomeAssistant {
             m.put(p + "/button/" + node + "/" + obj + "/config", entity("Routine " + r.replace('-', ' '), node, obj, device, origin)
                     .put("command_topic", b + "/routine/run").put("payload_press", r).put("icon", "mdi:script-text-play"));
         }
+        // Where R2 is, and a select that sends him somewhere (its state is where he is; "unknown" can't be picked).
+        JSONArray where = new JSONArray().put("home");
+        for (String pl : placeList) where.put(pl);
+        JSONArray sensorOptions = new JSONArray(where.toString()).put("unknown");
+        m.put(p + "/sensor/" + node + "/location/config", entity("Location", node, "location", device, origin)
+                .put("state_topic", b + "/location").put("device_class", "enum").put("options", sensorOptions)
+                .put("icon", "mdi:map-marker"));
+        m.put(p + "/select/" + node + "/goto/config", entity("Go to", node, "goto", device, origin)
+                .put("state_topic", b + "/location").put("command_topic", b + "/goto/set").put("options", sensorOptions)
+                .put("icon", "mdi:map-marker-path"));
         for (String[] sw : SWITCHES) {
             String obj = sw[0].replace('-', '_');
             m.put(p + "/switch/" + node + "/" + obj + "/config", entity(sw[1], node, obj, device, origin)

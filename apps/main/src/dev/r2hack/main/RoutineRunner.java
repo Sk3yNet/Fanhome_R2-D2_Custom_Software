@@ -87,13 +87,16 @@ final class RoutineRunner {
     }
 
     private void runSteps(java.util.List<Routine.Step> steps, int calls, String path) throws Exception {
-        for (Routine.Step s : steps) {
+        for (int i = 0; i < steps.size(); i++) {
             check();
-            runStep(s, calls, path);
+            Routine.Step s = steps.get(i);
+            // Drive steps in a row flow into each other without a stop in between (recorded routes).
+            boolean driveNext = i + 1 < steps.size() && steps.get(i + 1).kind == Routine.Kind.DRIVE;
+            runStep(s, calls, path, driveNext);
         }
     }
 
-    private void runStep(Routine.Step s, int calls, String path) throws Exception {
+    private void runStep(Routine.Step s, int calls, String path, boolean driveNext) throws Exception {
         switch (s.kind) {
             case WAIT:
                 pause(s.ms);
@@ -120,6 +123,7 @@ final class RoutineRunner {
                 break;
             case DRIVE: {
                 long end = clock.now() + s.ms;
+                boolean done = false;
                 try {
                     while (true) {
                         check();
@@ -129,8 +133,10 @@ final class RoutineRunner {
                         pause(Math.min(DRIVE_REPEAT_MS, left));
                         if (clock.now() >= end) break;
                     }
+                    done = true;
                 } finally {
-                    host.send(new JSONObject().put("cmd", "move").put("power", 0).put("angle", 0));
+                    // Stop unless the next drive step takes over right away; always stop on an abort or cancel.
+                    if (!done || !driveNext || s.power == 0) host.send(new JSONObject().put("cmd", "move").put("power", 0).put("angle", 0));
                 }
                 break;
             }
