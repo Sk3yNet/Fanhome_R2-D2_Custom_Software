@@ -1,0 +1,12 @@
+{
+  "name": "show-off",
+  "description": "Built-in actions in a row, then a nested routine",
+  "timeout": 120,
+  "steps": [
+    {"action": "wake"},
+    {"action": "dance"},
+    {"wait": 1},
+    {"action": "leia"},
+    {"routine": "sentry"}
+  ]
+}
