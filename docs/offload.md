@@ -35,6 +35,13 @@ How it fits together:
 4. Free questions ("what's the weather") go to whatever conversation agent Home Assistant uses, and R2
    speaks the answer, optionally after a droid chirp.
 
+**AI pipelines:** Home Assistant's Assist pipelines can use any conversation agent, including local or
+cloud LLMs, so R2 becomes an endpoint for them: wake word, then R2 streams the request to the chosen
+pipeline and plays the spoken answer. The wake word can be spotted on the robot (the satellite then
+starts streaming only after "hey R2-D2", so no audio leaves the robot before that) or by openWakeWord in
+Home Assistant. An Assist tool or intent set exposes R2's actions, so the AI can make him dance or play a
+projector clip.
+
 On-robot keyword spotting stays as the default and the fallback: if the satellite connection is down,
 "hey R2-D2" still works. Only one of the two listens at a time, chosen in R2's settings.
 

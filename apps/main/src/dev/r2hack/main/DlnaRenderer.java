@@ -218,6 +218,21 @@ final class DlnaRenderer implements MediaPlayback.Listener {
         }
     }
 
+    private static final java.util.regex.Pattern MA_STREAM =
+            java.util.regex.Pattern.compile("^(https?://[^/?#]+/(?:flow|single|multi)/[^?#]*)\\.(?:flac|wav|aiff|pcm)(\\?.*)?$");
+
+    /**
+     * Music Assistant sends FLAC as an endless chunked stream, which this board's player can't play, and it
+     * ignores the formats we advertise. Its stream server picks the format from the file extension, so ask
+     * for MP3 instead.
+     */
+    static String preferMp3(String uri) {
+        java.util.regex.Matcher m = MA_STREAM.matcher(uri);
+        if (!m.matches()) return uri;
+        Log.i(TAG, "asking Music Assistant for MP3 instead");
+        return m.group(1) + ".mp3" + (m.group(2) == null ? "" : m.group(2));
+    }
+
     private String avTransport(String action, String body, InetAddress from) throws UpnpError {
         switch (action) {
             case "SetAVTransportURI": {
@@ -227,7 +242,12 @@ final class DlnaRenderer implements MediaPlayback.Listener {
                     Log.w(TAG, "refused stream " + uri + ": " + why);
                     throw new UpnpError(716, "Resource not found: " + why);
                 }
-                media.setUri(uri, soapArg(body, "CurrentURIMetaData"));
+                String meta = soapArg(body, "CurrentURIMetaData");
+                java.util.regex.Matcher type = java.util.regex.Pattern.compile("protocolInfo=\"[^:]*:[^:]*:([^:\"]+)").matcher(DlnaXml.unesc(meta));
+                int q = uri.indexOf('?');
+                Log.i(TAG, "stream " + (q < 0 ? uri : uri.substring(0, q)) + " (" + (type.find() ? type.group(1) : "type not given") + ")");
+                uri = preferMp3(uri);
+                media.setUri(uri, meta);
                 return "";
             }
             case "Play": media.play(); return "";
@@ -345,6 +365,11 @@ final class DlnaRenderer implements MediaPlayback.Listener {
     @Override
     public void onStateChanged() {
         broadcast("avt");
+    }
+
+    /** Volume or mute changed elsewhere (web page, phone app): tells Home Assistant. */
+    void volumeChanged() {
+        renderingChanged();
     }
 
     private void renderingChanged() {

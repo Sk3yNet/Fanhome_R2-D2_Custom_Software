@@ -206,7 +206,7 @@ or run it straight from the card as a soft-mod that disappears when the card is 
   - **Audio:** play music, alerts and text-to-speech announcements through the robot's speaker, with
     volume, pause/stop, and "now playing" state. HA's MQTT integration has no media player type, so this
     needs something else: a DLNA/UPnP renderer (which HA discovers on its own), a player that Music
-    Assistant supports, or a small custom integration. *Built, not yet tested on the robot:* R2 Main is a
+    Assistant supports, or a small custom integration. Confirmed on the robot (Home Assistant media and Music Assistant): R2 Main is a
     DLNA renderer (play, pause, stop, seek, volume, mute, live state through UPnP events).
   - Media from Home Assistant counts as untrusted content (section 4): decode it in a sandboxed player,
     accept only expected formats and sources, and never let it interrupt a safety stop. *Built:* streams
@@ -217,10 +217,17 @@ or run it straight from the card as a soft-mod that disappears when the card is 
   - **Video (depends on the projector work in section 10):** send short clips or images to the
     holoprojector, scaled to the panel's resolution. Once the projector can be driven live, stream them;
     until then, write them as the projector's stored clip.
-- [ ] **R2's camera in Home Assistant** as an MJPEG camera (`/camera.mjpg`, token as the basic-auth password). *Built, not yet tested on the robot.*
+- [ ] **R2's camera in Home Assistant** as an MJPEG camera (`/camera.mjpg`, token as the basic-auth password). *Built, not yet tested on the robot.* The stream itself works and is upright on the web page.
 - [ ] **Voice through Home Assistant:** R2 as a Wyoming voice satellite, with wake word, speech recognition
       and text to speech in containers (openWakeWord, Whisper, Piper), R2's actions as intents, and spoken
       answers through R2's speaker. The on-robot keywords stay as the fallback. See [docs/offload.md](docs/offload.md).
+- [ ] **R2 as an endpoint for AI voice pipelines:** after R2 recognizes his wake word, he streams what
+      follows to a Home Assistant Assist pipeline, so any conversation agent configured there (a local or
+      cloud LLM, or Home Assistant's own) can answer, and the reply plays through R2's speaker. The wake
+      word can be detected on the robot ("hey R2-D2" with the on-robot recognizer) or in Home Assistant
+      (openWakeWord), and the pipeline is chosen in Home Assistant. Ideas on top: a droid chirp before
+      and after each reply, the back light showing listening and thinking, the head turning toward the
+      speaker, and a pipeline tool that lets the AI run R2's actions (dance, projector clips).
 - [ ] **Vision containers:** face recognition (CompreFace / Double Take) and person detection (Frigate) on R2's
       camera stream, so R2 can greet people it knows. As a Home Assistant add-on or plain Docker.
 - [ ] Plugin permissions, so an integration can't install software or reboot unless allowed.

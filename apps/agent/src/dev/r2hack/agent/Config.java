@@ -28,6 +28,10 @@ final class Config {
     static final long MOVE_HOLD_MS = 3_000;           // `move` (joystick-style, clients repeat it)
     static final long MODE_HOLD_MS = 15_000;          // controller turns, forward, circle
     static final long PATROL_HOLD_MS = 65_000;        // patrol; the stock app ends it after 60 s
+    /** Head commands are capped at +/- this many degrees. The end stops are at about 135 each way. */
+    static final int HEAD_LIMIT = 130;
+    /** A continuous head turn (head-dir) stops this long after the last repeat. */
+    static final long HEAD_HOLD_MS = 1200;
     static final int LOW_BATTERY_PCT = 10;            // below this, drive commands are refused
 
     static final long SETUP_WINDOW_MS = 120_000;     // pairing button: token-free Wi-Fi setup for this long

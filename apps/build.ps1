@@ -60,8 +60,11 @@ function Build-App {
     Invoke-Tool "$jdk\bin\javac.exe" (@('-source', '8', '-target', '8', '-nowarn', '-Xlint:-options', '-encoding', 'UTF-8',
         '-bootclasspath', $android, '-classpath', $android, '-d', $classes) + $sources)
 
-    $classFiles = @(Get-ChildItem $classes -Recurse -Filter *.class | ForEach-Object FullName)
-    Invoke-Tool "$bt\d8.bat" (@('--release', '--min-api', '19', '--lib', $android, '--output', $dex) + $classFiles)
+    # One jar instead of every .class file: the file list outgrows cmd.exe's line limit (d8 is a .bat).
+    $classesJar = Join-Path $work 'classes.jar'
+    Remove-Item $classesJar -ErrorAction SilentlyContinue
+    Invoke-Tool "$jdk\bin\jar.exe" @('cf', $classesJar, '-C', $classes, '.')
+    Invoke-Tool "$bt\d8.bat" @('--release', '--min-api', '19', '--lib', $android, '--output', $dex, $classesJar)
 
     $unsigned = Join-Path $work 'unsigned.apk'
     $linkArgs = @('link', '-o', $unsigned, '-I', $android, '--manifest', (Join-Path $Dir 'AndroidManifest.xml'),

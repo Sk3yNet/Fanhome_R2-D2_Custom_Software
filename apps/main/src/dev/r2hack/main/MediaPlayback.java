@@ -22,6 +22,7 @@ final class MediaPlayback {
     private static final String TAG = "R2Media";
 
     private final Listener listener;
+    private final StreamRelay relay = new StreamRelay();
     private MediaPlayer player;
     private String uri = "", metadata = "";
     private String state = NO_MEDIA;
@@ -29,6 +30,7 @@ final class MediaPlayback {
 
     MediaPlayback(Listener listener) {
         this.listener = listener;
+        relay.start();
     }
 
     synchronized String state() {
@@ -103,7 +105,7 @@ final class MediaPlayback {
         try {
             final MediaPlayer mp = new MediaPlayer();
             mp.setAudioStreamType(AudioManager.STREAM_MUSIC);
-            mp.setDataSource(uri);
+            mp.setDataSource(relay.relay(uri)); // the board's player can't read chunked streams itself
             mp.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
                 @Override
                 public void onPrepared(MediaPlayer m) {

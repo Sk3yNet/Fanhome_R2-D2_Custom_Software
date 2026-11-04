@@ -8,9 +8,9 @@ final class DlnaXml {
     static final String CM = "urn:schemas-upnp-org:service:ConnectionManager:1";
 
     /** Formats Android 4.4's player handles that Home Assistant and Music Assistant send. */
-    static final String SINK_PROTOCOLS = "http-get:*:audio/mpeg:*,http-get:*:audio/mp3:*,http-get:*:audio/mp4:*,"
-            + "http-get:*:audio/aac:*,http-get:*:audio/x-aac:*,http-get:*:audio/wav:*,http-get:*:audio/x-wav:*,"
-            + "http-get:*:audio/L16:*,http-get:*:audio/flac:*,http-get:*:audio/x-flac:*,http-get:*:audio/ogg:*";
+    // MP3 only: the board's player can't stream FLAC (or WAV/PCM) sent as an endless chunked stream, which
+    // is how Music Assistant sends it, so senders are steered to MP3.
+    static final String SINK_PROTOCOLS = "http-get:*:audio/mpeg:*,http-get:*:audio/mp3:*";
 
     static String device(String udn, String name) {
         return "<?xml version=\"1.0\"?>\n<root xmlns=\"urn:schemas-upnp-org:device-1-0\">"

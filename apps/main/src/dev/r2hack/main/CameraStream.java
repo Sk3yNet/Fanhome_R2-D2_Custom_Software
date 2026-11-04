@@ -32,9 +32,12 @@ final class CameraStream {
     private static final long CLOSE_AFTER_MS = 3000;   // keep it open briefly between viewers
 
     private final Object frameLock = new Object();
-    private byte[] frame;                              // latest JPEG
-    private long frameNo;
-    private int viewers;
+    private byte[] frame;                              // latest JPEG as the camera delivers it (phone app)
+    private byte[] upright;                            // latest JPEG turned upright (web, Home Assistant)
+    private long frameNo, uprightNo;                   // count of each kind of frame
+    private int viewers;                               // everyone watching
+    private int webViewers;                            // of those, the ones that get the upright picture
+    private byte[] turned;                             // reused buffer for the turned frame
     private Camera camera;
     private SurfaceTexture texture;
     private Handler handler;
@@ -91,7 +94,7 @@ final class CameraStream {
     /** Waits for a frame newer than seen[0] (-1: the next one) and updates seen[0]. Null on timeout. */
     byte[] next(long[] seen, long timeoutMs) throws InterruptedException {
         synchronized (frameLock) {
-            byte[] f = nextFrameLocked(seen[0], timeoutMs);
+            byte[] f = nextFrameLocked(seen[0], timeoutMs, false);
             seen[0] = frameNo;
             return f;
         }
@@ -196,18 +199,58 @@ final class CameraStream {
     private void encode(byte[] nv21, int w, int h) {
         RawListener raw = rawListener;
         if (raw != null) raw.onFrame(nv21, w, h);
+        boolean asIs, turn;
         synchronized (frameLock) {
-            if (viewers == 0) return; // only face detection is watching: no JPEG needed
+            asIs = viewers > webViewers;
+            turn = webViewers > 0;
         }
+        if (!asIs && !turn) return; // only face detection is watching: no JPEG needed
         long now = System.currentTimeMillis();
         if (now - lastEncode < FRAME_MS) return;
         lastEncode = now;
-        ByteArrayOutputStream jpeg = new ByteArrayOutputStream(w * h / 4);
-        new YuvImage(nv21, ImageFormat.NV21, w, h, null).compressToJpeg(new Rect(0, 0, w, h), QUALITY, jpeg);
+        byte[] plain = asIs ? jpeg(nv21, w, h) : null;
+        byte[] up = null;
+        if (turn) {
+            if (turned == null || turned.length != nv21.length) turned = new byte[nv21.length];
+            rotateClockwise(nv21, turned, w, h);
+            up = jpeg(turned, h, w);
+        }
         synchronized (frameLock) {
-            frame = jpeg.toByteArray();
-            frameNo++;
+            if (plain != null) {
+                frame = plain;
+                frameNo++;
+            }
+            if (up != null) {
+                upright = up;
+                uprightNo++;
+            }
             frameLock.notifyAll();
+        }
+    }
+
+    private static byte[] jpeg(byte[] nv21, int w, int h) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream(w * h / 4);
+        new YuvImage(nv21, ImageFormat.NV21, w, h, null).compressToJpeg(new Rect(0, 0, w, h), QUALITY, out);
+        return out.toByteArray();
+    }
+
+    /**
+     * R2's camera is mounted on its side: turns an NV21 frame a quarter turn clockwise
+     * (w x h in, h x w out), the grey plane pixel by pixel and the colour plane in pairs.
+     */
+    private static void rotateClockwise(byte[] in, byte[] out, int w, int h) {
+        for (int y = 0; y < h; y++) {
+            int row = y * w, col = h - 1 - y;
+            for (int x = 0; x < w; x++) out[x * h + col] = in[row + x];
+        }
+        int base = w * h, cw = w / 2, ch = h / 2;
+        for (int y = 0; y < ch; y++) {
+            int row = base + y * w, col = ch - 1 - y;
+            for (int x = 0; x < cw; x++) {
+                int o = base + (x * ch + col) * 2, i = row + x * 2;
+                out[o] = in[i];
+                out[o + 1] = in[i + 1];
+            }
         }
     }
 
@@ -252,11 +295,12 @@ final class CameraStream {
             }
             synchronized (frameLock) {
                 viewers++;
+                webViewers++;
                 watching = true;
             }
             open();
             if (still) {
-                byte[] f = nextFrame(-1, 5000);
+                byte[] f = nextFrame(-1, 5000, true);
                 if (f == null) {
                     out.write(("HTTP/1.0 503 Unavailable\r\nContent-Type: text/plain\r\n\r\n" + status() + "\n").getBytes(UTF8));
                     return;
@@ -272,8 +316,8 @@ final class CameraStream {
             while (true) {
                 byte[] f;
                 synchronized (frameLock) {
-                    f = nextFrameLocked(seen, 5000);
-                    seen = frameNo;
+                    f = nextFrameLocked(seen, 5000, true);
+                    seen = uprightNo;
                 }
                 if (f == null) break; // camera stopped delivering
                 out.write(("--" + BOUNDARY + "\r\nContent-Type: image/jpeg\r\nContent-Length: " + f.length + "\r\n\r\n").getBytes(UTF8));
@@ -287,6 +331,7 @@ final class CameraStream {
             if (watching) {
                 synchronized (frameLock) {
                     viewers--;
+                    webViewers--;
                     if (viewers == 0) handler.postDelayed(closeIfIdle, CLOSE_AFTER_MS);
                 }
             }
@@ -297,22 +342,25 @@ final class CameraStream {
         }
     }
 
-    private byte[] nextFrame(long after, long timeoutMs) throws InterruptedException {
+    private byte[] nextFrame(long after, long timeoutMs, boolean turned) throws InterruptedException {
         synchronized (frameLock) {
-            return nextFrameLocked(after, timeoutMs);
+            return nextFrameLocked(after, timeoutMs, turned);
         }
     }
 
-    /** Waits for a frame newer than frame number "after" (-1: any frame taken after this call). */
-    private byte[] nextFrameLocked(long after, long timeoutMs) throws InterruptedException {
-        long want = after < 0 ? frameNo : after;
+    /**
+     * Waits for a frame newer than frame number "after" (-1: any frame taken after this call), upright
+     * or as the camera delivers it.
+     */
+    private byte[] nextFrameLocked(long after, long timeoutMs, boolean turned) throws InterruptedException {
+        long want = after < 0 ? (turned ? uprightNo : frameNo) : after;
         long end = System.currentTimeMillis() + timeoutMs;
-        while (frameNo <= want) {
+        while ((turned ? uprightNo : frameNo) <= want) {
             long left = end - System.currentTimeMillis();
             if (left <= 0) return null;
             frameLock.wait(left);
         }
-        return frame;
+        return turned ? upright : frame;
     }
 
     /** Reads the request head and returns the path of its request line. */

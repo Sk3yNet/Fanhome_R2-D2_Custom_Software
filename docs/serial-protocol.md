@@ -16,9 +16,9 @@ newline-delimited JSON. This is what R2 Agent speaks on the robot's behalf.
 | `ready` | — | sent once when the software starts |
 | `gin` | — | status poll, **every 5 s**; the reply is a `gin` object (below) |
 | `move` | `power`, `angle` | drive; ignored while charging |
-| `head-angle` | `angle` | ignored while charging |
+| `head-angle` | `angle` | ignored while charging. Degrees from forward, positive to the right. The end stops are at about ±135, so the agent caps head commands at ±130. The controller finds center when it powers on |
 | `head-shift` | `angle` | ignored while charging |
-| `head-dir` | `dir` | ignored while charging |
+| `head-dir` | `dir` | ignored while charging. Turns the head continuously: 1 right, −1 left, 0 stops and holds (confirmed). The end-stop sensors stop it at the limits; the agent stops it 1.2 s after the last repeat |
 | `mode` | `mode` (see table) | some modes are blocked while charging |
 | `projector` | `mode` | |
 | `arm` | `power` | |

@@ -118,6 +118,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         String kind = msg.optString("agent");
         if ("heartbeat".equals(kind) || "hello".equals(kind)) supervisor.onHeartbeat();
         else if ("shutdown".equals(kind)) shutdown("requested by the main app");
+        else if ("settings".equals(kind)) settings = msg;
         else if ("wifi-scan".equals(kind)) {
             try {
                 toMain(new JSONObject().put("agent", "wifi-list").put("seq", msg.optInt("seq"))
@@ -157,6 +158,9 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     }
 
     /** Clean power-off: stop, flush storage, tell the controller, then shut Android down. */
+    /** The main app's latest settings ({"agent":"settings","volume","muted","voice","face"}). */
+    private volatile JSONObject settings;
+
     private void shutdown(String why) {
         EventLog.i("shutting down: " + why);
         stopRobot();
@@ -407,6 +411,17 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 if (!toMain(j.put("agent", "identity"))) return bad("main app not connected");
                 return result("identity sent to the main app");
             }
+            case "POST /volume": { // ?percent=0..100: droid sounds and music
+                int pct;
+                try {
+                    pct = Integer.parseInt(String.valueOf(req.query.get("percent")).trim());
+                } catch (NumberFormatException e) {
+                    return bad("percent must be 0 to 100");
+                }
+                if (pct < 0 || pct > 100) return bad("percent must be 0 to 100");
+                if (!toMain(new JSONObject().put("agent", "volume").put("percent", pct))) return bad("main app not connected");
+                return result("volume " + pct + "%");
+            }
             case "POST /safe-mode":
                 supervisor.setSafeMode("1".equals(req.query.get("on")));
                 return result("safe mode " + (supervisor.safeMode() ? "on" : "off"));
@@ -528,6 +543,13 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             s.put("bridge_clients", bridge.clientCount());
             s.put("moving", guard.moving());
             s.put("battery_low", guard.lowBattery());
+        }
+        JSONObject set = settings;
+        if (set != null) {
+            s.put("volume", set.optInt("volume"));
+            s.put("muted", set.optBoolean("muted"));
+            s.put("voice", set.optBoolean("voice"));
+            s.put("face_tracking", set.optBoolean("face"));
         }
         return s;
     }

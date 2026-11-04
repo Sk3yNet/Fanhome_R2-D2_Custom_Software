@@ -24,7 +24,7 @@ import java.util.zip.ZipFile;
  * recognizer library and its speech model come from the factory app on the robot (nothing is bundled);
  * the command phrases are our own and can be changed in files/voice/keywords.txt.
  *
- * "Hey R2-D2" (or "R2-D2") wakes it up; for 15 s after that, each command phrase runs its action,
+ * "Hey R2-D2" wakes it up; for 15 s after that, each command phrase runs its action,
  * and each command keeps it listening for another 15 s.
  */
 final class Voice {
@@ -47,13 +47,15 @@ final class Voice {
 
     /** Phrase -> action, with the keyword-spotting threshold (lower finds more, but also more false alarms). */
     private static final Object[][] PHRASES = {
-            {"hey r two d two", WAKE, "1e-44"}, {"r two d two", WAKE, "1e-34"},
-            {"turn left", "turn-left", "1e-18"}, {"turn right", "turn-right", "1e-16"},
-            {"turn around", "turn-around", "1e-18"}, {"go forward", "forward", "1e-22"},
-            {"shake your head", "shake-head", "1e-24"}, {"walk a circle", "circle", "1e-30"},
-            {"dance please", "dance", "1e-22"}, {"make some noise", "noise", "1e-24"},
-            {"who are you", "who-are-you", "1e-20"}, {"lightsaber", "lightsaber", "1e-24"},
-            {"move arms", "arm", "1e-18"}, {"patrol", "patrol", "1e-10"}, {"stop", "stop", "1e-10"},
+            // Only "hey R2-D2" wakes him: plain "R2-D2" comes up whenever people talk about him.
+            {"hey r two d two", WAKE, "1e-34"},
+            // Commands that move him are stricter, so conversation near him doesn't drive him around.
+            {"turn left", "turn-left", "1e-14"}, {"turn right", "turn-right", "1e-12"},
+            {"turn around", "turn-around", "1e-14"}, {"go forward", "forward", "1e-18"},
+            {"shake your head", "shake-head", "1e-22"}, {"walk a circle", "circle", "1e-26"},
+            {"dance please", "dance", "1e-18"}, {"make some noise", "noise", "1e-22"},
+            {"who are you", "who-are-you", "1e-16"}, {"lightsaber", "lightsaber", "1e-22"},
+            {"move arms", "arm", "1e-16"}, {"patrol", "patrol", "1e-8"}, {"stop", "stop", "1e-10"},
             {"princess leia", "leia", "1e-20"}, {"skywalker", "luke", "1e-20"},
     };
 

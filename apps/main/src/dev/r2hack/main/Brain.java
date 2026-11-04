@@ -17,7 +17,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
             "stop", "wake", "turn-left", "turn-right", "turn-around", "forward", "circle", "patrol",
             "dance", "shake-head", "who-are-you", "noise", "not-recognized",
             "lightsaber", "arm", "short-lcd", "long-lcd", "flash-front", "flash-back", "leia", "luke",
-            "mute", "unmute", "pair", "phone-app-on", "phone-app-off",
+            "mute", "unmute", "pair", "phone-app-on", "phone-app-off", "voice-on", "voice-off", "face-on", "face-off",
     };
 
     // The phone app's action numbers (the factory `mode` command) -> action names.
@@ -77,9 +77,22 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
             }
         });
         this.dlna = new DlnaRenderer(io, sounds);
+        sounds.onChange = new Runnable() {
+            @Override
+            public void run() {
+                dlna.volumeChanged();
+                reportSettings();
+            }
+        };
         this.phone = new PhoneLink(this, camera);
         phone.setEnabled(io.getSharedPreferences("settings", 0).getBoolean("phone_app", true));
         robot.addListener(phone);
+        robot.addListener(new Robot.Listener() {
+            @Override
+            public void onRobotChanged() {
+                reportSettings(); // e.g. the phone app switched voice or faces
+            }
+        });
         this.voice = new Voice(io, this);
         this.face = new FaceTracker(this);
         camera.setRawListener(face);
@@ -103,6 +116,16 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
         Log.i(TAG, "connected");
         lights.reset();
         lights.refresh();
+        reportSettings();
+    }
+
+    /** Tells the agent the volume, mute, voice and face settings, for its /status (the web page's controls). */
+    private void reportSettings() {
+        try {
+            io.send(new JSONObject().put("agent", "settings").put("volume", sounds.volume()).put("muted", sounds.muted())
+                    .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection()));
+        } catch (Exception ignored) {
+        }
     }
 
     /** Every message from the controller board: gin status, btn presses, play_sound requests... */
@@ -143,6 +166,10 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
                 }
                 break;
             }
+            case "volume":
+                sounds.setVolume(msg.optInt("percent", sounds.volume()));
+                Log.i(TAG, "volume " + sounds.volume() + "%");
+                break;
             case "identity":
                 robot.importIdentity(msg.optString("name"), msg.optString("uuid"), msg.optJSONArray("clients"));
                 Log.i(TAG, "identity imported: " + robot.name());
@@ -195,6 +222,14 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host {
             case "pair":
                 if (robot.mode == Robot.PAIR) stopPairing();
                 else startPairing();
+                return;
+            case "voice-on":
+            case "voice-off":
+                robot.setFlag("voice_recognition", name.endsWith("on")); // the timers apply it
+                return;
+            case "face-on":
+            case "face-off":
+                robot.setFlag("face_detection", name.endsWith("on"));
                 return;
             case "phone-app-on":
             case "phone-app-off": {

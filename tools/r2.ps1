@@ -5,6 +5,7 @@
 #   log-previous             agent event log from the previous boot (e.g. after a crash or power loss)
 #   action <name>            run a robot action, e.g. dance, wake, lightsaber, leia (list: actions)
 #   stop                     emergency stop (the agent stops the robot itself, then cancels the action)
+#   volume <0-100>           droid sounds and music volume (kept across reboots)
 #   logcat [text] [-Lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
 #   dmesg [text] [-Lines N]  kernel log
 #   adb                      connect adb over Wi-Fi (root shell: tools\platform-tools\adb shell)
@@ -76,9 +77,10 @@ switch ($Command) {
     'status'       { Call GET /status | ConvertTo-Json -Depth 5 }
     'log'          { Call GET /log }
     'log-previous' { Call GET '/log?previous=1' }
-    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off' -split ' ' }
+    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off' -split ' ' }
     'action'       { if (-not $Arg) { throw 'usage: r2.ps1 action <name>  (see: r2.ps1 actions)' }; Call POST "/action?name=$([uri]::EscapeDataString($Arg))" }
     'stop'         { Call POST /stop }
+    'volume'       { if ($Arg -notmatch '^\d+$') { throw 'usage: r2.ps1 volume <0-100>' }; Call POST "/volume?percent=$Arg" }
     { $_ -in 'logcat', 'dmesg' } {
         $q = "?lines=$Lines"; if ($Arg) { $q += '&grep=' + [uri]::EscapeDataString($Arg) }
         $out = Call GET "/$Command$q"

@@ -33,6 +33,8 @@ final class Sounds {
     private Resources stock;
     private String problem = "not loaded";
     private MediaPlayer player;
+    /** Called after the volume or mute changes, from wherever (web page, phone app, Home Assistant). */
+    volatile Runnable onChange;
 
     Sounds(Context ctx) {
         this.ctx = ctx;
@@ -58,11 +60,18 @@ final class Sounds {
         prefs.edit().putBoolean("muted", on).apply();
         if (on) stop();
         applyVolume();
+        changed();
     }
 
     void setVolume(int percent) {
         prefs.edit().putInt("volume", Math.max(0, Math.min(100, percent))).apply();
         applyVolume();
+        changed();
+    }
+
+    private void changed() {
+        Runnable r = onChange;
+        if (r != null) r.run();
     }
 
     /** Starts a sound. interrupt=false leaves a sound that is already playing alone. */

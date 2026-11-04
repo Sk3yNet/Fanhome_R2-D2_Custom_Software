@@ -31,6 +31,30 @@
   select, input[type=text] { flex:1; padding:8px; border-radius:8px; border:1px solid var(--line); background:#0b0e12; color:var(--text); min-width:0; }
   .hint { color:var(--dim); font-size:13px; margin:6px 0; }
   .stack > * { margin-top:8px; }
+  .switches { display:grid; gap:10px; margin-top:12px; }
+  .sw { display:flex; align-items:center; gap:10px; cursor:pointer; }
+  .sw input { position:absolute; opacity:0; width:1px; height:1px; }
+  .sw span { position:relative; flex:none; width:44px; height:26px; border-radius:999px; background:var(--line); transition:background .15s; }
+  .sw span::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; transition:transform .15s; }
+  .sw input:checked + span { background:var(--accent); }
+  .sw input:checked + span::after { transform:translateX(18px); }
+  .sw input:focus-visible + span { outline:2px solid var(--accent); outline-offset:2px; }
+  .sw input:disabled + span { opacity:.5; }
+  .stat.wide { grid-column:span 2; }
+  .battery { position:relative; height:28px; margin-right:6px; border:2px solid var(--dim); border-radius:6px; overflow:visible; display:flex; align-items:center; justify-content:center; }
+  .battery::after { content:""; position:absolute; right:-6px; top:8px; width:4px; height:8px; border-radius:0 2px 2px 0; background:var(--dim); }
+  .battery .fill { position:absolute; left:2px; top:2px; bottom:2px; width:0; border-radius:3px; background:var(--ok); transition:width .4s, background .4s; }
+  .battery .fill.mid { background:var(--warn); } .battery .fill.low { background:var(--stop); }
+  .battery b { position:relative; font-size:14px; text-shadow:0 1px 2px #000a; }
+  .battery .bolt { position:relative; display:none; width:16px; height:16px; margin-right:2px; fill:#fde047; filter:drop-shadow(0 1px 1px #000a); }
+  .battery.charging .bolt { display:block; }
+  .led { display:block; width:18px; height:18px; margin:5px 0; border-radius:50%; background:#333a45; transition:background .2s, box-shadow .2s; }
+  .led.on { background:var(--warn); box-shadow:0 0 10px var(--warn); }
+  #headPad { position:relative; flex:1; height:44px; border-radius:22px; background:#141922; border:1px solid var(--line); touch-action:none; }
+  #headKnob { position:absolute; top:50%; left:50%; width:40px; height:40px; margin:-20px 0 0 -20px; border-radius:50%; background:var(--accent); box-shadow:0 2px 8px #0008; pointer-events:none; }
+  #headPad::before, #headPad::after { position:absolute; top:50%; transform:translateY(-50%); color:var(--dim); font-size:13px; }
+  #headPad::before { content:"◀"; left:12px; } #headPad::after { content:"▶"; right:12px; }
+  #headCenter { padding:8px 10px; }
 </style>
 </head>
 <body>
@@ -42,9 +66,15 @@
   <section>
     <h2>Status</h2>
     <div class="stats">
-      <div class="stat"><b id="batt">–</b><span>battery</span></div>
-      <div class="stat"><b id="chg">–</b><span>charging</span></div>
-      <div class="stat"><b id="mov">–</b><span>moving</span></div>
+      <div class="stat wide">
+        <div class="battery" id="battBar" role="img" aria-label="battery unknown">
+          <div class="fill" id="battFill"></div>
+          <svg class="bolt" id="bolt" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+          <b id="batt">–</b>
+        </div>
+        <span id="chg">battery</span>
+      </div>
+      <div class="stat"><i class="led" id="mov"></i><span>moving</span></div>
     </div>
   </section>
 
@@ -58,7 +88,17 @@
     <h2>Drive</h2>
     <div id="pad"><div id="knob"></div></div>
     <div class="row"><label for="power">Max power</label><input id="power" type="range" min="10" max="100" value="40"><output id="powerOut">40</output></div>
-    <div class="row"><label for="head">Head</label><input id="head" type="range" min="-45" max="45" value="0"><output id="headOut">0</output></div>
+    <div class="row"><label>Head</label><div id="headPad" aria-label="Head: hold left or right to turn"><div id="headKnob"></div></div><button class="act" id="headCenter">Center</button></div>
+  </section>
+
+  <section>
+    <h2>Settings</h2>
+    <div class="row"><label for="vol">Volume</label><input id="vol" type="range" min="0" max="100" value="30"><output id="volOut">–</output></div>
+    <div class="switches">
+      <label class="sw"><input type="checkbox" id="swSound" data-on="unmute" data-off="mute"><span></span>Sound</label>
+      <label class="sw"><input type="checkbox" id="swVoice" data-on="voice-on" data-off="voice-off"><span></span>Voice commands</label>
+      <label class="sw"><input type="checkbox" id="swFace" data-on="face-on" data-off="face-off"><span></span>Face tracking</label>
+    </div>
   </section>
 
   <section>
@@ -87,7 +127,7 @@
   </section>
 </main>
 <script>
-const ACTIONS = ["wake","dance","shake-head","who-are-you","noise","turn-left","turn-right","turn-around","forward","circle","patrol","lightsaber","arm","short-lcd","long-lcd","flash-front","flash-back","leia","luke","mute","unmute"];
+const ACTIONS = ["wake","dance","shake-head","who-are-you","noise","turn-left","turn-right","turn-around","forward","circle","patrol","lightsaber","arm","short-lcd","long-lcd","flash-front","flash-back","leia","luke"];
 const $ = id => document.getElementById(id);
 let token = "";
 try { token = localStorage.getItem("r2token") || ""; } catch (e) {}
@@ -119,16 +159,40 @@ for (const a of ACTIONS) {
   $("actions").appendChild(b);
 }
 
+let volTouched = 0; // the controls follow /status, except right after you change them
+const SWITCHES = { swSound: s => s.muted == null ? null : !s.muted, swVoice: s => s.voice, swFace: s => s.face_tracking };
+for (const id in SWITCHES) {
+  $(id).disabled = true; // until R2 reports the setting
+  $(id).onchange = e => {
+    volTouched = Date.now();
+    const name = e.target.checked ? e.target.dataset.on : e.target.dataset.off;
+    api("POST", "/action?name=" + name).then(d => say(d.result), err => say(err.message));
+  };
+}
 async function refresh() {
   if (!token) { $("conn").textContent = "token needed"; return; }
   try {
     const s = await api("GET", "/status");
     $("conn").textContent = "connected"; $("conn").className = "pill ok";
     const g = s.last_gin || {};
-    $("batt").textContent = g.batt != null ? g.batt + "%" : "–";
-    const c = g["charging-status"] ?? g.charging_status;
-    $("chg").textContent = c == null ? "–" : (c === 1 ? "yes" : c === 2 ? "full" : "no");
-    $("mov").textContent = s.moving ? "yes" : "no";
+    const pct = g.batt, c = g["charging-status"] ?? g.charging_status;
+    $("batt").textContent = pct != null ? pct + "%" : "–";
+    const fill = $("battFill");
+    fill.style.width = pct != null ? "calc(" + Math.max(0, Math.min(100, pct)) + "% - 4px)" : "0";
+    fill.className = "fill" + (pct == null ? "" : pct < 20 ? " low" : pct < 50 ? " mid" : "");
+    $("battBar").classList.toggle("charging", c === 1);
+    $("chg").textContent = c === 1 ? "charging" : c === 2 ? "charged" : "battery";
+    $("battBar").setAttribute("aria-label", "battery " + (pct ?? "unknown") + "%" + (c === 1 ? ", charging" : ""));
+    $("mov").classList.toggle("on", !!s.moving);
+    $("mov").title = s.moving ? "moving" : "still";
+    if (s.volume != null && Date.now() - volTouched > 3000) {
+      $("vol").value = s.volume;
+      $("volOut").textContent = s.muted ? "muted" : s.volume + "%";
+      for (const id in SWITCHES) {
+        const v = SWITCHES[id](s);
+        if (v != null) { $(id).checked = v; $(id).disabled = false; }
+      }
+    }
   } catch (e) {
     $("conn").textContent = e.message.includes("Token") ? "wrong token" : "offline"; $("conn").className = "pill bad";
   }
@@ -213,21 +277,58 @@ scan.onclick = async () => {
 };
 nets.onchange = e => { if (e.target.value) ssid.value = e.target.value; };
 join.onclick = async () => {
-  const ssid = ssid.value.trim();
-  if (!ssid) { say("choose or type a network name"); return; }
+  const name = ssid.value.trim();
+  if (!name) { say("choose or type a network name"); return; }
   try {
-    const r = await api("POST", "/wifi/join", JSON.stringify({ ssid, password: wpw.value }));
+    const r = await api("POST", "/wifi/join", JSON.stringify({ ssid: name, password: wpw.value }));
     wpw.value = "";
     say(r.result + " Then find R2 again (tools\\r2.ps1 find, or your router's device list).");
   } catch (e) { say("join: " + e.message); }
 };
 
-let headTimer;
-$("head").oninput = e => {
-  $("headOut").textContent = e.target.value;
-  clearTimeout(headTimer);
-  headTimer = setTimeout(() => send({ cmd: "head-angle", angle: +e.target.value }).catch(err => say(err.message)), 150);
+let volTimer;
+$("vol").oninput = e => {
+  volTouched = Date.now();
+  $("volOut").textContent = e.target.value + "%";
+  clearTimeout(volTimer);
+  volTimer = setTimeout(() => api("POST", "/volume?percent=" + e.target.value).catch(err => say(err.message)), 200);
 };
+
+// Head joystick: hold left or right and the head turns that way (the controller's head-dir); let go and it
+// stops where it is. While held, the turn is repeated so the agent's head watchdog (1.2 s) keeps it going.
+const headPad = $("headPad"), headKnob = $("headKnob");
+let headDir = 0, headHeld = false, headLoop = null;
+function setHeadDir(d) {
+  if (d === headDir) return;
+  headDir = d;
+  send({ cmd: "head-dir", dir: d }).catch(err => say(err.message));
+}
+function headAt(e) {
+  const r = headPad.getBoundingClientRect(), half = (r.width - 40) / 2;
+  const x = Math.max(-half, Math.min(half, e.clientX - r.left - r.width / 2));
+  headKnob.style.left = "calc(50% + " + x + "px)";
+  const f = x / half;
+  setHeadDir(f > 0.25 ? 1 : f < -0.25 ? -1 : 0);
+}
+function headRelease() {
+  if (!headHeld) return;
+  headHeld = false;
+  clearInterval(headLoop);
+  headKnob.style.left = "50%";
+  headDir = null; // force the stop to be sent
+  setHeadDir(0);
+}
+headPad.addEventListener("pointerdown", e => {
+  headHeld = true;
+  headPad.setPointerCapture(e.pointerId);
+  headAt(e);
+  clearInterval(headLoop);
+  headLoop = setInterval(() => { if (headDir) send({ cmd: "head-dir", dir: headDir }).catch(() => {}); }, 400);
+});
+headPad.addEventListener("pointermove", e => { if (headHeld) headAt(e); });
+headPad.addEventListener("pointerup", headRelease);
+headPad.addEventListener("pointercancel", headRelease);
+$("headCenter").onclick = () => send({ cmd: "head-angle", angle: 0 }).catch(err => say(err.message));
 </script>
 </body>
 </html>

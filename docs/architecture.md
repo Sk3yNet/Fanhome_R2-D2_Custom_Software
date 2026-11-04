@@ -99,8 +99,15 @@ Streams are accepted only over http(s), from a private address, and only from th
 play request (Home Assistant serves its own media and text-to-speech). If your Home Assistant hands out
 media URLs on a different address, set its internal URL to its LAN address.
 
+The board's media player (Allwinner's CedarX) can't read chunked streams with no length, which is how
+Music Assistant sends audio, so R2 Main fetches each stream itself and hands it to the player from
+127.0.0.1:7712 as a plain stream (keeping its start and the latest 4 MB, because the player probes the
+stream and reconnects). R2 advertises MP3 only, and asks Music Assistant for MP3 instead of FLAC (its
+stream server picks the format from the file extension). Confirmed with Home Assistant's own media
+(radio) and with Music Assistant.
+
 ## Camera
-R2 Main streams R2's camera as MJPEG (about 640×480, up to 10 frames a second). It listens on
+R2 Main streams R2's camera as MJPEG (480×640 portrait, up to 10 frames a second). The camera is mounted on its side, so R2 turns each frame a quarter turn clockwise; the phone app's video stays as the camera delivers it, as in the factory software. It listens on
 localhost only; the agent serves it at `/camera.mjpg` (live) and `/camera.jpg` (one picture) after
 checking the token, so the camera has the same protection as everything else. The camera is switched on
 only while someone is watching, and off again 3 s after the last viewer leaves.
