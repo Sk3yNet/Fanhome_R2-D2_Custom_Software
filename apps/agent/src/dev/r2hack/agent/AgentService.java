@@ -18,16 +18,21 @@ import org.json.JSONObject;
  * Wires everything together. If the stock app is enabled again (factory fallback),
  * the agent stays passive: it keeps the update API up but leaves /dev/ttyS2 alone.
  */
-public class AgentService extends Service implements SerialLink.Listener, Bridge.Handler,
+public class AgentService extends Service implements ControllerLink.Listener, Bridge.Handler,
         HttpApi.Routes, Supervisor.StopHook {
 
     private static boolean started;
     private final long bootAt = SystemClock.elapsedRealtime();
-    private SerialLink serial;
+    private ControllerLink serial;
+    private MotionGuard guard;
     private Bridge bridge;
     private Supervisor supervisor;
     private WifiFailover wifi;
     private boolean passive;
+    private boolean sim;
+    /** Setup window: opened by the pairing button; Wi-Fi setup and the token work without a token meanwhile. */
+    private volatile long setupUntil;
+    private volatile String lastJoin = "";
     private PowerManager.WakeLock wakeLock;
 
     @Override
@@ -35,6 +40,8 @@ public class AgentService extends Service implements SerialLink.Listener, Bridge
         super.onCreate();
         if (started) return;
         started = true;
+        EventLog.init(getFilesDir());
+        Credentials.init(this);
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
             public void uncaughtException(Thread t, Throwable e) {
@@ -62,8 +69,16 @@ public class AgentService extends Service implements SerialLink.Listener, Bridge
 
         bridge = new Bridge(this);
         bridge.start();
-        serial = new SerialLink(this, this);
+        sim = getSharedPreferences("agent", MODE_PRIVATE).getBoolean("sim", false);
+        serial = sim ? new SimController(this) : new SerialLink(this, this);
+        guard = new MotionGuard(new MotionGuard.Output() {
+            @Override
+            public boolean write(String line) {
+                return serial.send(line);
+            }
+        });
         serial.start();
+        guard.start();
         startControllerKeepalive();
         supervisor.start();
     }
@@ -82,24 +97,126 @@ public class AgentService extends Service implements SerialLink.Listener, Bridge
 
     @Override
     public void onControllerLine(String line) {
+        guard.onControllerLine(line);
         bridge.broadcast(line);
+        if (line.contains("\"btn\"")) {
+            try {
+                int button = new JSONObject(line).optInt("value");
+                if (button == 3) openSetup();
+                // Handled here, not in the main app, so the power button works even if that app is hung.
+                if (button == 1) {
+                    if (sim) EventLog.i("sim: power button (not shutting down a simulated robot)");
+                    else shutdown("power button");
+                }
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     @Override
     public void onAgentMessage(JSONObject msg) {
         String kind = msg.optString("agent");
         if ("heartbeat".equals(kind) || "hello".equals(kind)) supervisor.onHeartbeat();
+        else if ("shutdown".equals(kind)) shutdown("requested by the main app");
+        else if ("wifi-scan".equals(kind)) {
+            try {
+                toMain(new JSONObject().put("agent", "wifi-list").put("seq", msg.optInt("seq"))
+                        .put("list", wifi.scan()).put("current", wifi.currentSsid()));
+            } catch (Exception e) {
+                EventLog.e("wifi-scan reply failed", e);
+            }
+        } else if ("wifi-join".equals(kind)) {
+            final String ssid = msg.optString("ssid"), pw = msg.optString("password");
+            final int seq = msg.optInt("seq");
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    boolean ok = wifi.join(ssid, pw);
+                    try {
+                        toMain(new JSONObject().put("agent", "wifi-join-result").put("seq", seq).put("ok", ok));
+                    } catch (Exception ignored) {
+                    }
+                }
+            }, "wifi-join").start();
+        }
+        else if ("wifi-toggle".equals(kind)) {
+            String next = WifiFailover.MODE_AP.equals(wifi.preferredMode()) ? WifiFailover.MODE_STATION : WifiFailover.MODE_AP;
+            EventLog.i("wifi button: switching to " + next);
+            wifi.request(next);
+        }
     }
 
     @Override
     public boolean sendToController(String line) {
-        return serial != null && serial.send(line);
+        return guard != null && guard.send(line);
     }
 
     @Override
     public void stopRobot() {
-        sendToController("{\"cmd\":\"mode\",\"mode\":0}");
-        EventLog.i("sent stop to controller");
+        if (guard != null) guard.stop("agent stop");
+    }
+
+    /** Clean power-off: stop, flush storage, tell the controller, then shut Android down. */
+    private void shutdown(String why) {
+        EventLog.i("shutting down: " + why);
+        stopRobot();
+        if (serial != null) serial.send("{\"cmd\":\"led\",\"r\":5,\"b\":1,\"y\":1,\"g\":1}"); // factory power-off lights
+        Supervisor.run("sync");
+        if (serial != null) serial.send("{\"cmd\":\"shut-down\"}");
+        Intent i = new Intent("android.intent.action.ACTION_REQUEST_SHUTDOWN");
+        i.putExtra("android.intent.extra.KEY_CONFIRM", false);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(i);
+        } catch (Exception e) {
+            // Granted only when the /system copy of the agent asks for it too; otherwise power off as root.
+            EventLog.i("shutdown permission missing, powering off with su: " + e.getMessage());
+            String out = Supervisor.run("su", "-c", "reboot -p");
+            if (!out.isEmpty()) EventLog.i("power off: " + out);
+        }
+    }
+
+    private void openSetup() {
+        setupUntil = SystemClock.elapsedRealtime() + Config.SETUP_WINDOW_MS;
+        EventLog.i("setup window open for " + Config.SETUP_WINDOW_MS / 1000 + " s (pairing button)");
+    }
+
+    private long setupSecondsLeft() {
+        return Math.max(0, (setupUntil - SystemClock.elapsedRealtime()) / 1000);
+    }
+
+    @Override
+    public boolean openWithoutToken(HttpApi.Request req) {
+        String route = req.method + " " + req.path;
+        if ("GET /setup".equals(route)) return true; // only says whether the window is open
+        boolean setupRoute = "GET /setup/token".equals(route) || "GET /wifi/scan".equals(route)
+                || "POST /wifi/join".equals(route) || "GET /wifi/last-join".equals(route);
+        return setupRoute && setupSecondsLeft() > 0;
+    }
+
+    /** Joins a network chosen on the web page; the reply goes out before the hotspot goes away. */
+    private void joinLater(final String ssid, final String password) {
+        lastJoin = "joining " + ssid;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Thread.sleep(1500);
+                } catch (InterruptedException ignored) {
+                }
+                boolean ok = wifi.join(ssid, password);
+                lastJoin = ok ? "joined " + ssid + " as " + WifiFailover.ipAddress() : "could not join " + ssid
+                        + " (wrong password or out of range); back on " + wifi.state();
+                EventLog.i("wifi setup: " + lastJoin);
+            }
+        }, "wifi-setup-join").start();
+    }
+
+    /** Tells the main app over the bridge, e.g. to run an action. */
+    private boolean toMain(JSONObject msg) {
+        if (bridge == null || bridge.clientCount() == 0) return false;
+        bridge.broadcast(msg.toString());
+        return true;
     }
 
     /** Announce readiness once, then poll status like the stock app, whether or not the main app runs. */
@@ -112,6 +229,11 @@ public class AgentService extends Service implements SerialLink.Listener, Bridge
                     if (serial.isOpen()) {
                         if (!readySent) readySent = serial.send("{\"cmd\":\"ready\"}");
                         serial.send("{\"cmd\":\"gin\"}");
+                    }
+                    try { // network state for the main app (status lights, phone app)
+                        toMain(new JSONObject().put("agent", "network").put("ap", wifi.isAp())
+                                .put("ssid", wifi.currentSsid()).put("ip", String.valueOf(WifiFailover.ipAddress())));
+                    } catch (Exception ignored) {
                     }
                     try {
                         Thread.sleep(Config.GIN_POLL_MS);
@@ -159,12 +281,17 @@ public class AgentService extends Service implements SerialLink.Listener, Bridge
     public HttpApi.Response handle(HttpApi.Request req) throws Exception {
         String route = req.method + " " + req.path;
         switch (route) {
+            case "GET /":
+                return HttpApi.Response.html(asset("web-index.html"));
+            case "GET /camera.mjpg":
+            case "GET /camera.jpg":
+                return HttpApi.Response.raw(proxyFromMain(req.path));
             case "GET /ping":
                 return HttpApi.Response.json(200, "{\"r2agent\":\"" + Secrets.VERSION + "\"}");
             case "GET /status":
                 return HttpApi.Response.json(200, status().toString(2));
             case "GET /log":
-                return HttpApi.Response.text(EventLog.dump());
+                return HttpApi.Response.text("1".equals(req.query.get("previous")) ? EventLog.dumpPrevious() : EventLog.dump());
             case "GET /logcat": // needs READ_LOGS (granted to priv-apps); ?lines=N&grep=text
                 return HttpApi.Response.text(tail(Supervisor.run("logcat", "-d", "-v", "time"), req));
             case "GET /dmesg":
@@ -214,6 +341,72 @@ public class AgentService extends Service implements SerialLink.Listener, Bridge
                 String line = req.bodyText.trim();
                 new JSONObject(line); // reject non-JSON
                 return result(sendToController(line) ? "sent" : "serial not open");
+            case "POST /stop": // emergency stop: the agent stops the robot itself, then tells the main app
+                if (passive) return passiveError();
+                stopRobot();
+                toMain(new JSONObject().put("agent", "action").put("name", "stop"));
+                return result("stopped");
+            case "POST /action": {
+                if (passive) return passiveError();
+                String name = req.query.get("name");
+                if (name == null || name.isEmpty()) return bad("name= is required, e.g. /action?name=dance");
+                return toMain(new JSONObject().put("agent", "action").put("name", name))
+                        ? result("sent " + name + " to the main app") : bad("main app not connected");
+            }
+            case "POST /shutdown":
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            Thread.sleep(1000);
+                        } catch (InterruptedException ignored) {
+                        }
+                        shutdown("API request");
+                    }
+                }).start();
+                return result("shutting down");
+            case "POST /sim": { // on=1|0, applies after an agent restart (POST /reboot)
+                boolean on = "1".equals(req.query.get("on"));
+                getSharedPreferences("agent", MODE_PRIVATE).edit().putBoolean("sim", on).commit();
+                return result("simulator " + (on ? "on" : "off") + " after a reboot (POST /reboot)");
+            }
+            case "POST /sim/button":
+                if (!(serial instanceof SimController)) return bad("the simulator is not running");
+                ((SimController) serial).pressButton(Integer.parseInt(req.query.get("value")));
+                return result("pressed");
+            case "POST /sim/battery":
+                if (!(serial instanceof SimController)) return bad("the simulator is not running");
+                ((SimController) serial).setBattery(Integer.parseInt(req.query.get("percent")),
+                        req.query.containsKey("charging") ? Integer.parseInt(req.query.get("charging")) : 0);
+                return result("battery set");
+            case "GET /setup":
+                return HttpApi.Response.json(200, new JSONObject().put("open", setupSecondsLeft() > 0)
+                        .put("seconds_left", setupSecondsLeft()).toString());
+            case "POST /setup/open": // the same window, for testing without pressing the button
+                openSetup();
+                return result("setup window open for " + Config.SETUP_WINDOW_MS / 1000 + " s");
+            case "GET /setup/token":
+                return HttpApi.Response.json(200, new JSONObject().put("token", Credentials.robotToken()).toString());
+            case "GET /wifi/scan":
+                return HttpApi.Response.json(200, new JSONObject().put("ap", wifi.isAp()).put("current", wifi.currentSsid())
+                        .put("networks", wifi.scan()).toString());
+            case "POST /wifi/join": {
+                JSONObject j = new JSONObject(req.bodyText);
+                String ssid = j.optString("ssid").trim();
+                if (ssid.isEmpty() || ssid.length() > 32) return bad("ssid is required");
+                String pw = j.optString("password");
+                if (!pw.isEmpty() && (pw.length() < 8 || pw.length() > 63)) return bad("a Wi-Fi password has 8 to 63 characters");
+                joinLater(ssid, pw);
+                return result("joining " + ssid + " in ~2 s. Connect this device to " + ssid
+                        + " too; if R2 can't join, its hotspot comes back within about a minute.");
+            }
+            case "GET /wifi/last-join":
+                return result(lastJoin.isEmpty() ? "no join attempted since the agent started" : lastJoin);
+            case "POST /identity": { // the factory app's name, ID and paired phones, for the phone app
+                JSONObject j = new JSONObject(req.bodyText);
+                if (!toMain(j.put("agent", "identity"))) return bad("main app not connected");
+                return result("identity sent to the main app");
+            }
             case "POST /safe-mode":
                 supervisor.setSafeMode("1".equals(req.query.get("on")));
                 return result("safe mode " + (supervisor.safeMode() ? "on" : "off"));
@@ -248,6 +441,47 @@ public class AgentService extends Service implements SerialLink.Listener, Bridge
         }
     }
 
+    /** Passes a camera response from R2 Main (localhost only) through to the authorized client. */
+    private static HttpApi.Response.Raw proxyFromMain(final String path) {
+        return new HttpApi.Response.Raw() {
+            @Override
+            public void writeTo(java.io.OutputStream out) throws Exception {
+                java.net.Socket up = new java.net.Socket();
+                try {
+                    up.connect(new java.net.InetSocketAddress("127.0.0.1", Config.CAMERA_PORT), 2000);
+                } catch (Exception e) {
+                    out.write("HTTP/1.0 503 Unavailable\r\nContent-Type: text/plain\r\n\r\nthe main app's camera is not running\n"
+                            .getBytes("UTF-8"));
+                    return;
+                }
+                try {
+                    up.setSoTimeout(10_000);
+                    up.getOutputStream().write(("GET " + path + " HTTP/1.0\r\n\r\n").getBytes("UTF-8"));
+                    java.io.InputStream in = up.getInputStream();
+                    byte[] buf = new byte[16384];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                    out.flush();
+                } finally {
+                    up.close();
+                }
+            }
+        };
+    }
+
+    private String asset(String name) throws Exception {
+        java.io.InputStream in = getAssets().open(name);
+        try {
+            java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
+            return b.toString("UTF-8");
+        } finally {
+            in.close();
+        }
+    }
+
     /** Last ?lines= lines (default 500, max 5000) of out, keeping only lines containing ?grep= if given. */
     private static String tail(String out, HttpApi.Request req) {
         int n = 500;
@@ -274,6 +508,7 @@ public class AgentService extends Service implements SerialLink.Listener, Bridge
         s.put("agent", Secrets.VERSION);
         s.put("uptime_s", (SystemClock.elapsedRealtime() - bootAt) / 1000);
         s.put("passive", passive);
+        s.put("simulated_controller", sim);
         s.put("ip", WifiFailover.ipAddress());
         s.put("wifi", wifi.state());
         s.put("wifi_preferred", wifi.preferredMode());
@@ -291,6 +526,8 @@ public class AgentService extends Service implements SerialLink.Listener, Bridge
             String gin = serial.lastGin();
             if (gin != null) s.put("last_gin", new JSONObject(gin));
             s.put("bridge_clients", bridge.clientCount());
+            s.put("moving", guard.moving());
+            s.put("battery_low", guard.lowBattery());
         }
         return s;
     }

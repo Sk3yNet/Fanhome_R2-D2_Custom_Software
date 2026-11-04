@@ -1,7 +1,8 @@
 # Build R2 Agent and/or R2 Main without Gradle.
-# Usage: powershell -ExecutionPolicy Bypass -File apps\build.ps1 [-App agent|main|all]
+# Usage: powershell -ExecutionPolicy Bypass -File apps\build.ps1 [-App agent|main|all] [-Release]
+#   -Release: no API token built in; each robot then uses only its own (tools\r2.ps1 fetch-token).
 # Output: apps\out\R2Agent.apk, apps\out\R2Main.apk
-param([ValidateSet('agent', 'main', 'all')][string]$App = 'all')
+param([ValidateSet('agent', 'main', 'all')][string]$App = 'all', [switch]$Release)
 $ErrorActionPreference = 'Stop'
 
 $root    = Split-Path $PSScriptRoot
@@ -24,7 +25,7 @@ function Invoke-Tool {
     if ($LASTEXITCODE -ne 0) { throw "$Exe failed with exit code $LASTEXITCODE" }
 }
 
-# One signing key for both apps, plus the API token baked into the agent.
+# One signing key for both apps, plus a development API token baked into the agent (not with -Release).
 $keystore = Join-Path $secrets 'r2hack.keystore'
 $passFile = Join-Path $secrets 'keystore-pass.txt'
 $tokenFile = Join-Path $secrets 'agent-token.txt'
@@ -36,7 +37,7 @@ function New-RandomString([int]$bytes) {
 if (-not (Test-Path $passFile)) { Set-Content $passFile (New-RandomString 16) -NoNewline -Encoding ascii }
 if (-not (Test-Path $tokenFile)) { Set-Content $tokenFile (New-RandomString 24) -NoNewline -Encoding ascii }
 $pass = (Get-Content $passFile -Raw).Trim()
-$token = (Get-Content $tokenFile -Raw).Trim()
+$token = if ($Release) { '' } else { (Get-Content $tokenFile -Raw).Trim() }
 if (-not (Test-Path $keystore)) {
     Invoke-Tool "$jdk\bin\keytool.exe" @('-genkeypair', '-keystore', $keystore, '-storepass', $pass, '-keypass', $pass,
         '-alias', 'r2hack', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=r2hack')
@@ -68,6 +69,12 @@ function Build-App {
         '--version-code', "$versionCode", '--version-name', $versionName)
     $assets = Join-Path $work 'assets'
     if (Test-Path (Join-Path $Dir 'assets')) { Copy-Item (Join-Path $Dir 'assets') $assets -Recurse }
+    if (Test-Path (Join-Path $Dir 'web')) {
+        # The agent's web control page. Copied flat as web-<name>: aapt2 on Windows stores
+        # subfolders with backslashes, which Android can't open.
+        New-Item -ItemType Directory -Force $assets | Out-Null
+        Get-ChildItem (Join-Path $Dir 'web') -File | ForEach-Object { Copy-Item $_.FullName (Join-Path $assets ('web-' + $_.Name)) }
+    }
     if (Test-Path $assets) { $linkArgs += @('-A', $assets) }
     Invoke-Tool "$bt\aapt2.exe" $linkArgs
 

@@ -60,6 +60,11 @@ public class BrainService extends Service {
         return writeLine(cmd.toString());
     }
 
+    /** Asks the agent itself to do something, e.g. "wifi-toggle". */
+    boolean toAgent(String kind) {
+        return writeLine("{\"agent\":\"" + kind + "\"}");
+    }
+
     private synchronized boolean writeLine(String line) {
         OutputStream o = out;
         if (o == null) return false;
@@ -104,6 +109,10 @@ public class BrainService extends Service {
                     remember(line);
                     try {
                         JSONObject msg = new JSONObject(line);
+                        if (msg.has("agent")) {
+                            brain.onAgentMessage(msg);
+                            continue;
+                        }
                         if ("gin".equals(msg.optString("cmd"))) lastGin = line;
                         brain.onControllerMessage(msg);
                     } catch (Exception e) {
@@ -150,7 +159,10 @@ public class BrainService extends Service {
     static String statusText() {
         StringBuilder sb = new StringBuilder();
         sb.append("R2 Main ").append(BuildInfo.VERSION).append('\n');
-        sb.append(connState).append("\n\n");
+        sb.append(connState).append("\n");
+        BrainService me = instance;
+        if (me != null) sb.append(me.brain.status()).append('\n');
+        sb.append('\n');
         sb.append("last status: ").append(lastGin).append("\n\n");
         sb.append("recent controller messages:\n");
         synchronized (recent) {

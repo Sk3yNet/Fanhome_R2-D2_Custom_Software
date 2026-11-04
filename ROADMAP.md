@@ -1,6 +1,6 @@
 # Roadmap
 
-Planned features in priority order. Nothing here is implemented yet unless it's checked off.
+Planned features in priority order. Checked items are done and confirmed on the robot. Items marked *built, not yet tested* are in the code but haven't run on real hardware yet.
 
 The order follows dependencies. Everything that moves the robot depends on a confirmed controller
 protocol. A replacement has to do at least what the factory software does before it's useful to other
@@ -11,73 +11,75 @@ Until feature parity is reached, `tools\r2.ps1 stock-on` + `reboot` switches bac
 at any time; the agent stays installed.
 
 ## 1. Foundations and safety
-- [ ] **Confirm the controller protocol on a powered robot.** Check the `ready`/`gin` handshake, that
-      `gin` replies arrive, and that a `mode` command moves something. Then work out the value ranges
-      for movement, head and LEDs, and update [docs/serial-protocol.md](docs/serial-protocol.md).
+- [x] **Confirm the controller protocol on a powered robot.** `gin` replies, turns, forward, head, arm,
+      lightsaber, projector, lights and displays all work, and `move` steering is mapped. See
+      [docs/serial-protocol.md](docs/serial-protocol.md).
+- [ ] Still open: head angle units, `head-shift`/`head-dir`, patrol and circle. (LED values are now known and documented, but not yet confirmed on the robot.)
 - [ ] **Controller simulator.** A fake controller that answers `gin`, accepts commands and logs them, and
       can play back button presses. It could run as an agent "sim mode" or as a PC script on the UART.
       This lets you develop and test without a robot, e.g. on a spare main board, and lets others
-      contribute.
+      contribute. *Built, not yet tested on the robot.* The agent's simulator mode (`POST /sim?on=1` and a reboot) answers `gin`, logs every command, and can inject button presses and battery levels.
 - [ ] **Motion watchdog in the agent.** If the robot is moving and no new command arrives within a few
-      seconds, the agent sends stop. This lives in the agent so it still works when the main app is hung.
-- [ ] **Low-battery stop:** stop movement and routines below a battery threshold reported by `gin`.
-- [ ] **Event log that survives reboots,** so you can see what happened before a crash or power loss.
+      seconds, the agent sends stop. This lives in the agent so it still works when the main app is hung. *Built, not yet tested on the robot.*
+- [ ] **Low-battery stop:** stop movement and routines below a battery threshold reported by `gin`. *Built, not yet tested on the robot.*
+- [ ] **Event log that survives reboots,** so you can see what happened before a crash or power loss. *Built, not yet tested on the robot.*
 
 ## 2. Feature parity with the factory software
-Today R2 Main only receives controller messages and logs them, so the robot does much less than with
-its factory software. Everything below is behavior the factory software has. Build the behaviors on a
+Everything below is behavior the factory software has. All of it is now built; none of the newest
+parts have run on the robot yet. Bigger voice and vision features can move to a container: see
+[docs/offload.md](docs/offload.md). Build the behaviors on a
 small internal sequencer (timed steps of commands, head moves and sounds) that later grows into the
 routine engine in section 6.
 
 ### Core behaviors
 - [ ] **Actions:** wake up, turn left/right/around, go forward, walk a circle, patrol (ends after 60 s),
       dance, shake head, who-are-you, make some noise, and a "didn't understand" reaction. Each one is a
-      timed sequence of head moves, controller modes and sounds.
+      timed sequence of head moves, controller modes and sounds. *Built, not yet tested on the robot.*
 - [ ] **Toggles:** lightsaber, arm, short/long LCD, and projector 1/2. The projector plays its audio
-      clip, then switches itself off when the clip ends.
+      clip, then switches itself off when the clip ends. *Built, not yet tested on the robot.* The Leia clip plays with its audio.
 - [ ] **Drive sounds:** periodic droid sounds while driving straight, and the head re-centers after a
-      forward move.
-- [ ] **Stop always means stop:** starting any action cancels the one in progress and sends stop first.
+      forward move. *Built, not yet tested on the robot.*
+- [ ] **Stop always means stop:** starting any action cancels the one in progress and sends stop first. *Built, not yet tested on the robot.*
 
 ### Sound
 - [ ] Play droid sounds when the controller sends `play_sound`, and as part of actions (IDs 0–18, the
-      projector clips 100 and 101, and two hidden extras).
+      projector clips 100 and 101, and two hidden extras). *Built, not yet tested on the robot.* The two hidden extras aren't mapped yet.
 - [ ] Load the sounds at runtime from the factory files on the robot, the same way as the serial library,
-      so nothing gets redistributed. Later, optional user sound packs.
-- [ ] Mute and volume, kept across reboots.
+      so nothing gets redistributed. *Built, not yet tested on the robot.* Later, optional user sound packs.
+- [ ] Mute and volume, kept across reboots. *Built, not yet tested on the robot.* Mute is reachable as an action; volume has no control yet.
 
 ### Buttons, status and lights
 - [ ] **Robot buttons:** power off (a clean shutdown of both the controller and Android), hotspot/Wi-Fi
-      toggle, pairing mode, lightsaber, arm, patrol.
+      toggle, pairing mode, lightsaber, arm, patrol. *Built, not yet tested on the robot.* Pairing mode accepts new phones for 30 s and opens the 2-minute Wi-Fi setup window (below).
 - [ ] **Status tracking from `gin`:** battery, charging (debounced when charging stops), arm, lightsaber,
-      projector, LCDs, errors.
+      projector, LCDs, errors. *Built, not yet tested on the robot.*
 - [ ] **LED patterns:** ready, charging, charged, low battery (below 20%), patrol, sleep, pairing,
-      pairing failed, connecting to Wi-Fi, face detected, power off.
-- [ ] **Sleep after 3 minutes idle** (sleep lights, voice and camera paused); any action wakes the robot.
+      pairing failed, connecting to Wi-Fi, face detected, power off. *Built, not yet tested on the robot.* Face detected waits for face detection.
+- [ ] **Sleep after 3 minutes idle** (sleep lights, voice and camera paused); any action wakes the robot. *Built, not yet tested on the robot.*
 
 ### Voice commands
-- [ ] Offline voice commands for the actions and toggles above, including "Princess Leia" and
+- [x] Offline voice commands for the actions and toggles above, including "Princess Leia" and
       "Skywalker" for the two projector clips. The factory software supports English, Spanish, French,
-      Italian, Japanese, Brazilian Portuguese, Russian and Chinese.
-- [ ] Decide between loading the factory speech models from the robot at runtime and using an open-source
-      offline recognizer with its own models.
-- [ ] Pause listening during projector audio, patrol, pairing and sleep.
+      Italian, Japanese, Brazilian Portuguese, Russian and Chinese. Confirmed in English on the robot: "hey R2-D2", then a command within 15 s (the back light alternates green and yellow while listening). Other languages: the factory app's speech models for them are on the robot, and they need phrase lists.
+- [x] Decide between loading the factory speech models from the robot at runtime and using an open-source
+      offline recognizer with its own models. Decided: the robot's own PocketSphinx library and English model, loaded at runtime, with our own phrase list (`files/voice/keywords.txt` overrides it). Free speech goes to a container (docs/offload.md).
+- [ ] Pause listening during projector audio, patrol and pairing. *Built, not yet tested on the robot.* Also while music plays. While R2 sleeps only the wake phrase counts, so "hey R2-D2" wakes him.
 
 ### Camera
-- [ ] **Face detection:** on a new face, play a sound and show the face LED pattern, and turn the head
-      to follow the face.
-- [ ] **QR code Wi-Fi setup** in pairing mode.
-- [ ] Turning face detection on and off.
+- [x] **Face detection:** on a new face, play a sound and show the face LED pattern, and turn the head
+      to follow the face. Confirmed on the robot. Uses Android's built-in face detector (no extra libraries) and the factory's head-following steps. The camera is mounted on its side (frames are turned a quarter turn clockwise for detection), and it needs light on the face.
+- [x] ~~**QR code Wi-Fi setup** in pairing mode.~~ Dropped: Wi-Fi setup on the web page replaces it (press the pairing button, join R2's hotspot, open the page, pick the network and type its password). *Built, not yet tested on the robot.*
+- [ ] Turning face detection on and off. *Built, not yet tested on the robot.* From the phone app; the setting is kept.
 
 ### Companion phone app
 - [ ] Keep the official phone app working with the same local protocol: discovery, driving and actions,
       live camera video, Wi-Fi setup, renaming the robot, mute/voice/face toggles, and the list of paired
-      phones.
+      phones. *Built, not yet tested on the robot.* Not supported: Bluetooth (off in the factory software too) and the app's software-update and controller-reset commands, which are refused.
 - [ ] The original pairing has no cryptography, so treat it as an optional compatibility mode: off by
-      default, or limited to pairing mode and the robot's own hotspot. See section 3.
+      default, or limited to pairing mode and the robot's own hotspot. See section 3. *Built, not yet tested on the robot.* New phones are accepted only on R2's hotspot or in pairing mode (as in the factory software), video only goes to an accepted phone, and `action phone-app-off` switches it off. It is on by default for now, for parity.
 
 ### Identity and network
-- [ ] Keep the robot's name and ID, so the phone app and Bluetooth still recognize it.
+- [ ] Keep the robot's name and ID, so the phone app and Bluetooth still recognize it. *Built, not yet tested on the robot.* `tools\r2.ps1 import-identity` copies the name, ID and paired phones from the factory app.
 - [ ] Hotspot named like the factory one, but with a per-robot password instead of a fixed default.
 
 ## 3. Security: authenticated communication
@@ -92,13 +94,13 @@ Today:
 - [ ] **adb off by default.** Wi-Fi adb is switched on only by an authenticated API call, for a limited
       time, and switched off again automatically.
 - [ ] **Local network only, enforced.** Reject connections from non-private source addresses and from
-      outside the robot's own subnet.
+      outside the robot's own subnet. *Built, not yet tested on the robot.* Non-private addresses are refused; the same-subnet check is still to do.
 - [ ] **Token out of the APK.** Each robot gets its own credentials at pairing or install time instead of a
-      token built into the build. This is required before prebuilt releases can be published (section 5).
+      token built into the build. This is required before prebuilt releases can be published (section 5). *Built, not yet tested on the robot.* Each robot now makes its own token (`tools\r2.ps1 fetch-token` copies it over root adb), and `build.ps1 -Release` leaves the built-in one out. Handing it over without adb comes with pairing (phase 2).
 
 ### Phase 2
 - [ ] **Pairing with physical presence.** A new client is only accepted after a button press on the robot
-      (`btn` event), on the serial console, or via the SD card config file (section 8). Each client gets
+      (`btn` event), on the serial console, or via the SD card config file (section 8). *Built, not yet tested on the robot.* (first step) The pairing button opens a 2-minute window in which the web page can set up Wi-Fi and fetch the token without one. Each client gets
       its own key.
 - [ ] **Signed requests.** HMAC or public-key signatures over method, path, body hash, timestamp and
       nonce, so captured requests can't be replayed or modified. Later, TLS with a pinned
@@ -172,7 +174,7 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
 ## 7. Web control page
 - [ ] A phone-friendly page served by the robot: live status (battery, charging, arm/head/lightsaber),
       a joystick for driving and head, action buttons, routine triggers, an emergency stop, and the
-      camera view.
+      camera view. *Built, not yet tested on the robot.* Served at `http://<robot>:7700/`: status, joystick, head slider, action buttons and a stop button. The camera view is built too (shown only while open).
 - [ ] Uses the same authentication as the API (section 3).
 - [ ] Later: gamepad support.
 
@@ -204,13 +206,23 @@ or run it straight from the card as a soft-mod that disappears when the card is 
   - **Audio:** play music, alerts and text-to-speech announcements through the robot's speaker, with
     volume, pause/stop, and "now playing" state. HA's MQTT integration has no media player type, so this
     needs something else: a DLNA/UPnP renderer (which HA discovers on its own), a player that Music
-    Assistant supports, or a small custom integration.
+    Assistant supports, or a small custom integration. *Built, not yet tested on the robot:* R2 Main is a
+    DLNA renderer (play, pause, stop, seek, volume, mute, live state through UPnP events).
   - Media from Home Assistant counts as untrusted content (section 4): decode it in a sandboxed player,
-    accept only expected formats and sources, and never let it interrupt a safety stop.
+    accept only expected formats and sources, and never let it interrupt a safety stop. *Built:* streams
+    are accepted only over http(s), from a private address, and from the device that sent the request.
+    Android decodes in its system media server, so a separate app process would add little; a stricter
+    sandbox needs the platform work in section 4.
   - Optionally play droid reactions (or turn the head toward the room) before announcements.
   - **Video (depends on the projector work in section 10):** send short clips or images to the
     holoprojector, scaled to the panel's resolution. Once the projector can be driven live, stream them;
     until then, write them as the projector's stored clip.
+- [ ] **R2's camera in Home Assistant** as an MJPEG camera (`/camera.mjpg`, token as the basic-auth password). *Built, not yet tested on the robot.*
+- [ ] **Voice through Home Assistant:** R2 as a Wyoming voice satellite, with wake word, speech recognition
+      and text to speech in containers (openWakeWord, Whisper, Piper), R2's actions as intents, and spoken
+      answers through R2's speaker. The on-robot keywords stay as the fallback. See [docs/offload.md](docs/offload.md).
+- [ ] **Vision containers:** face recognition (CompreFace / Double Take) and person detection (Frigate) on R2's
+      camera stream, so R2 can greet people it knows. As a Home Assistant add-on or plain Docker.
 - [ ] Plugin permissions, so an integration can't install software or reboot unless allowed.
 
 ## 10. Hardware mods: holoprojector

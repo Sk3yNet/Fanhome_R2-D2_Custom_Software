@@ -1,9 +1,11 @@
 # First-time install over adb (USB). Later updates go over Wi-Fi with tools\r2.ps1.
 #   install : disable stock app, put R2Agent in /system/priv-app, install R2Main, reboot
+#   refresh-agent : replace the /system/priv-app agent (the recovery copy) with apps\out\R2Agent.apk and
+#                   reboot; needed when the agent asks for a new system permission (e.g. SHUTDOWN)
 #   restore : undo everything -> factory software (stock app back, agent and main removed, adb on USB)
 #   Works over USB or Wi-Fi adb (tools\r2.ps1 adb first).
 # Usage: powershell -ExecutionPolicy Bypass -File tools\install-on-robot.ps1 install|restore
-param([Parameter(Mandatory = $true)][ValidateSet('install', 'restore')][string]$Action)
+param([Parameter(Mandatory = $true)][ValidateSet('install', 'refresh-agent', 'restore')][string]$Action)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $adb = Join-Path $PSScriptRoot 'platform-tools\adb.exe'
@@ -34,6 +36,17 @@ if ($Action -eq 'install') {
         Write-Host 'Note: adb has no key check on this build; anyone on the same Wi-Fi can get a root shell on port 5555.'
     }
     Write-Host 'Rebooting. Give it ~60 s, then: tools\r2.ps1 status ; tools\r2.ps1 adb'
+    & $adb reboot
+}
+elseif ($Action -eq 'refresh-agent') {
+    if (-not (Test-Path (Join-Path $root 'apps\out\R2Agent.apk'))) { throw 'missing apps\out\R2Agent.apk' }
+    Sh 'mount -o remount,rw /system' | Out-Null
+    & $adb push (Join-Path $root 'apps\out\R2Agent.apk') /system/priv-app/R2Agent.apk
+    Sh 'chmod 644 /system/priv-app/R2Agent.apk' | Out-Null
+    Sh 'sync; mount -o remount,ro /system' | Out-Null
+    # On boot Android sees the system copy is newer than the over-the-air copy in /data, drops that copy
+    # and keeps the agent's data (token, last good build).
+    Write-Host 'Rebooting. Give it ~60 s, then: tools2.ps1 status'
     & $adb reboot
 }
 else {

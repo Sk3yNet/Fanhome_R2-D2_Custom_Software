@@ -23,7 +23,7 @@ newline-delimited JSON. This is what R2 Agent speaks on the robot's behalf.
 | `projector` | `mode` | |
 | `arm` | `power` | |
 | `lightsaber` | `power` | |
-| `led` | any of `r`, `b`, `y`, `g` | leave a field out to keep that LED unchanged |
+| `led` | any of `r`, `b`, `y`, `g` | status lights: `r`/`b` the front light's red and blue, `g`/`y` the back light's green and yellow. 0 or left out: unchanged, 1 off, 2 on, 3/4 slow flash, 5/6 fast flash (two phases each). Front red+blue on is the violet resting colour |
 | `lcd` | any of `s`, `l` | short / long dot-matrix display (the long one is on the rear), 1 = off, 2 = on; leave a field out to keep it unchanged |
 | `d-head-power` | `power` | |
 | `d-leg-power` | `power` | |
@@ -53,7 +53,7 @@ and sounds. Recreating them is on the [roadmap](../ROADMAP.md).
 | `btn` | `value` | 1 power off · 2 toggle Wi-Fi hotspot · 3 toggle pairing · 4 lightsaber · 5 arm · 6 patrol |
 
 ## Open questions
-- Ranges and units for `power`, `angle`, `dir`, and the `led` values.
+- Units for the head `angle` and `dir`. The `led` values above come from the factory software and aren't confirmed on the robot yet.
 - Whether the controller needs regular `gin` or `reset-wdt` traffic to keep running. R2 Agent keeps polling `gin`
   every 5 s to be safe.
 - Confirmed on hardware so far: `gin` status replies, `mode` 13 and 14 (toggles), `mode` 3, 4, 2 and 5 each

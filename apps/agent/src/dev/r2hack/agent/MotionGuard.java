@@ -1,0 +1,108 @@
+package dev.r2hack.agent;
+
+import org.json.JSONObject;
+
+/**
+ * Safety layer on every command headed for the controller, whoever sent it:
+ *  - motion watchdog: a drive command only lasts a few seconds unless it is repeated, then the
+ *    agent sends stop itself, so a hung or crashed app (or a lost Wi-Fi client) can't leave R2 driving;
+ *  - low battery: below Config.LOW_BATTERY_PCT, new drive commands are refused and driving is stopped.
+ * Lives in the agent so it keeps working when the main app is hung.
+ */
+final class MotionGuard {
+    interface Output {
+        boolean write(String line);
+    }
+
+    static final String STOP_MOVE = "{\"cmd\":\"move\",\"power\":0,\"angle\":0}";
+    static final String STOP_MODE = "{\"cmd\":\"mode\",\"mode\":0}";
+
+    private final Output out;
+    private volatile long motionUntil;   // 0 = not moving
+    private volatile int battery = -1;   // from gin, -1 until the first report
+    private volatile boolean charging;
+
+    MotionGuard(Output out) {
+        this.out = out;
+    }
+
+    void start() {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                while (true) {
+                    long until = motionUntil;
+                    if (until != 0 && System.currentTimeMillis() > until) stop("motion watchdog: no new drive command");
+                    try {
+                        Thread.sleep(200);
+                    } catch (InterruptedException ignored) {
+                    }
+                }
+            }
+        }, "motion-guard");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    int battery() {
+        return battery;
+    }
+
+    boolean lowBattery() {
+        return battery >= 0 && battery < Config.LOW_BATTERY_PCT && !charging;
+    }
+
+    boolean moving() {
+        return motionUntil != 0;
+    }
+
+    /** Checks a command on its way to the controller. Returns false if it was refused. */
+    boolean send(String line) {
+        long hold = 0;
+        boolean stopping = false;
+        try {
+            JSONObject c = new JSONObject(line);
+            String cmd = c.optString("cmd");
+            if ("move".equals(cmd)) {
+                if (c.optInt("power") == 0) stopping = true;
+                else hold = Config.MOVE_HOLD_MS;
+            } else if ("mode".equals(cmd)) {
+                int m = c.optInt("mode", -1);
+                if (m == 0) stopping = true;
+                else if (m == 9) hold = Config.PATROL_HOLD_MS;
+                else if (m == 2 || m == 3 || m == 4 || m == 5 || m == 12) hold = Config.MODE_HOLD_MS;
+            }
+        } catch (Exception notJson) {
+            // passed through unchanged, like the stock app's raw lines
+        }
+        if (hold > 0 && lowBattery()) {
+            EventLog.i("refused drive command: battery " + battery + "%");
+            return false;
+        }
+        boolean ok = out.write(line);
+        if (stopping) motionUntil = 0;
+        else if (hold > 0 && ok) motionUntil = System.currentTimeMillis() + hold;
+        return ok;
+    }
+
+    /** Every line from the controller; picks battery and charging out of gin reports. */
+    void onControllerLine(String line) {
+        if (!line.contains("\"gin\"")) return;
+        try {
+            JSONObject g = new JSONObject(line);
+            battery = g.optInt("batt", battery);
+            charging = g.optInt("charging-status", g.optInt("charging_status", 0)) != 0;
+        } catch (Exception ignored) {
+            return;
+        }
+        if (moving() && lowBattery()) stop("low battery (" + battery + "%)");
+    }
+
+    /** Stops driving and the controller's own movement routines. */
+    void stop(String why) {
+        motionUntil = 0;
+        out.write(STOP_MOVE);
+        out.write(STOP_MODE);
+        EventLog.i("stopped: " + why);
+    }
+}

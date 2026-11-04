@@ -7,8 +7,17 @@ Two Android 4.4 apps:
 | **R2 Agent** | `dev.r2hack.agent` | `/system/priv-app` (persistent) | Owns `/dev/ttyS2`, keeps the controller polled, serves the update API, supervises the main app, Wi-Fi failover. Rarely changes. |
 | **R2 Main** | `dev.r2hack.main` | normal app | Robot behavior (`Brain.java`). Updated often over Wi-Fi. Talks to the controller only through the agent's bridge (`127.0.0.1:7701`). |
 
+## Safety in the agent
+Every command to the controller passes through the agent's motion guard, whoever sent it (R2 Main, `/serial`):
+- **Motion watchdog:** a `move` lasts 3 s unless repeated, the controller's turns/forward/circle 15 s, patrol 65 s.
+  Then the agent sends stop itself, so a hung app or a lost Wi-Fi client can't leave R2 driving.
+- **Low battery:** below 10% (and not charging) drive commands are refused, and driving is stopped.
+- **Power button:** handled by the agent (stop, flush storage, tell the controller, shut Android down),
+  so it works even if R2 Main is hung. `POST /shutdown` does the same.
+- **Emergency stop:** `POST /stop` (`tools\r2.ps1 stop`) stops the robot in the agent, then cancels R2 Main's action.
+
 ## Failover layers
-1. **Main app dies or hangs** (no heartbeat for 10 s): agent sends `{"cmd":"mode","mode":0}` (stop) and relaunches it.
+1. **Main app dies or hangs** (no heartbeat for 10 s): agent sends stop and relaunches it.
 2. **3 deaths in 2 min right after an update**: agent reinstalls the last good build (one that stayed alive for 60 s).
 3. **3 deaths in 2 min with no newer build to blame**: safe mode. Agent stays up with the update API, no relaunches. `tools\r2.ps1 safe-off` resumes.
 4. **Agent dies**: R2 Main sends `dev.r2hack.agent.WAKE` after 30 s without the bridge, which restarts it.
@@ -28,17 +37,37 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `tools\r2.ps1` finds the robot by its UDP announcement (port 7702), or use `-Robot <ip>`.
 
 ## API (port 7700, header `X-R2-Token` from `secrets\agent-token.txt`)
-`GET /ping` (no token) · `GET /status` · `GET /log` · `GET /logcat?lines=N&grep=text` · `GET /dmesg?lines=N&grep=text` ·
+`GET /` (the web control page, no token; it asks for one) · `GET /ping` (no token) · `GET /status` · `GET /log` (`?previous=1`: previous boot) · `GET /logcat?lines=N&grep=text` · `GET /dmesg?lines=N&grep=text` ·
 `POST /main/install` (APK body) · `POST /main/rollback` ·
 `POST /main/restart` · `POST /agent/install` (APK body) · `POST /serial` (one JSON command) ·
-`POST /safe-mode?on=1|0` · `POST /wifi?mode=station|ap` · `POST /stock?enable=1|0` · `POST /reboot`
+`GET /camera.mjpg` · `GET /camera.jpg` · `POST /action?name=<action>` (runs an R2 Main action) · `POST /stop` · `POST /safe-mode?on=1|0` ·
+`POST /wifi?mode=station|ap` · `POST /stock?enable=1|0` · `POST /reboot` · `POST /shutdown` · `GET /setup` · `POST /setup/open` ·
+`GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `POST /identity` ·
+`POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2`
 
-The token is plain HTTP on your LAN: fine at home, don't expose port 7700 to the internet.
+Only clients with private, link-local or loopback addresses are served. The token travels in plain HTTP,
+so keep it to your home network.
+
+**Tokens:** each robot makes its own random token on first start (`files/api-token` in the agent's data).
+`tools\r2.ps1 fetch-token` copies it to `secrets\robot-token.txt` over root adb, and `r2.ps1` then
+uses it. Your own builds also accept the development token from `secrets\agent-token.txt`;
+`apps\build.ps1 -Release` builds without it.
+
+## Web control page
+Open `http://<robot-ip>:7700/` on a phone or PC on the same network and enter the token once. It shows
+battery, charging and movement; has a joystick (repeated `move` commands while held, so the motion
+watchdog stops R2 if the page or Wi-Fi goes away), a head slider, the actions, and a stop button.
+
+## Simulator
+`tools\r2.ps1 sim-on` then `reboot` makes the agent use a
+pretend controller instead of `/dev/ttyS2`. It answers `gin` with a status that follows your commands,
+logs every command in the event log, and `sim-button <n>` (`/sim/button`) and `/sim/battery` inject button presses and
+battery levels. The power button is ignored there. `sim-off` and a reboot go back to the real controller.
 
 ## Diagnostics over Wi-Fi
 | Need | Command |
 |---|---|
-| Agent state / event log | `tools\r2.ps1 status` · `tools\r2.ps1 log` |
+| Agent state / event log | `tools\r2.ps1 status` · `tools\r2.ps1 log` · `tools\r2.ps1 log-previous` (survives reboots) |
 | Android log (main-app crash traces) | `tools\r2.ps1 logcat` · `tools\r2.ps1 logcat AndroidRuntime -Lines 200` |
 | Kernel log (read via root adb; this kernel blocks apps) | `tools\r2.ps1 dmesg` · `tools\r2.ps1 dmesg mmc` |
 | Root shell, push/pull files | `tools\r2.ps1 adb`, then `tools\platform-tools\adb shell` |
@@ -48,6 +77,89 @@ On KitKat this replaces adb over USB: `adb usb` switches back until the next reb
 `setprop persist.adb.tcp.port 0` (serial console or adb) turns Wi-Fi adb off for good. This build has no adb key
 check, so anyone on the same network can get root: keep it to your home network.
 Only the serial console sees the bootloader/early kernel output, or works when Android itself doesn't boot.
+
+## Actions and sounds (R2 Main)
+`Brain.java` rebuilds the factory actions as timed steps on a small sequencer: one action at a time,
+and starting one cancels the last and sends stop. Run one with `tools\r2.ps1 action <name>`
+(`tools\r2.ps1 actions` lists them). The robot's buttons for lightsaber, arm, patrol and Wi-Fi work too.
+
+Sounds are played from the factory app already installed on the robot; nothing is bundled. The
+sound-number map lives in `apps\main\assets\sounds.json` (`{"7": "<resource name>", ...}`), which is
+not part of this repository. Without it R2 Main still runs every action, just silently.
+
+## Media player for Home Assistant (R2 Main)
+R2 Main is a DLNA/UPnP media renderer on port 7710 (AVTransport, RenderingControl, ConnectionManager,
+with UPnP events). Home Assistant's DLNA Digital Media Renderer integration discovers it by itself and
+shows a media player named "R2-D2": music, text-to-speech and alerts play through R2's speaker, with
+play/pause/stop/seek, volume and mute. Volume and mute are shared with the droid sounds, and the stop
+action also stops the stream. The robot needs multicast on the network for discovery; if Home Assistant
+doesn't find it, add it manually with `http://<robot-ip>:7710/dlna/description.xml`.
+
+Streams are accepted only over http(s), from a private address, and only from the device that sent the
+play request (Home Assistant serves its own media and text-to-speech). If your Home Assistant hands out
+media URLs on a different address, set its internal URL to its LAN address.
+
+## Camera
+R2 Main streams R2's camera as MJPEG (about 640×480, up to 10 frames a second). It listens on
+localhost only; the agent serves it at `/camera.mjpg` (live) and `/camera.jpg` (one picture) after
+checking the token, so the camera has the same protection as everything else. The camera is switched on
+only while someone is watching, and off again 3 s after the last viewer leaves.
+
+Clients that can't send the `X-R2-Token` header can give the token as the password of HTTP basic
+auth (any user name), or as `?token=`. The web page's camera view uses `?token=`.
+
+**Home Assistant:** add the *MJPEG IP Camera* integration with MJPEG URL `http://<robot-ip>:7700/camera.mjpg`,
+still image URL `http://<robot-ip>:7700/camera.jpg`, any user name, your token as the password, and basic
+authentication.
+
+## Modes and status lights (R2 Main)
+Like the factory software, R2 Main is in one of these modes: ready, sleeping (after 3 minutes without
+activity; any action wakes it), pairing (30 s after the pairing button), patrol (60 s), or phone control.
+The front light shows the mode, charging and low battery (20%); the back light shows the network (home
+Wi-Fi, no Wi-Fi, hotspot) or sleep. Charging switching off is debounced for 3 s.
+
+## Voice commands and face tracking (R2 Main)
+**Voice:** keyword spotting with CMU PocketSphinx, as in the factory software. The recognizer library
+and English speech model are copied once from the factory app on the robot; nothing is bundled. Say
+"hey R2-D2" (the back light shows R2 is listening), then a command within 15 s: turn left / right /
+around, go forward, shake your head, walk a circle, dance please, make some noise, who are you,
+lightsaber, move arms, patrol, stop, Princess Leia, Skywalker. Each command keeps it listening for another
+15 s. It doesn't listen while asleep, patrolling, pairing, or playing a projector clip or music. To tune
+the phrases or their sensitivity, put a PocketSphinx keyword file at `files/voice/keywords.txt` in R2
+Main's data (phrases must use words from the model's dictionary).
+
+**Faces:** Android's built-in face detector on the camera image, about 2.5 times a second, while R2 is
+ready (not asleep, patrolling, pairing or under phone control). After a face has been there for 1.5 s,
+R2 makes a sound, shows the face light and turns its head toward it in small steps. The camera may be
+mounted sideways, so both orientations are tried until faces turn up in one. The phone app's face
+detection switch turns it off.
+
+Bigger voice and vision features (free speech, knowing *who* a face is) are meant to run in a container:
+[docs/offload.md](docs/offload.md).
+
+## Wi-Fi setup without a QR code
+1. Press R2's pairing button. For 2 minutes, Wi-Fi setup and pairing work without the token.
+2. Join R2's hotspot with your phone (or use the home network if R2 is already on it), open
+   `http://192.168.43.1:7700/`, and tap **Pair this device** to save R2's token on it.
+3. Under **Wi-Fi**, scan, pick your network (or type its name), enter the password and tap **Join**.
+   R2 saves it as its home network and joins it. If it can't, it forgets it again and its hotspot comes
+   back within about a minute; `GET /wifi/last-join` (or the event log) says what happened.
+
+With the token, the same works at any time, also from the PC: `tools\r2.ps1 wifi-scan` and
+`tools\r2.ps1 wifi-join <ssid>` (it asks for the password). The official phone app's own Wi-Fi setup
+command is supported too.
+
+## Official phone app (R2 Main)
+R2 Main speaks the factory software's local protocol: discovery broadcasts on UDP 8090, JSON commands over
+a WebSocket on 8887, and camera video on 12121. Driving, the actions, toggles, renaming, mute, the paired
+phones list, Wi-Fi setup and power-off work. As in the factory software, a new phone is accepted only on
+R2's hotspot or in pairing mode; phones paired before are accepted any time. The protocol itself has no
+encryption or real authentication, so on top of that R2 refuses the app's software-update and
+controller-reset commands, and sends video only to a phone with an accepted connection.
+`tools\r2.ps1 action phone-app-off` switches the whole thing off.
+
+To keep phones that were paired with the factory software working, copy the robot's identity once:
+`tools\r2.ps1 import-identity` (name, ID and paired phones, over root adb).
 
 ## Files
 - `secrets\` – signing key, its password, and the API token. Keep private; losing the key means

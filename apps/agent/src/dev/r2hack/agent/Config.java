@@ -1,6 +1,6 @@
 package dev.r2hack.agent;
 
-/** Fixed settings. The token lives in the generated Secrets class. */
+/** Fixed settings. API tokens: see Credentials. */
 final class Config {
     static final String SERIAL_DEVICE = "/dev/ttyS2";
     static final int SERIAL_BAUD = 115200;
@@ -8,6 +8,7 @@ final class Config {
     static final int HTTP_PORT = 7700;        // update / control API (all interfaces, token required)
     static final int BRIDGE_PORT = 7701;      // localhost only: main app <-> controller JSON lines
     static final int ANNOUNCE_PORT = 7702;    // UDP broadcast so the PC can find the robot
+    static final int CAMERA_PORT = 7711;      // localhost only: R2 Main's camera, served on as /camera.mjpg
 
     static final String MAIN_PACKAGE = "dev.r2hack.main";
     static final String STOCK_PACKAGE = "com.bullb.r2d2_nanopisystem";
@@ -22,6 +23,14 @@ final class Config {
     static final int CRASH_LIMIT = 3;                 // this many deaths ...
     static final long CRASH_WINDOW_MS = 120_000;      // ... within this window => rollback or safe mode
     static final long PROBATION_MS = 60_000;          // new main build must stay alive this long
+
+    // MotionGuard: how long a drive command lasts without being repeated before the agent sends stop.
+    static final long MOVE_HOLD_MS = 3_000;           // `move` (joystick-style, clients repeat it)
+    static final long MODE_HOLD_MS = 15_000;          // controller turns, forward, circle
+    static final long PATROL_HOLD_MS = 65_000;        // patrol; the stock app ends it after 60 s
+    static final int LOW_BATTERY_PCT = 10;            // below this, drive commands are refused
+
+    static final long SETUP_WINDOW_MS = 120_000;     // pairing button: token-free Wi-Fi setup for this long
 
     private Config() {}
 }

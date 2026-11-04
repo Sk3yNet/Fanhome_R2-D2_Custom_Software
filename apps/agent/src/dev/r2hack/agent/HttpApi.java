@@ -6,6 +6,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URLDecoder;
@@ -16,11 +18,14 @@ import java.util.Map;
 
 /**
  * Minimal HTTP/1.0 server (no dependencies) for updates and control.
- * Every route except GET /ping needs the header  X-R2-Token: <Secrets.TOKEN>.
+ * Every route except GET /ping and the control page (GET /) needs the header  X-R2-Token: <token>.
  */
 final class HttpApi {
     interface Routes {
         Response handle(Request req) throws Exception;
+
+        /** Routes that may be used without a token right now (e.g. Wi-Fi setup after the pairing button). */
+        boolean openWithoutToken(Request req);
     }
 
     static final class Request {
@@ -33,9 +38,21 @@ final class HttpApi {
     }
 
     static final class Response {
+        /** Writes a complete HTTP response itself, for streams (e.g. the camera). */
+        interface Raw {
+            void writeTo(OutputStream out) throws Exception;
+        }
+
         final int code;
         final String type;
         final String body;
+        Raw raw;
+
+        static Response raw(Raw raw) {
+            Response r = new Response(200, "", "");
+            r.raw = raw;
+            return r;
+        }
 
         Response(int code, String type, String body) {
             this.code = code;
@@ -45,6 +62,10 @@ final class HttpApi {
 
         static Response json(int code, String body) {
             return new Response(code, "application/json", body);
+        }
+
+        static Response html(String body) {
+            return new Response(200, "text/html; charset=utf-8", body);
         }
 
         static Response text(String body) {
@@ -105,10 +126,17 @@ final class HttpApi {
         Request req = null;
         try {
             s.setSoTimeout(120_000);
+            if (!localClient(s.getInetAddress())) {
+                EventLog.i("http: refused non-local client " + s.getInetAddress().getHostAddress());
+                s.close();
+                return;
+            }
             InputStream in = new BufferedInputStream(s.getInputStream());
             req = parseHead(in);
-            boolean open = "GET".equals(req.method) && "/ping".equals(req.path);
-            if (!open && !Secrets.TOKEN.equals(req.headers.get("x-r2-token"))) {
+            // The page itself is public; everything it does goes through token-protected routes.
+            boolean open = ("GET".equals(req.method) && ("/ping".equals(req.path) || "/".equals(req.path)))
+                    || routes.openWithoutToken(req);
+            if (!open && !Credentials.accepts(presentedToken(req))) {
                 resp = Response.json(401, "{\"error\":\"missing or wrong X-R2-Token\"}");
             } else {
                 readBody(in, req);
@@ -119,6 +147,19 @@ final class HttpApi {
             resp = Response.json(500, "{\"error\":" + org.json.JSONObject.quote(String.valueOf(e)) + "}");
         } finally {
             if (req != null && req.bodyFile != null) req.bodyFile.delete();
+        }
+        if (resp.raw != null) {
+            try {
+                resp.raw.writeTo(s.getOutputStream());
+            } catch (Exception ignored) {
+                // viewer went away
+            } finally {
+                try {
+                    s.close();
+                } catch (Exception ignored) {
+                }
+            }
+            return;
         }
         try {
             byte[] body = resp.body.getBytes(UTF8);
@@ -137,6 +178,46 @@ final class HttpApi {
             } catch (Exception ignored) {
             }
         }
+    }
+
+    /**
+     * The token from the X-R2-Token header, or for clients that can't set headers (an <img> tag,
+     * Home Assistant's camera) the password of HTTP basic auth or ?token=.
+     */
+    private static String presentedToken(Request req) {
+        String t = req.headers.get("x-r2-token");
+        if (t != null) return t;
+        String auth = req.headers.get("authorization");
+        if (auth != null && auth.regionMatches(true, 0, "Basic ", 0, 6)) {
+            try {
+                String userPass = new String(android.util.Base64.decode(auth.substring(6).trim(), android.util.Base64.DEFAULT), UTF8);
+                int c = userPass.indexOf(':');
+                return c >= 0 ? userPass.substring(c + 1) : userPass;
+            } catch (Exception ignored) {
+            }
+        }
+        return req.query.get("token");
+    }
+
+    /** Private, link-local or loopback addresses only, so a forwarded port can't reach the API. */
+    static boolean localClient(InetAddress a) {
+        if (a instanceof Inet6Address) {
+            byte[] b = a.getAddress(); // IPv4-mapped (::ffff:a.b.c.d) is checked as IPv4
+            boolean mapped = true;
+            for (int i = 0; i < 10; i++) mapped &= b[i] == 0;
+            mapped &= b[10] == (byte) 0xff && b[11] == (byte) 0xff;
+            if (mapped) {
+                try {
+                    a = InetAddress.getByAddress(new byte[] {b[12], b[13], b[14], b[15]});
+                } catch (Exception e) {
+                    return false;
+                }
+            } else {
+                return a.isLoopbackAddress() || a.isLinkLocalAddress() || a.isSiteLocalAddress()
+                        || (b[0] & 0xfe) == 0xfc; // unique local fc00::/7
+            }
+        }
+        return a.isLoopbackAddress() || a.isSiteLocalAddress() || a.isLinkLocalAddress();
     }
 
     private static Request parseHead(InputStream in) throws Exception {

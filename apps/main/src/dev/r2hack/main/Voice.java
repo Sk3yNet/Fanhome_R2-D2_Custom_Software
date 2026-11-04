@@ -1,0 +1,269 @@
+package dev.r2hack.main;
+
+import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
+import android.util.Log;
+import edu.cmu.pocketsphinx.PocketSphinxJNI;
+import edu.cmu.pocketsphinx.SphinxBaseJNI;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.Enumeration;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+
+/**
+ * Offline voice commands, like the factory software: keyword spotting with CMU PocketSphinx. The
+ * recognizer library and its speech model come from the factory app on the robot (nothing is bundled);
+ * the command phrases are our own and can be changed in files/voice/keywords.txt.
+ *
+ * "Hey R2-D2" (or "R2-D2") wakes it up; for 15 s after that, each command phrase runs its action,
+ * and each command keeps it listening for another 15 s.
+ */
+final class Voice {
+    interface Host {
+        void onVoiceCommand(String action);
+
+        /** Listening on/off, for the back light. */
+        void onVoiceAwake(boolean awake);
+
+        /** False while R2 shouldn't listen (sleep, patrol, pairing, projector audio, music...). */
+        boolean mayListen();
+    }
+
+    private static final String TAG = "R2Voice";
+    private static final String STOCK_PACKAGE = "com.bullb.r2d2_nanopisystem";
+    private static final String LANG = "en";
+    private static final int RATE = 16000;
+    private static final long AWAKE_MS = 15_000;
+    private static final String WAKE = "wake";
+
+    /** Phrase -> action, with the keyword-spotting threshold (lower finds more, but also more false alarms). */
+    private static final Object[][] PHRASES = {
+            {"hey r two d two", WAKE, "1e-44"}, {"r two d two", WAKE, "1e-34"},
+            {"turn left", "turn-left", "1e-18"}, {"turn right", "turn-right", "1e-16"},
+            {"turn around", "turn-around", "1e-18"}, {"go forward", "forward", "1e-22"},
+            {"shake your head", "shake-head", "1e-24"}, {"walk a circle", "circle", "1e-30"},
+            {"dance please", "dance", "1e-22"}, {"make some noise", "noise", "1e-24"},
+            {"who are you", "who-are-you", "1e-20"}, {"lightsaber", "lightsaber", "1e-24"},
+            {"move arms", "arm", "1e-18"}, {"patrol", "patrol", "1e-10"}, {"stop", "stop", "1e-10"},
+            {"princess leia", "leia", "1e-20"}, {"skywalker", "luke", "1e-20"},
+    };
+
+    private final Context ctx;
+    private final Host host;
+    private final Map<String, String> actions = new LinkedHashMap<>();
+    private volatile boolean enabled = true;
+    private volatile String problem = "starting";
+    private volatile long awakeUntil;
+
+    Voice(Context ctx, Host host) {
+        this.ctx = ctx;
+        this.host = host;
+        for (Object[] p : PHRASES) actions.put((String) p[0], (String) p[1]);
+    }
+
+    void setEnabled(boolean on) {
+        enabled = on;
+    }
+
+    boolean awake() {
+        return System.currentTimeMillis() < awakeUntil;
+    }
+
+    String status() {
+        return "voice: " + (problem != null ? problem : !enabled ? "off" : awake() ? "listening for a command" : "waiting for \"hey R2-D2\"");
+    }
+
+    void start() {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    loop();
+                } catch (Throwable e) {
+                    problem = "unavailable (" + e.getMessage() + ")";
+                    Log.w(TAG, "voice commands unavailable", e);
+                }
+            }
+        }, "voice");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void loop() throws Exception {
+        File dir = prepareModel();
+        long config = PocketSphinxJNI.Decoder_defaultConfig();
+        SphinxBaseJNI.Config_setString(config, null, "-hmm", new File(dir, "ptm").getPath());
+        SphinxBaseJNI.Config_setString(config, null, "-dict", new File(dir, "cmudict.dict").getPath());
+        SphinxBaseJNI.Config_setFloat(config, null, "-samprate", RATE);
+        SphinxBaseJNI.Config_setString(config, null, "-logfn", "/dev/null");
+        long decoder = PocketSphinxJNI.new_Decoder__SWIG_1(config, null);
+        if (decoder == 0) throw new Exception("recognizer would not start");
+        PocketSphinxJNI.Decoder_setKws(decoder, null, "command", keywordsFile().getPath());
+        PocketSphinxJNI.Decoder_setSearch(decoder, null, "command");
+
+        int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        short[] buf = new short[RATE * 4 / 10]; // 0.4 s, like the factory recognizer
+        problem = null;
+        Log.i(TAG, "voice commands ready");
+        while (true) {
+            if (!enabled || !host.mayListen()) {
+                if (awakeUntil != 0) sleepVoice();
+                Thread.sleep(500);
+                continue;
+            }
+            AudioRecord rec = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, buf.length * 2));
+            if (rec.getState() != AudioRecord.STATE_INITIALIZED) {
+                rec.release();
+                problem = "microphone not available";
+                Thread.sleep(5000);
+                continue;
+            }
+            problem = null;
+            rec.startRecording();
+            PocketSphinxJNI.Decoder_startUtt(decoder, null);
+            try {
+                while (enabled && host.mayListen()) {
+                    int n = rec.read(buf, 0, buf.length);
+                    if (n < 0) throw new Exception("microphone read failed (" + n + ")");
+                    if (n == 0) continue;
+                    PocketSphinxJNI.Decoder_processRaw(decoder, null, buf, n, false, false);
+                    String heard = hypothesis(decoder);
+                    if (heard != null) {
+                        // Start a fresh utterance so the same words don't trigger again.
+                        PocketSphinxJNI.Decoder_endUtt(decoder, null);
+                        PocketSphinxJNI.Decoder_startUtt(decoder, null);
+                        onHeard(heard.trim().toLowerCase(Locale.US));
+                    }
+                    if (awakeUntil != 0 && System.currentTimeMillis() > awakeUntil) sleepVoice();
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "listening stopped", e);
+                Thread.sleep(2000);
+            } finally {
+                PocketSphinxJNI.Decoder_endUtt(decoder, null);
+                rec.stop();
+                rec.release();
+            }
+        }
+    }
+
+    private static String hypothesis(long decoder) {
+        long hyp = PocketSphinxJNI.Decoder_hyp(decoder, null);
+        if (hyp == 0) return null;
+        try {
+            String s = PocketSphinxJNI.Hypothesis_hypstr_get(hyp, null);
+            return s == null || s.trim().isEmpty() ? null : s;
+        } finally {
+            PocketSphinxJNI.delete_Hypothesis(hyp);
+        }
+    }
+
+    private void onHeard(String text) {
+        String action = null;
+        for (Map.Entry<String, String> e : actions.entrySet()) {
+            if (text.startsWith(e.getKey())) {
+                action = e.getValue();
+                break;
+            }
+        }
+        Log.i(TAG, "heard \"" + text + "\" -> " + action);
+        if (action == null) return;
+        if (WAKE.equals(action)) {
+            boolean was = awake();
+            awakeUntil = System.currentTimeMillis() + AWAKE_MS;
+            if (!was) host.onVoiceAwake(true);
+            host.onVoiceCommand("wake");
+        } else if (awake()) {           // commands only count after the wake phrase
+            awakeUntil = System.currentTimeMillis() + AWAKE_MS;
+            host.onVoiceCommand(action);
+        }
+    }
+
+    private void sleepVoice() {
+        awakeUntil = 0;
+        host.onVoiceAwake(false);
+    }
+
+    /** Our phrase list as a PocketSphinx keyword file, unless files/voice/keywords.txt overrides it. */
+    private File keywordsFile() throws Exception {
+        File custom = new File(ctx.getFilesDir(), "voice/keywords.txt");
+        if (custom.exists()) {
+            Log.i(TAG, "using " + custom);
+            return custom;
+        }
+        File f = new File(ctx.getFilesDir(), "voice/r2-keywords");
+        StringBuilder sb = new StringBuilder();
+        for (Object[] p : PHRASES) sb.append(p[0]).append(" /").append(p[2]).append("/\n");
+        OutputStream out = new FileOutputStream(f);
+        out.write(sb.toString().getBytes("UTF-8"));
+        out.close();
+        return f;
+    }
+
+    /**
+     * Loads the recognizer library and copies the speech model out of the factory app (once).
+     * Returns the model folder.
+     */
+    private File prepareModel() throws Exception {
+        ApplicationInfo ai;
+        try {
+            ai = ctx.getPackageManager().getApplicationInfo(STOCK_PACKAGE, 0);
+        } catch (Exception e) {
+            throw new Exception("factory app not found");
+        }
+        File base = new File(ctx.getFilesDir(), "voice");
+        File dir = new File(base, LANG);
+        File lib = new File(base, "libpocketsphinx_jni.so");
+        File done = new File(dir, ".copied");
+        ZipFile apk = new ZipFile(ai.sourceDir);
+        try {
+            if (!lib.exists()) copy(apk, "lib/armeabi-v7a/libpocketsphinx_jni.so", lib);
+            if (!done.exists()) {
+                String prefix = "assets/sync/" + LANG + "/";
+                Enumeration<? extends ZipEntry> all = apk.entries();
+                int n = 0;
+                while (all.hasMoreElements()) {
+                    ZipEntry e = all.nextElement();
+                    String name = e.getName();
+                    if (e.isDirectory() || !name.startsWith(prefix) || name.endsWith(".md5")) continue;
+                    copy(apk, name, new File(dir, name.substring(prefix.length())));
+                    n++;
+                }
+                if (n == 0) throw new Exception("no speech model in the factory app");
+                done.createNewFile();
+            }
+        } finally {
+            apk.close();
+        }
+        System.load(lib.getPath());
+        return dir;
+    }
+
+    private static void copy(ZipFile zip, String entry, File to) throws Exception {
+        ZipEntry e = zip.getEntry(entry);
+        if (e == null) throw new Exception(entry + " missing");
+        to.getParentFile().mkdirs();
+        File tmp = new File(to.getPath() + ".tmp");
+        InputStream in = zip.getInputStream(e);
+        OutputStream out = new FileOutputStream(tmp);
+        try {
+            byte[] buf = new byte[65536];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        } finally {
+            in.close();
+            out.close();
+        }
+        if (!tmp.renameTo(to)) throw new Exception("could not save " + to);
+    }
+}

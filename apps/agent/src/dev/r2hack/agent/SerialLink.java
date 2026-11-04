@@ -11,11 +11,7 @@ import java.io.OutputStream;
 import java.nio.charset.Charset;
 
 /** Owns /dev/ttyS2: newline-delimited JSON to and from the robot's controller board. */
-final class SerialLink {
-    interface Listener {
-        void onControllerLine(String line);
-    }
-
+final class SerialLink implements ControllerLink {
     private static final Charset UTF8 = Charset.forName("UTF-8");
 
     private final Context ctx;
@@ -30,7 +26,8 @@ final class SerialLink {
         this.listener = listener;
     }
 
-    void start() {
+    @Override
+    public void start() {
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -41,20 +38,24 @@ final class SerialLink {
         t.start();
     }
 
-    boolean isOpen() {
+    @Override
+    public boolean isOpen() {
         return out != null;
     }
 
-    long lastRxAt() {
+    @Override
+    public long lastRxAt() {
         return lastRxAt;
     }
 
-    String lastGin() {
+    @Override
+    public String lastGin() {
         return lastGin;
     }
 
     /** Sends one JSON object; a trailing newline is added like the stock app does. */
-    synchronized boolean send(String json) {
+    @Override
+    public synchronized boolean send(String json) {
         OutputStream o = out;
         if (o == null) return false;
         try {

@@ -7,8 +7,9 @@ the robot reachable and stops it safely if your code crashes.
 > **Status: early and experimental.** The update, recovery and diagnostics layers work on real hardware.
 > The link to the motor/LED controller works in a powered robot (status reports, lights, displays, turning
 > and stopping); the other controller commands are not tested yet.
-> It does **not yet have the factory software's features**: no sounds, actions, voice commands, face
-> tracking or phone app support so far. You can switch back to the factory software at any time
+> The factory actions (dance, wake up, lightsaber, projector clips...), droid sounds, status lights, sleep,
+> the robot's buttons, the official phone app's protocol, voice commands (English) and face tracking are
+> rebuilt but **not yet tested on the robot**. You can switch back to the factory software at any time
 > (`tools\r2.ps1 stock-on`). See [ROADMAP.md](ROADMAP.md).
 
 Unofficial community project, not affiliated with or endorsed by Fanhome or Lucasfilm. It does not
@@ -79,17 +80,32 @@ powershell -ExecutionPolicy Bypass -File apps\build.ps1 -App main
 powershell -ExecutionPolicy Bypass -File tools\r2.ps1 push-main
 powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 ```
-Other `tools\r2.ps1` commands: `log`, `logcat [text]`, `dmesg [text]`, `adb`, `serial '<json>'`,
-`rollback`, `restart`, `push-agent`, `safe-on`/`safe-off`, `wifi-station`/`wifi-ap`, `stock-on`/`stock-off`,
-`reboot`. The robot is found automatically by its UDP announcement, or use `-Robot <ip>`.
+Or drive it from a phone: open `http://<robot-ip>:7700/` and enter your API token. To move R2 from its
+hotspot to your Wi-Fi, see *Wi-Fi setup without a QR code* in [docs/architecture.md](docs/architecture.md).
+
+Other `tools\r2.ps1` commands: `action <name>` (`actions` lists them), `stop`, `log`, `log-previous`,
+`logcat [text]`, `dmesg [text]`, `adb`, `serial '<json>'`, `rollback`, `restart`, `push-agent`,
+`safe-on`/`safe-off`, `wifi-station`/`wifi-ap`, `stock-on`/`stock-off`, `reboot`, `shutdown`, `fetch-token`.
+
+R2 also shows up in Home Assistant as a media player (DLNA), for music and announcements, and its camera can be added as an MJPEG camera (see [docs/architecture.md](docs/architecture.md)). *Not yet tested on the robot.*
+
+Droid sounds come from the factory app on your robot and need a sound map in
+`apps\main\assets\sounds.json`, which isn't included; without it every action still runs, silently. The robot is found automatically by its UDP announcement, or use `-Robot <ip>`.
 
 ## Going back to factory software
 - Temporarily: `tools\r2.ps1 stock-on`, then `tools\r2.ps1 reboot`. The agent stays installed but goes passive.
 - Completely: `tools\install-on-robot.ps1 restore` over adb.
+
+`tools\install-on-robot.ps1 refresh-agent` (over adb) replaces the agent's built-in recovery copy with the
+current build and reboots. Needed once when an agent update asks for a new system permission, such as the
+power-off permission the power button uses.
 - Last resort: the serial console and your eMMC backup.
 
 ## Security warning
-Right now the API is protected only by a shared token over plain HTTP. adb over Wi-Fi gives a root shell
+Right now the API is protected only by a token over plain HTTP, and only accepts clients on private networks.
+Pressing the pairing button opens a 2-minute window in which anyone on the network can set up Wi-Fi and
+fetch the token. The official phone app's protocol has no real authentication; turn it off with
+`tools\r2.ps1 action phone-app-off` if you don't use the app. adb over Wi-Fi gives a root shell
 with **no authentication** to anyone on the same network. Only use this on a network you trust. Better
 authentication is the first item on the [roadmap](ROADMAP.md).
 

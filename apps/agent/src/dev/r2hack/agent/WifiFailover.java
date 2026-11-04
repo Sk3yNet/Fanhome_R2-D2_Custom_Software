@@ -161,6 +161,85 @@ final class WifiFailover {
         return homeSsid.equals(ssid) && info.getIpAddress() != 0;
     }
 
+    boolean isAp() {
+        return state.startsWith("ap");
+    }
+
+    /** The network we're joined to, or "" (e.g. in hotspot mode). */
+    String currentSsid() {
+        WifiInfo info = wm.getConnectionInfo();
+        if (isAp() || info == null || info.getSSID() == null || info.getIpAddress() == 0) return "";
+        return info.getSSID().replace("\"", "");
+    }
+
+    /** Networks seen in the last scan (kept from station mode, since scanning needs Wi-Fi on). */
+    org.json.JSONArray scan() {
+        org.json.JSONArray out = new org.json.JSONArray();
+        try {
+            if (!isAp()) wm.startScan();
+            List<android.net.wifi.ScanResult> results = wm.getScanResults();
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            if (results != null) {
+                for (android.net.wifi.ScanResult r : results) {
+                    if (r.SSID == null || r.SSID.isEmpty() || !seen.add(r.SSID)) continue;
+                    out.put(new org.json.JSONObject().put("ssid", r.SSID).put("rssi", r.level));
+                }
+            }
+        } catch (Exception e) {
+            EventLog.e("wifi scan failed", e);
+        }
+        return out;
+    }
+
+    /**
+     * Saves a network as the new home network and joins it (phone-app Wi-Fi setup). If it can't be
+     * joined, it's forgotten again and the previous network (or the hotspot) comes back.
+     * Returns true when joined.
+     */
+    boolean join(String ssid, String password) {
+        synchronized (this) {
+            int max = 0;
+            List<WifiConfiguration> list = wm.getConfiguredNetworks();
+            if (list != null) for (WifiConfiguration c : list) max = Math.max(max, c.priority);
+            WifiConfiguration c = new WifiConfiguration();
+            c.SSID = "\"" + ssid + "\"";
+            if (password == null || password.isEmpty()) {
+                c.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+            } else {
+                c.preSharedKey = "\"" + password + "\"";
+            }
+            c.priority = max + 1;
+            boolean wasAp = isAp();
+            if (wasAp) {
+                try {
+                    setAp(false);
+                } catch (Exception ignored) {
+                }
+                wm.setWifiEnabled(true);
+                for (int i = 0; i < 30 && wm.getWifiState() != WifiManager.WIFI_STATE_ENABLED; i++) sleep(500);
+            }
+            int id = wm.addNetwork(c);
+            if (id < 0) {
+                EventLog.i("wifi: could not add network " + ssid);
+                apply(preferredMode());
+                return false;
+            }
+            wm.saveConfiguration();
+            prefs.edit().putString("mode", MODE_STATION).apply();
+            EventLog.i("wifi: joining new network " + ssid);
+            if (goStation() && ssid.equals(homeSsid)) {
+                state = "station " + homeSsid;
+                return true;
+            }
+            EventLog.i("wifi: could not join " + ssid + ", forgetting it");
+            wm.removeNetwork(id);
+            wm.saveConfiguration();
+            if (wasAp) prefs.edit().putString("mode", MODE_AP).apply();
+            apply(preferredMode());
+            return false;
+        }
+    }
+
     /** First non-loopback IPv4 address on any interface (station or hotspot). */
     static String ipAddress() {
         try {
