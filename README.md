@@ -50,7 +50,8 @@ Everything lives under `tools\` and is ignored by git:
    ```
    powershell -ExecutionPolicy Bypass -File apps\build.ps1
    ```
-   The first build creates `secrets\` with your signing key and API token. Keep that folder private and
+   On Linux or macOS, `apps/build.sh` does the same (JDK from `JAVA_HOME`, SDK from `ANDROID_HOME`, or the
+   same `tools/` folders). The first build creates `secrets\` with your signing key and API token. Keep that folder private and
    backed up: without the key you can't update the installed apps in place.
 
 ## First install

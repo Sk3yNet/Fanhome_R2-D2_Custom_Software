@@ -152,7 +152,7 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
 - [ ] Document the remaining risk in the README.
 
 ## 5. Releases and tooling
-- [ ] **CI:** a GitHub Actions build of both APKs on every push. This needs a Linux version of the build script.
+- [x] **CI:** a GitHub Actions build of both APKs on every push, using `apps/build.sh`, the Linux/macOS version of the build script.
 - [ ] **Signed releases** on GitHub, so users don't have to set up a build toolchain. Depends on
       "token out of the APK" (section 3).
 - [ ] **Cross-platform PC tool:** replace the PowerShell scripts with one small Python CLI (status, push,
