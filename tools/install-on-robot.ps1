@@ -33,6 +33,8 @@ if ($Action -eq 'install') {
     # (tools\r2.ps1 adb, for 30 minutes), because this build's adb is a root shell with no key check.
     Sh 'setprop persist.adb.tcp.port -1' | Out-Null
     Write-Host 'Rebooting. Give it ~60 s, then: tools\r2.ps1 status ; tools\r2.ps1 adb (switches Wi-Fi adb on for 30 min)'
+    Write-Host "R2's hotspot gets its own password now. To see it, press R2's pairing button, join the hotspot with"
+    Write-Host 'the factory password (it is back for 2 minutes), and open http://192.168.43.1:7700/ (Show hotspot password).'
     & $adb reboot
 }
 elseif ($Action -eq 'refresh-agent') {
@@ -43,7 +45,8 @@ elseif ($Action -eq 'refresh-agent') {
     Sh 'sync; mount -o remount,ro /system' | Out-Null
     # On boot Android sees the system copy is newer than the over-the-air copy in /data, drops that copy
     # and keeps the agent's data (token, last good build).
-    Write-Host 'Rebooting. Give it ~60 s, then: tools2.ps1 status'
+    Write-Host 'Rebooting. Give it ~60 s, then: tools
+2.ps1 status'
     & $adb reboot
 }
 else {
