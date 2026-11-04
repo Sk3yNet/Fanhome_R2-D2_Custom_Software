@@ -93,11 +93,14 @@ hotspot to your Wi-Fi, see *Wi-Fi setup without a QR code* in [docs/architecture
 
 Other `tools\r2.ps1` commands: `action <name>` (`actions` lists them), `stop`, `log`, `log-previous`,
 `logcat [text]`, `dmesg [text]`, `adb [minutes]`, `adb-off`, `allow-subnets <list>`, `serial '<json>'`, `rollback`, `restart`, `push-agent`,
-`safe-on`/`safe-off`, `wifi-station`/`wifi-ap`, `stock-on`/`stock-off`, `reboot`, `shutdown`, `fetch-token`, `mqtt`.
+`safe-on`/`safe-off`, `wifi-station`/`wifi-ap`, `stock-on`/`stock-off`, `reboot`, `shutdown`, `fetch-token`, `mqtt`,
+`assist off|robot|ha`, `assist-only <ip>`.
 
 R2 also shows up in Home Assistant as a media player (DLNA), for music and announcements, and its camera can be added as an MJPEG camera (see [docs/architecture.md](docs/architecture.md)). *Not yet tested on the robot.*
+He can also be a voice assistant for Home Assistant's Assist, including AI conversation agents: say "hey R2-D2" and a question, and R2 speaks the answer
+(see [docs/home-assistant-voice.md](docs/home-assistant-voice.md)). *Built, not yet tested on the robot.*
 With `tools\r2.ps1 mqtt <broker-ip> -User <name>` R2 joins Home Assistant through MQTT discovery: battery and
-charging sensors, buttons for the actions, and switches for the lightsaber, arm, projectors and displays. *Built, not yet tested on the robot.*
+charging sensors, buttons for the actions and routines, and switches for the lightsaber, arm, projectors and displays. *Built, not yet tested on the robot.*
 
 Droid sounds come from the factory app on your robot and need a sound map in
 `apps\main\assets\sounds.json`, which isn't included; without it every action still runs, silently. The robot is found automatically by its UDP announcement, or use `-Robot <ip>`.
@@ -118,7 +121,8 @@ Pressing the pairing button opens a 2-minute window in which anyone on the netwo
 fetch the token. The official phone app's protocol has no real authentication; turn it off with
 `tools\r2.ps1 action phone-app-off` if you don't use the app. adb over Wi-Fi is off by default, but
 while it's on (`tools\r2.ps1 adb`, 30 minutes) it gives a root shell with **no authentication** to anyone on the
-same network. Only use this on a network you trust. Better
+same network. The Home Assistant voice satellite (port 10700, off by default) has no authentication
+either, as Wyoming has none; pin it to Home Assistant's address with `tools\r2.ps1 assist-only <ip>`. Only use this on a network you trust. Better
 authentication is the first item on the [roadmap](ROADMAP.md).
 
 ## License

@@ -395,6 +395,16 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 return toMain(new JSONObject().put("agent", "action").put("name", name))
                         ? result("sent " + name + " to the main app") : bad("main app not connected");
             }
+            case "POST /assist": { // Home Assistant voice: mode=off|robot|ha and/or host=<Home Assistant's IP, or empty>
+                String mode = req.query.get("mode");
+                boolean hasHost = req.query.containsKey("host");
+                if (mode == null ? !hasHost : !"off".equals(mode) && !"robot".equals(mode) && !"ha".equals(mode)) {
+                    return bad("mode= must be off (default), robot (wake word on the robot) or ha (wake word in Home Assistant)");
+                }
+                JSONObject m = new JSONObject().put("agent", "assist").put("mode", mode == null ? "" : mode);
+                if (hasHost) m.put("host", req.query.get("host"));
+                return toMain(m) ? result("sent to the main app; see \"assist\" in GET /status") : bad("main app not connected");
+            }
             case "GET /routines":
                 return routines(new JSONObject().put("op", "list"));
             case "GET /routine":
@@ -686,6 +696,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             s.put("muted", set.optBoolean("muted"));
             s.put("voice", set.optBoolean("voice"));
             s.put("face_tracking", set.optBoolean("face"));
+            s.put("assist", set.optString("assist"));
         }
         JSONObject run = running;
         if (run != null && supervisor.mainAlive()) {

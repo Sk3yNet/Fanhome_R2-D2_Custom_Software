@@ -25,7 +25,9 @@ import java.util.zip.ZipFile;
  * the command phrases are our own and can be changed in files/voice/keywords.txt.
  *
  * "Hey R2-D2" wakes it up; for 15 s after that, each command phrase runs its action,
- * and each command keeps it listening for another 15 s.
+ * and each command keeps it listening for another 15 s. With Home Assistant's voice pipeline (Assist)
+ * connected, what follows "hey R2-D2" goes there instead, or all audio does if Home Assistant spots the
+ * wake word itself.
  */
 final class Voice {
     interface Host {
@@ -36,6 +38,17 @@ final class Voice {
 
         /** False while R2 shouldn't listen (sleep, patrol, pairing, projector audio, music...). */
         boolean mayListen();
+    }
+
+    /** Somewhere else the microphone audio can go instead (Home Assistant's voice pipeline: Assist). */
+    interface Stream {
+        /** The wake phrase was heard. True if the stream takes the request instead of the local commands. */
+        boolean takeWake();
+
+        /** True while audio should go to audio() instead of the keyword spotter. */
+        boolean wantsAudio();
+
+        void audio(short[] buf, int n);
     }
 
     private static final String TAG = "R2Voice";
@@ -65,11 +78,16 @@ final class Voice {
     private volatile boolean enabled = true;
     private volatile String problem = "starting";
     private volatile long awakeUntil;
+    private volatile Stream stream;
 
     Voice(Context ctx, Host host) {
         this.ctx = ctx;
         this.host = host;
         for (Object[] p : PHRASES) actions.put((String) p[0], (String) p[1]);
+    }
+
+    void setStream(Stream s) {
+        stream = s;
     }
 
     void setEnabled(boolean on) {
@@ -133,11 +151,23 @@ final class Voice {
             problem = null;
             rec.startRecording();
             PocketSphinxJNI.Decoder_startUtt(decoder, null);
+            boolean streamed = false;
             try {
                 while (enabled && host.mayListen()) {
                     int n = rec.read(buf, 0, buf.length);
                     if (n < 0) throw new Exception("microphone read failed (" + n + ")");
                     if (n == 0) continue;
+                    Stream st = stream;
+                    if (st != null && st.wantsAudio()) {
+                        st.audio(buf, n);
+                        streamed = true;
+                        continue;
+                    }
+                    if (streamed) { // back from streaming: don't spot words in a stale utterance
+                        streamed = false;
+                        PocketSphinxJNI.Decoder_endUtt(decoder, null);
+                        PocketSphinxJNI.Decoder_startUtt(decoder, null);
+                    }
                     PocketSphinxJNI.Decoder_processRaw(decoder, null, buf, n, false, false);
                     String heard = hypothesis(decoder);
                     if (heard != null) {
@@ -181,6 +211,11 @@ final class Voice {
         Log.i(TAG, "heard \"" + text + "\" -> " + action);
         if (action == null) return;
         if (WAKE.equals(action)) {
+            Stream st = stream;
+            if (st != null && st.takeWake()) { // Home Assistant answers this one
+                if (awakeUntil != 0) sleepVoice();
+                return;
+            }
             boolean was = awake();
             awakeUntil = System.currentTimeMillis() + AWAKE_MS;
             if (!was) host.onVoiceAwake(true);

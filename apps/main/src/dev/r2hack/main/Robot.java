@@ -31,6 +31,7 @@ final class Robot {
     volatile int mode = READY;
     volatile boolean apMode;
     volatile boolean listening, faceSeen;   // voice awake / a face is being tracked (status lights)
+    volatile int assistState;               // Home Assistant voice: Assist.IDLE, LISTENING, THINKING, SPEAKING
     volatile String ssid = "", ip = "";
     volatile Sounds sounds;           // for the mute state the phone app shows
     private volatile long chargingChangedAt;

@@ -233,6 +233,8 @@ or run it straight from the card as a soft-mod that disappears when the card is 
 - [ ] **Voice through Home Assistant:** R2 as a Wyoming voice satellite, with wake word, speech recognition
       and text to speech in containers (openWakeWord, Whisper, Piper), R2's actions as intents, and spoken
       answers through R2's speaker. The on-robot keywords stay as the fallback. See [docs/offload.md](docs/offload.md).
+      *Built, not yet tested on the robot.* R2 Main is a Wyoming satellite on port 10700 (`tools\r2.ps1 assist robot|ha|off`),
+      and R2's actions reach Home Assistant's own agent through custom sentences. See [docs/home-assistant-voice.md](docs/home-assistant-voice.md).
 - [ ] **R2 as an endpoint for AI voice pipelines:** after R2 recognizes his wake word, he streams what
       follows to a Home Assistant Assist pipeline, so any conversation agent configured there (a local or
       cloud LLM, or Home Assistant's own) can answer, and the reply plays through R2's speaker. The wake
@@ -240,6 +242,11 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       (openWakeWord), and the pipeline is chosen in Home Assistant. Ideas on top: a droid chirp before
       and after each reply, the back light showing listening and thinking, the head turning toward the
       speaker, and a pipeline tool that lets the AI run R2's actions (dance, projector clips).
+      *Built, not yet tested on the robot.* Any pipeline chosen in Home Assistant answers, with the wake word on the robot
+      ("hey R2-D2", then only the request leaves the robot) or in Home Assistant. R2 chirps when he hears the
+      wake word. The back light shows listening, thinking and speaking. An exposed `R2-D2 action` script lets
+      the AI run R2's actions, and Home Assistant announcements play through R2. Not done: turning the head toward the speaker
+      (the microphone has no direction), and follow-up questions without the wake word.
 - [ ] **Vision containers:** face recognition (CompreFace / Double Take) and person detection (Frigate) on R2's
       camera stream, so R2 can greet people it knows. As a Home Assistant add-on or plain Docker.
 - [ ] Plugin permissions, so an integration can't install software or reboot unless allowed.

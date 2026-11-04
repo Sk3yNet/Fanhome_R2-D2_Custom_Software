@@ -5,7 +5,8 @@ package dev.r2hack.main;
  * back light green and yellow; each LED is set with the controller's `led` command:
  * 0 leave as is, 1 off, 2 on, 3/4 slow flash (two phases), 5/6 fast flash (two phases).
  * The front shows what R2 is doing (ready, patrol, pairing, charging, low battery, sleep); the back shows
- * the network (home Wi-Fi, no Wi-Fi, hotspot, sleeping), or that R2 is listening for a voice command. Events can show a pattern briefly, then the base
+ * the network (home Wi-Fi, no Wi-Fi, hotspot, sleeping), or that R2 is listening for a voice command
+ * (with Home Assistant's voice pipeline also thinking: fast green/yellow, and speaking: both on). Events can show a pattern briefly, then the base
  * pattern comes back.
  */
 final class Lights {
@@ -19,7 +20,7 @@ final class Lights {
             FACE = {1, 2};
     // Back patterns: {g, y}
     static final int[] HOME_WIFI = {2, 1}, NO_WIFI = {5, 1}, HOTSPOT = {1, 2}, HOTSPOT_CONNECTING = {1, 5},
-            SLEEP_HOTSPOT = {1, 3}, SLEEP_WIFI = {3, 1}, LISTENING = {3, 4};
+            SLEEP_HOTSPOT = {1, 3}, SLEEP_WIFI = {3, 1}, LISTENING = {3, 4}, THINKING = {5, 6}, SPEAKING = {2, 2};
 
     private final Robot robot;
     private final Output out;
@@ -82,7 +83,9 @@ final class Lights {
 
     private int[] backBase() {
         if (robot.mode == Robot.SLEEP) return robot.apMode ? SLEEP_HOTSPOT : SLEEP_WIFI;
-        if (robot.listening) return LISTENING;
+        if (robot.listening || robot.assistState == Assist.LISTENING) return LISTENING;
+        if (robot.assistState == Assist.THINKING) return THINKING;
+        if (robot.assistState == Assist.SPEAKING) return SPEAKING;
         if (robot.apMode) return HOTSPOT;
         return robot.ssid.isEmpty() ? NO_WIFI : HOME_WIFI;
     }
