@@ -51,7 +51,7 @@ robot's buttons, the phone app, the web page and `/action`:
 [routines/shake-head.json](routines/shake-head.json) is the built-in shake-head written as a routine.
 
 The other action names (`stop`, `patrol`, `pair`, `mute`, `unmute`, `voice-on`/`-off`, `face-on`/`-off`,
-`phone-app-on`/`-off`) are reserved and can't be used for routines.
+`phone-app-on`/`-off`, `liveliness-off`/`-quiet`/`-chatty`/`-full`) are reserved and can't be used for routines.
 
 ## Format
 
@@ -92,7 +92,7 @@ factory actions use 0.6 s between head moves). Unknown keys are refused, so typo
 | `sound` | `{"sound": 7}` · `{"sound": 1, "until_done": true}` | Play a droid sound by number (as `play_sound` numbers them; 100 and 101 are the projector clips). It interrupts the sound playing. With `until_done` the routine waits for it to end (up to 60 s). |
 | `head` | `{"head": -45}` | Turn the head to an angle, −130 to 130 degrees from forward (positive to the right). |
 | `mode` | `{"mode": 3}` | A controller mode (0–20), e.g. 2 turn around, 3 left, 4 right, 5 forward, 12 circle, 0 stop. See [serial-protocol.md](serial-protocol.md). |
-| `drive` | `{"drive": {"power": 30, "angle": 0, "seconds": 2}}` | Drive for 0.1–60 s, then stop. `power` 0–100, `angle` 0–359 (0 forward, 180 reverse, 90 turns right on the spot). The move is repeated every 0.5 s, so the agent's motion watchdog keeps working. |
+| `drive` | `{"drive": {"power": 30, "angle": 0, "seconds": 2}}` | Drive for 0.1–60 s, then stop. `power` 0–100, `angle` −180 to 359 (0 forward, 180 reverse, 90 turns right on the spot, −90 left; 270 is *not* a left spin, the controller backs up instead). Drive steps in a row flow into each other without a stop in between. The move is repeated every 0.5 s, so the agent's motion watchdog keeps working. |
 | `led` | `{"led": {"r": 2, "b": 2}}` | Status lights, any of `r`, `b` (front), `y`, `g` (back): 0 unchanged, 1 off, 2 on, 3/4 slow flash, 5/6 fast flash. |
 | `cmd` | `{"cmd": {"cmd": "lcd", "s": 2, "l": 1}}` | Any controller command, sent as is through the agent's motion guard. `shut-down`, `ready`, `reset`, `update` and `upgrade` are refused. |
 | `action` | `{"action": "dance"}` | Run a built-in action from the list above, in place. Always the built-in one, even if a routine replaces it. |
@@ -122,7 +122,7 @@ as an action, a routine can list what else starts it (up to 20 triggers):
 | Trigger | What starts the routine |
 |---|---|
 | `{"button": 4}` | A press of a robot button: 4 (lightsaber), 5 (arm) or 6 (patrol). The routine runs instead of the button's built-in action. Power (1), Wi-Fi (2) and pairing (3) can't be taken over, so you can always shut down, get back on the network and pair. |
-| `{"voice": "good morning"}` | The phrase after "hey R2-D2", like the built-in voice commands. 2 to 6 words, letters only (write numbers as words). It can't start with or be the start of a built-in phrase ("stop", "turn left"...). Every word must be in the robot's English speech dictionary; a phrase with an unknown word is skipped, and `tools\r2.ps1 status` says which word (the `voice:` line). Spotting is tuned like the other commands; longer phrases give fewer false alarms. |
+| `{"voice": "good morning"}` | The phrase after "hey R2-D2", like the built-in voice commands. 2 to 6 words, letters only (write numbers as words). It can't start with or be the start of a built-in phrase ("stop", "turn left"...). Every word must be in the robot's English speech dictionary; a phrase with an unknown word is skipped and logged (`tools\r2.ps1 logcat R2Voice`). A place's phrase ("go to ...", "go home") wins over a routine's. Spotting is tuned like the other commands; longer phrases give fewer false alarms. |
 | `{"schedule": {"at": "07:30"}}` | Every day at that time (24-hour clock, the robot's time zone). |
 | `{"schedule": {"every": 30}}` | Every 30 minutes (5–1440), counted from midnight: 00:00, 00:30, ... |
 | `{"schedule": {"every": 60, "from": "09:00", "to": "21:00"}}` | Every 60 minutes from 09:00 up to and including 21:00. A window like `22:00` to `06:00` crosses midnight. |

@@ -152,6 +152,52 @@ by name. Add your routine names to the script's `options` (`GET /routines` lists
 If the Home Assistant MQTT integration for R2 is installed, its action buttons can be exposed to Assist
 instead of the script.
 
+## Rooms
+R2 can drive to rooms you taught him ([places.md](places.md)). With the MQTT integration, expose the
+**Go to** select to Assist, and "R2, go to the kitchen" works with an AI agent. For Home Assistant's own
+agent, add a REST command and a sentence (the room names are the ones `GET /places` lists):
+
+```yaml
+rest_command:
+  r2_goto:
+    url: "http://192.168.1.50:7700/goto?place={{ place }}"
+    method: post
+    headers:
+      X-R2-Token: !secret r2_token
+
+intent_script:
+  R2GoTo:
+    action:
+      - action: rest_command.r2_goto
+        data:
+          place: "{{ r2_place }}"
+    speech:
+      text: ""
+```
+
+```yaml
+# custom_sentences/en/r2d2.yaml, next to R2Action
+intents:
+  R2GoTo:
+    data:
+      - sentences:
+          - "[(R2 | R2-D2 | artoo)] (go | drive) to [the] {r2_place}"
+      - sentences:
+          - "[(R2 | R2-D2 | artoo)] (go | come) home"
+        slots:
+          r2_place: home
+lists:
+  r2_place:
+    values:
+      - in: "kitchen"
+        out: "kitchen"
+      - in: "living room"
+        out: "living-room"
+```
+
+For the AI's script, add `goto:kitchen` style names to the `R2-D2 action` script's options, since
+`POST /action?name=goto:kitchen` also sends him (and `go-home`, `tour`).
+
 ## Checking it without Home Assistant
 `python3 tools/assist-check.py <robot-ip>` pretends to be Home Assistant. Disconnect Home Assistant's
 Wyoming entry for R2 first (disable it), since R2 serves one connection at a time. It checks that R2

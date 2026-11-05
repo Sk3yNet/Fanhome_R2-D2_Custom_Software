@@ -88,6 +88,10 @@ public final class RoutineTest {
         }
     }
 
+    static Set<String> actions() {
+        return ACTIONS;
+    }
+
     static Routine parse(String json) throws Exception {
         return Routine.parse(new JSONObject(json), ACTIONS);
     }

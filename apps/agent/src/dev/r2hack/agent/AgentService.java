@@ -178,7 +178,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     }
 
     /** Clean power-off: stop, flush storage, tell the controller, then shut Android down. */
-    /** The main app's latest settings ({"agent":"settings","volume","muted","voice","face"}). */
+    /** The main app's latest settings ({"agent":"settings","volume","muted","voice","face","assist","liveliness"}). */
     private volatile JSONObject settings;
     /** R2 Main's Home Assistant (MQTT) connection state. */
     private volatile String mqttState = "";
@@ -248,6 +248,10 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 && ask.optString("name").isEmpty()) {
             return bad("name= is required, e.g. ?name=" + (op.startsWith("cue") ? "a-new-hope" : "greet"));
         }
+        if (("place-get".equals(op) || "place-delete".equals(op) || "here".equals(op)) && ask.optString("name").isEmpty()) {
+            return bad("name= is required, e.g. ?name=kitchen (here also takes home or unknown)");
+        }
+        if ("goto".equals(op) && ask.optString("name").isEmpty()) return bad("place= is required, e.g. ?place=kitchen or ?place=home");
         JSONObject reply = mainRequests.ask(ask.put("agent", "routines"), ROUTINE_REPLY_MS);
         if (reply == null) return HttpApi.Response.json(503, "{\"error\":\"the main app is not connected or did not answer\"}");
         boolean ok = reply.optBoolean("ok");
@@ -384,8 +388,12 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             case "POST /serial":
                 if (passive) return passiveError();
                 String line = req.bodyText.trim();
-                new JSONObject(line); // reject non-JSON
-                return result(sendToController(line) ? "sent" : "serial not open");
+                JSONObject serialCmd = new JSONObject(line); // reject non-JSON
+                boolean serialSent = sendToController(line);
+                // R2 Main records joystick drives while a route is taught, and otherwise notes that R2 moved by hand.
+                String sc = serialCmd.optString("cmd");
+                if (serialSent && ("move".equals(sc) || "mode".equals(sc))) toMain(new JSONObject().put("agent", "drove").put("cmd", serialCmd));
+                return result(serialSent ? "sent" : "serial not open");
             case "POST /stop": // emergency stop: the agent stops the robot itself, then tells the main app
                 if (passive) return passiveError();
                 stopRobot();
@@ -443,6 +451,60 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             case "POST /routine/stop": // ends the running routine or action (POST /stop also stops the robot here)
                 if (passive) return passiveError();
                 return routines(new JSONObject().put("op", "stop"));
+            // Places (docs/places.md): taught routes R2 drives to rooms; handled by R2 Main like routines.
+            case "GET /places":
+                return routines(new JSONObject().put("op", "places"));
+            case "GET /place":
+                return routines(new JSONObject().put("op", "place-get").put("name", req.query.get("name")));
+            case "POST /place": {
+                if (passive) return passiveError();
+                JSONObject body;
+                try {
+                    body = new JSONObject(req.bodyText);
+                } catch (Exception e) {
+                    return bad("the body must be the place as a JSON object: " + e.getMessage());
+                }
+                return routines(new JSONObject().put("op", "place-put").put("place", body));
+            }
+            case "POST /place/delete":
+                if (passive) return passiveError();
+                return routines(new JSONObject().put("op", "place-delete").put("name", req.query.get("name")));
+            case "POST /goto": // ?place=kitchen, or home
+                if (passive) return passiveError();
+                return routines(new JSONObject().put("op", "goto").put("name", req.query.get("place")));
+            case "POST /tour":
+                if (passive) return passiveError();
+                return routines(new JSONObject().put("op", "tour"));
+            case "POST /place/here": // ?name=home|<place>|unknown: where R2 is now
+                if (passive) return passiveError();
+                return routines(new JSONObject().put("op", "here").put("name", req.query.get("name")));
+            case "POST /place/teach": { // ?name=kitchen&what=there|back|turn[&spoken=the kitchen,cooking room][&area=Kitchen]
+                if (passive) return passiveError();
+                JSONObject extra = new JSONObject();
+                String spoken = req.query.get("spoken");
+                if (spoken != null && !spoken.trim().isEmpty()) {
+                    org.json.JSONArray a = new org.json.JSONArray();
+                    for (String sp : spoken.split(",")) if (!sp.trim().isEmpty()) a.put(sp.trim());
+                    extra.put("spoken", a);
+                }
+                if (req.query.containsKey("area")) extra.put("area", req.query.get("area"));
+                String what = req.query.containsKey("what") ? req.query.get("what") : "there";
+                String pname = req.query.get("name");
+                return routines(new JSONObject().put("op", "teach").put("name", pname == null ? "" : pname).put("what", what).put("extra", extra));
+            }
+            case "POST /place/teach/save":
+                if (passive) return passiveError();
+                return routines(new JSONObject().put("op", "teach-save"));
+            case "POST /place/teach/cancel":
+                if (passive) return passiveError();
+                return routines(new JSONObject().put("op", "teach-cancel"));
+            case "POST /places/settings": { // ?charger_is_home=1|0&patrol_tour=1|0
+                if (passive) return passiveError();
+                JSONObject ask = new JSONObject().put("op", "place-settings");
+                if (req.query.containsKey("charger_is_home")) ask.put("charger_is_home", "1".equals(req.query.get("charger_is_home")));
+                if (req.query.containsKey("patrol_tour")) ask.put("patrol_tour", "1".equals(req.query.get("patrol_tour")));
+                return routines(ask);
+            }
             // Watch-with-me (docs/watch-with-me.md): cue files and the session, handled by the main app.
             case "GET /cues":
                 return routines(new JSONObject().put("op", "cue-list"));
@@ -775,11 +837,14 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             s.put("voice", set.optBoolean("voice"));
             s.put("face_tracking", set.optBoolean("face"));
             s.put("assist", set.optString("assist"));
+            s.put("liveliness", set.optString("liveliness", "quiet"));
         }
         JSONObject run = running;
         if (run != null && supervisor.mainAlive()) {
             s.put("running", run.optString("name", "idle"));
             s.put("last_routine", run.optString("last_routine"));
+            s.put("location", run.optString("location", "unknown"));
+            if (!run.optString("teaching").isEmpty()) s.put("teaching", run.optString("teaching"));
         }
         return s;
     }

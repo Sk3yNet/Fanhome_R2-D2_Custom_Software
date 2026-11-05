@@ -11,6 +11,16 @@
 #   routine-run <name>       run a routine (also: action <name>)
 #   routine-stop             end the running routine or action
 #   routine-delete <name>    delete a routine (a replaced built-in action comes back)
+#   places                   list the taught rooms (docs/places.md) and where R2 is
+#   place <name> | place-put <file.json> | place-delete <name>
+#                            show / upload / delete one room's route
+#   goto <place>             drive R2 to a taught room, or home
+#   tour                     visit every taught room in turn, then come home
+#   here <home|place|unknown>  tell R2 where he is now (e.g. after carrying him home)
+#   teach <place>            start teaching the way from home to a room: drive with the web page's joystick, then teach-save
+#   teach-back <place>       teach the way back from a room to home
+#   teach-turn               teach a half turn on the spot (lets R2 mirror routes that have no taught way back)
+#   teach-save | teach-cancel  end teaching
 #   cues                     list the watch-with-me cue files (docs/watch-with-me.md)
 #   cue <name>               show one cue file's JSON
 #   cue-put <file.json>      upload a cue file (checked on the robot; replaces one with the same name)
@@ -23,6 +33,8 @@
 #   watch-on | watch-off     the "Watch with me" switch: off keeps R2 quiet during films
 #   event <name>             send a named event; routines with that "event" trigger run (docs/routines.md)
 #   volume <0-100>           droid sounds and music volume (kept across reboots)
+#   liveliness [level]       how much R2 does on his own: off, quiet, chatty or full (docs/liveliness.md);
+#                            no level shows the current one
 #   logcat [text] [-Lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
 #   dmesg [text] [-Lines N]  kernel log
 #   adb [minutes]            switch on adb over Wi-Fi for a while (default 30 min) and connect
@@ -127,7 +139,7 @@ switch ($Command) {
     'status'       { Call GET /status | ConvertTo-Json -Depth 5 }
     'log'          { Call GET /log }
     'log-previous' { Call GET '/log?previous=1' }
-    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off' -split ' ' }
+    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty liveliness-full' -split ' ' }
     'action'       { if (-not $Arg) { throw 'usage: r2.ps1 action <name>  (see: r2.ps1 actions)' }; Call POST "/action?name=$([uri]::EscapeDataString("$Arg"))" }
     'stop'         { Call POST /stop }
     'routines'     {
@@ -144,6 +156,26 @@ switch ($Command) {
     'routine-run'  { if (-not $Arg) { throw 'usage: r2.ps1 routine-run <name>' }; Call POST "/routine/run?name=$([uri]::EscapeDataString($Arg))" }
     'routine-stop' { Call POST /routine/stop }
     'event'        { if (-not $Arg) { throw 'usage: r2.ps1 event <name>' }; Call POST "/event?name=$([uri]::EscapeDataString($Arg))" }
+    'places'       {
+        $d = Call GET /places
+        "R2 is at: $($d.location)" + $(if ($d.teaching) { "   teaching: $($d.teaching)" } else { '' }) + $(if ($d.last_trip) { "   last: $($d.last_trip)" } else { '' })
+        "turn-around taught: $($d.turn_around_seconds) s   charger is home: $($d.charger_is_home)   patrol tours: $($d.patrol_tour)"
+        $d.places | Format-Table name, spoken, there_seconds, there_segments, way_back, area -AutoSize
+    }
+    'place'        { if (-not $Arg) { throw 'usage: r2.ps1 place <name>' }; (Call GET "/place?name=$([uri]::EscapeDataString($Arg))").place | ConvertTo-Json -Depth 20 }
+    'place-put'    {
+        if (-not $Arg -or -not (Test-Path $Arg)) { throw 'usage: r2.ps1 place-put <file.json>' }
+        Call POST /place (Get-Content $Arg -Raw -Encoding UTF8)
+    }
+    'place-delete' { if (-not $Arg) { throw 'usage: r2.ps1 place-delete <name>' }; Call POST "/place/delete?name=$([uri]::EscapeDataString($Arg))" }
+    'goto'         { if (-not $Arg) { throw 'usage: r2.ps1 goto <place|home>' }; Call POST "/goto?place=$([uri]::EscapeDataString($Arg))" }
+    'tour'         { Call POST /tour }
+    'here'         { if (-not $Arg) { throw 'usage: r2.ps1 here <home|place|unknown>' }; Call POST "/place/here?name=$([uri]::EscapeDataString($Arg))" }
+    'teach'        { if (-not $Arg) { throw 'usage: r2.ps1 teach <place>' }; Call POST "/place/teach?what=there&name=$([uri]::EscapeDataString($Arg))" }
+    'teach-back'   { if (-not $Arg) { throw 'usage: r2.ps1 teach-back <place>' }; Call POST "/place/teach?what=back&name=$([uri]::EscapeDataString($Arg))" }
+    'teach-turn'   { Call POST "/place/teach?what=turn" }
+    'teach-save'   { Call POST /place/teach/save }
+    'teach-cancel' { Call POST /place/teach/cancel }
     'routine-delete' { if (-not $Arg) { throw 'usage: r2.ps1 routine-delete <name>' }; Call POST "/routine/delete?name=$([uri]::EscapeDataString($Arg))" }
     'cues'         {
         $d = Call GET /cues
@@ -170,6 +202,11 @@ switch ($Command) {
     'watch-on'     { Call POST /watch '{"enabled":true}' }
     'watch-off'    { Call POST /watch '{"enabled":false}' }
     'volume'       { if ($Arg -notmatch '^\d+$') { throw 'usage: r2.ps1 volume <0-100>' }; Call POST "/volume?percent=$Arg" }
+    'liveliness'   {
+        if (-not $Arg) { (Call GET /status).liveliness }
+        elseif ($Arg -notin 'off', 'quiet', 'chatty', 'full') { throw 'usage: r2.ps1 liveliness <off|quiet|chatty|full>' }
+        else { Call POST "/action?name=liveliness-$($Arg.ToLower())" }
+    }
     { $_ -in 'logcat', 'dmesg' } {
         $q = "?lines=$Lines"; if ($Arg) { $q += '&grep=' + [uri]::EscapeDataString($Arg) }
         $out = Call GET "/$Command$q"
