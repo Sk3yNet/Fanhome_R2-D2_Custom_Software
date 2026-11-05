@@ -78,6 +78,9 @@ routine engine in section 6.
       to follow the face. Confirmed on the robot. Uses Android's built-in face detector (no extra libraries) and the factory's head-following steps. The camera is mounted on its side (frames are turned a quarter turn clockwise for detection), and it needs light on the face.
 - [x] ~~**QR code Wi-Fi setup** in pairing mode.~~ Dropped: Wi-Fi setup on the web page replaces it (press the pairing button, join R2's hotspot, open the page, pick the network and type its password). *Built, not yet tested on the robot.*
 - [ ] Turning face detection on and off. *Built, not yet tested on the robot.* From the phone app; the setting is kept.
+- [ ] **Follow me** (beyond the factory software): "hey R2-D2, follow me" locks onto the clothes under your
+      face and drives after you with the camera alone, slowly and never in reverse. See
+      [docs/follow-me.md](docs/follow-me.md). *Built, not yet tested on the robot.*
 
 ### Companion phone app
 - [ ] Keep the official phone app working with the same local protocol: discovery, driving and actions,
