@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore), places (Places),
 # watch-with-me (CueFile, CueStore, WatchWithMe), idle personality (IdlePersonality), sound reactions
-# (SoundReactions), Home Assistant link (HomeAssistant, without a broker), the chirp generator (Chirp) and
-# the agent's hotspot password helpers (Hotspot). Example chirps are written to apps/out/chirps/*.wav for listening.
+# (SoundReactions), Home Assistant link
+# (HomeAssistant, without a broker), the chirp generator (Chirp), the agent's hotspot password helpers
+# (Hotspot) and its boot hardening rules (HardeningRules; the firewall scripts also run against a real
+# iptables in a throwaway network namespace when this machine allows one). Example chirps are written to
+# apps/out/chirps/*.wav for listening.
 # Usage: apps/test.sh
 # Needs a JDK and Android's real org.json, taken from Robolectric's android-all jar for Android 4.4
 # (the SDK's android.jar only has stubs). The jar is downloaded once to tools/test-libs/, or set
@@ -49,3 +52,41 @@ javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$J
     "$AGENT_SRC/Hotspot.java" "$AGENT_SRC/EventLog.java" \
     "$APPS_DIR/agent/test/dev/r2hack/agent/HotspotTest.java"
 java -cp "$OUT:$JAR" dev.r2hack.agent.HotspotTest
+
+# Boot hardening (agent): rules and parsers, then the generated firewall scripts on a real iptables.
+AGENT=$APPS_DIR/agent
+javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \
+    "$AGENT/src/dev/r2hack/agent/HardeningRules.java" "$AGENT/test/dev/r2hack/agent/HardeningTest.java"
+SCRIPTS=$OUT/hardening-scripts
+mkdir -p "$SCRIPTS"
+java -cp "$OUT:$JAR" dev.r2hack.agent.HardeningTest "$SCRIPTS"
+
+NETNS_CHECK='
+set -e
+cd "$1"
+sh fw4.sh | tail -1 | grep -qx OK
+iptables -S INPUT | grep -qx -- "-A INPUT -j r2_in"
+sh fw4.sh > /dev/null                                    # again: still exactly one jump
+[ "$(iptables -S INPUT | grep -c r2_in)" = 1 ]
+iptables -S r2_in | tail -1 | grep -qx -- "-A r2_in -j DROP"
+sh fw4-conntrack.sh | tail -1 | grep -qx OK
+sh fw6.sh | tail -1 | grep -qx OK
+ip6tables -S INPUT | grep -qx -- "-A INPUT -j r2_in6"
+sh fw4-off.sh; sh fw6-off.sh; sh fw4-off.sh
+! iptables -S | grep -q r2_in
+! ip6tables -S | grep -q r2_in6
+iptables -S INPUT | grep -qx -- "-P INPUT ACCEPT"
+'
+if command -v iptables > /dev/null && command -v ip6tables > /dev/null; then
+    if unshare -rn true 2> /dev/null; then RUN="unshare -rn"
+    elif sudo -n unshare -n true 2> /dev/null; then RUN="sudo -n unshare -n"
+    else RUN=""; fi
+    if [ -n "$RUN" ]; then
+        $RUN sh -c "$NETNS_CHECK" sh "$SCRIPTS"
+        echo "firewall scripts work on a real iptables"
+    else
+        echo "skipped: no network namespace available to try the firewall scripts in"
+    fi
+else
+    echo "skipped: no iptables here to try the firewall scripts on"
+fi

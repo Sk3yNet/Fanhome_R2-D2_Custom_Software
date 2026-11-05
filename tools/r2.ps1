@@ -44,6 +44,13 @@
 #   adb-always               keep adb over Wi-Fi on, also after reboots (trusted networks only)
 #   allow-subnets [list]     also accept API clients from these subnets, e.g. 10.0.20.0/24,10.0.30.5
 #                            (empty: only the robot's own subnet; no argument: show the list)
+#   hardening                boot hardening report: firewall, device permissions, Bluetooth, and what listens
+#                            on the network (docs/hardening.md)
+#   harden-on                switch on the firewall (as a 5-minute trial), tighten device permissions and keep
+#                            Bluetooth off, then check the API still answers and confirm the firewall
+#   harden-trial             firewall trial only, without confirming (it removes itself after 5 minutes)
+#   harden-confirm           keep the firewall in a trial, also after reboots
+#   harden-off               undo all of it (firewall, device permissions, Bluetooth)
 #   mqtt [host[:port]] [-User name]
 #                            Home Assistant over MQTT: set the broker (asks for the password with -User),
 #                            'off' switches it off, no argument shows the settings and connection state
@@ -386,6 +393,19 @@ switch ($Command) {
     'allow-subnets' {
         if ($PSBoundParameters.ContainsKey('Arg')) { Call POST "/clients/allow?subnets=$([uri]::EscapeDataString("$Arg"))" }
         else { (Call GET /clients/allow).extra_subnets }
+    }
+    'hardening'    { Call GET /hardening | ConvertTo-Json -Depth 6 }
+    'harden-trial' { Call POST '/hardening?firewall=1' }
+    'harden-confirm' { Call POST /hardening/confirm }
+    'harden-off'   { Call POST '/hardening?all=0' }
+    'harden-on'    {
+        (Call POST '/hardening?firewall=1&devices=1&bluetooth=1').result
+        Start-Sleep -Seconds 2
+        # A new connection through the firewall: if it gets through, the firewall can stay.
+        try { Call GET /status -Timeout 10 | Out-Null } catch {
+            throw "The API stopped answering with the firewall on, so it was NOT confirmed; it removes itself within 5 minutes. ($_)"
+        }
+        (Call POST /hardening/confirm).result
     }
     'mqtt'         {
         if (-not $Arg) { Call GET /mqtt | ConvertTo-Json }
