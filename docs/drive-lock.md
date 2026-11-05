@@ -69,6 +69,9 @@ refuses their drive commands while locked. To behave well:
   from R2 Main), which is exactly what the lock is modelled on.
 
 ## API
+Reading the state needs `read`, enabling or locking driving `control`, and switching the lock itself on
+or off `admin` ([security.md](security.md)).
+
 | Route | What it does |
 |---|---|
 | `GET /drive` | `{"lock", "enabled", "allowed", "seconds_left", "idle_minutes", "state"}`; `state` is `off`, `locked` or `enabled` |

@@ -851,6 +851,9 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                             + DriveLock.MAX_MINUTES + "] | enable=0");
                 }
                 if (lock != null && !"1".equals(lock) && !"0".equals(lock)) return bad("lock must be 1 or 0");
+                if (lock != null && Clients.level(req.role) < Clients.level(Clients.ADMIN)) {
+                    return HttpApi.Response.json(403, "{\"error\":\"switching the drive lock on or off needs an admin client\"}");
+                }
                 if (enable != null && !"1".equals(enable) && !"0".equals(enable)) return bad("enable must be 1 or 0");
                 int minutes = DriveLock.DEFAULT_MINUTES;
                 if (req.query.containsKey("minutes")) {
