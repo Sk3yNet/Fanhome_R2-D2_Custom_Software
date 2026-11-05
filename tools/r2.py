@@ -38,6 +38,9 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   wifi-station | wifi-ap   switch network mode
   wifi-scan                networks R2 can see
   wifi-join <ssid>         join a network (asks for its password; R2 falls back to its hotspot if it fails)
+  hotspot                  R2's hotspot name and this robot's own password (in the pairing button's setup
+                           window without a token, otherwise over the API or root adb)
+  hotspot-password [new]   set R2's hotspot password (asks for it; 'new' makes a random one)
   import-identity          copy the factory app's robot name, ID and paired phones to R2 Main (over root adb),
                            so the official phone app still recognizes the robot
   stock-on | stock-off     re-enable / disable the original Fanhome app (takes effect after reboot)
@@ -389,6 +392,40 @@ def cmd_wifi_join(robot, a):
                                                      separators=(',', ':'))))
 
 
+def show_hotspot(h):
+    print('name:     %s' % h.get('ssid'))
+    print('password: %s' % h.get('password'))
+
+
+def cmd_hotspot(robot, a):
+    # In the setup window this works without a token; otherwise with the token, or over root adb.
+    h = None
+    try:
+        h = robot.call('GET', '/hotspot', timeout=5)
+    except R2Error:
+        pass
+    if isinstance(h, dict):
+        show_hotspot(h)
+        if h.get('using') == 'factory':
+            print('(running with the factory settings right now: %s s left)' % h.get('factory_seconds_left'))
+    else:
+        target = connect_adb(robot)
+        print('password: ' + adb('-s', target, 'shell', 'cat /data/data/dev.r2hack.agent/files/hotspot-password').strip())
+
+
+def cmd_hotspot_password(robot, a):
+    plain = ''
+    if a.arg != 'new':
+        plain = getpass.getpass('New hotspot password (8-63 characters; Enter for a random one): ')
+    h = robot.call('POST', '/hotspot', json.dumps({'password': plain}, separators=(',', ':')))
+    if isinstance(h, dict):
+        show_hotspot(h)
+        if h.get('result'):
+            print(h['result'])
+    else:
+        show(h)
+
+
 def identity_body(xml_text):
     """The /identity request body from the factory app's shared_prefs/robot.xml."""
     if '<map' not in xml_text:
@@ -593,6 +630,8 @@ COMMANDS = {
     'wifi-ap': simple('POST', '/wifi?mode=ap'),
     'wifi-scan': cmd_wifi_scan,
     'wifi-join': cmd_wifi_join,
+    'hotspot': cmd_hotspot,
+    'hotspot-password': cmd_hotspot_password,
     'import-identity': cmd_import_identity,
     'stock-on': simple('POST', '/stock?enable=1'),
     'stock-off': simple('POST', '/stock?enable=0'),

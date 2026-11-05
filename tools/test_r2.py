@@ -164,6 +164,17 @@ class R2CliTest(unittest.TestCase):
         self.assertEqual(self.last()['path'], '/wifi/join')
         self.assertEqual(json.loads(self.last()['body']), {'ssid': 'Home', 'password': 'secret'})
 
+    def test_hotspot(self):
+        FakeAgent.replies['/hotspot'] = (200, 'application/json', {'ssid': 'R2-D2', 'password': 'pw12345678'})
+        code, out, _ = self.run_cli('hotspot')
+        self.assertEqual((code, out), (0, 'name:     R2-D2\npassword: pw12345678\n'))
+        self.assertEqual((self.last()['method'], self.last()['token']), ('GET', 'tok'))
+        self.run_cli('hotspot-password', 'new')
+        self.assertEqual(json.loads(self.last()['body']), {'password': ''})
+        with mock.patch.object(r2.getpass, 'getpass', return_value='longpassword'):
+            self.run_cli('hotspot-password')
+        self.assertEqual(json.loads(self.last()['body']), {'password': 'longpassword'})
+
     def test_wifi_scan_sorted_by_signal(self):
         FakeAgent.replies['/wifi/scan'] = (200, 'application/json', {
             'networks': [{'ssid': 'weak', 'rssi': -80}, {'ssid': 'strong', 'rssi': -40}]})
