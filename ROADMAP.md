@@ -272,6 +272,7 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       answers through R2's speaker. The on-robot keywords stay as the fallback. See [docs/offload.md](docs/offload.md).
       *Built, not yet tested on the robot.* R2 Main is a Wyoming satellite on port 10700 (`tools\r2.ps1 assist robot|ha|off`),
       and R2's actions reach Home Assistant's own agent through custom sentences. See [docs/home-assistant-voice.md](docs/home-assistant-voice.md).
+      Optional replies in droid beeps, with the text as subtitles (web page, Home Assistant sensor): `tools\r2.ps1 assist-reply beeps`. *Built, not yet tested on the robot.*
 - [ ] **R2 as an endpoint for AI voice pipelines:** after R2 recognizes his wake word, he streams what
       follows to a Home Assistant Assist pipeline, so any conversation agent configured there (a local or
       cloud LLM, or Home Assistant's own) can answer, and the reply plays through R2's speaker. The wake
