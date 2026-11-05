@@ -45,6 +45,7 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `GET /hotspot` · `POST /hotspot` (`{"password"}`; empty: a new random one) · `POST /identity` ·
 `POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2` ·
 `POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...` ·
+`GET /hardening` · `POST /hardening?firewall=1|0&devices=1|0&bluetooth=1|0` · `POST /hardening?all=0` · `POST /hardening/confirm` (boot hardening, see [hardening.md](hardening.md)) ·
 `POST /assist?mode=off|robot|ha&host=<ip>` (Home Assistant voice satellite, see [home-assistant-voice.md](home-assistant-voice.md)) ·
 `GET /routines` · `GET /routine?name=` · `POST /routine` (JSON body) · `POST /routine/run?name=` · `POST /routine/stop` · `POST /routine/delete?name=` (see [routines.md](routines.md)) ·
 `GET /cues` · `GET /cue?name=` · `POST /cue` (JSON body) · `POST /cue/delete?name=` · `GET /watch` · `POST /watch` (`{"state","position","title","cue","enabled"}`; see [watch-with-me.md](watch-with-me.md)) ·
@@ -65,6 +66,13 @@ list). The token travels in plain HTTP, so keep it to your home network.
 without any token, otherwise over root adb), and `r2.ps1` then
 uses it. Your own builds also accept the development token from `secrets\agent-token.txt`;
 `apps\build.ps1 -Release` builds without it.
+
+## Boot hardening
+Off until switched on: `tools\r2.ps1 harden-on` sets up a firewall that lets the local network reach only
+R2's ports (API, media player, voice satellite, phone app, adb while it's on, hotspot DHCP/DNS), removes
+world access from the UARTs, the eMMC and other risky device nodes, and keeps Bluetooth off. The firewall
+starts as a 5-minute trial and only stays if a request gets through it. `harden-off` undoes all of it, and
+USB adb and the serial console are never affected. Details and the robot test plan: [hardening.md](hardening.md).
 
 ## Web control page
 Open `http://<robot-ip>:7700/` on a phone or PC on the same network and enter the token once. It shows

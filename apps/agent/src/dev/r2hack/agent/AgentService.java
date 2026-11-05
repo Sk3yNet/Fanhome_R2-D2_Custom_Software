@@ -29,6 +29,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     private Supervisor supervisor;
     private WifiFailover wifi;
     private AdbControl adb;
+    private Hardening hardening;
     private boolean passive;
     private boolean sim;
     /** Setup window: opened by the pairing button; Wi-Fi setup and the token work without a token meanwhile. */
@@ -75,6 +76,8 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         loadExtraSubnets();
         adb = new AdbControl(getSharedPreferences("agent", MODE_PRIVATE));
         adb.start();
+        hardening = new Hardening(this, getSharedPreferences("agent", MODE_PRIVATE));
+        hardening.start(passive, subnetStrings());
         supervisor = new Supervisor(this, this);
         wifi = new WifiFailover(this, passive);
         wifi.start();
@@ -648,6 +651,15 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 }
                 return result(adb.enable(minutes));
             }
+            case "GET /hardening":
+                return HttpApi.Response.json(200, hardening.report().toString(2));
+            case "POST /hardening": { // firewall=1|0 (1 starts a trial), devices=1|0, bluetooth=1|0 (1 = keep it off), all=0
+                if (passive) return passiveError();
+                return result(hardening.set(req.query.get("firewall"), req.query.get("devices"),
+                        req.query.get("bluetooth"), req.query.get("all")));
+            }
+            case "POST /hardening/confirm": // keeps a firewall trial; this request itself got through the firewall
+                return result(hardening.confirm());
             case "GET /clients/allow":
                 return HttpApi.Response.json(200, new JSONObject().put("extra_subnets", subnetList()).toString());
             case "POST /clients/allow": { // ?subnets=10.0.20.0/24,192.168.5.10 (empty: only the robot's own subnet)
@@ -669,6 +681,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 for (HttpApi.Subnet n : list) stored.append(stored.length() == 0 ? "" : ",").append(n);
                 getSharedPreferences("agent", MODE_PRIVATE).edit().putString("extra-subnets", stored.toString()).commit();
                 EventLog.i("http: extra allowed subnets now [" + stored + "]");
+                hardening.onSubnetsChanged(subnetStrings());
                 sendMqttSettings(); // the MQTT broker follows the same rule
                 return result(list.isEmpty() ? "only clients on the robot's own subnet are accepted"
                         : "also accepting clients from " + stored);
@@ -829,6 +842,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         s.put("adb_wifi_always", adb.always());
         s.put("adb_wifi_seconds_left", adb.secondsLeft());
         s.put("extra_subnets", subnetList());
+        s.put("hardening", hardening.summary());
         s.put("mqtt", mqttState.isEmpty() ? "unknown" : mqttState);
         if (serial != null) {
             s.put("serial_open", serial.isOpen());
@@ -897,6 +911,12 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             }
         }
         HttpApi.setExtraSubnets(list);
+    }
+
+    private static java.util.List<String> subnetStrings() {
+        java.util.List<String> l = new java.util.ArrayList<>();
+        for (HttpApi.Subnet n : HttpApi.extraSubnets()) l.add(n.toString());
+        return l;
     }
 
     private static org.json.JSONArray subnetList() {
