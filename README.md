@@ -93,6 +93,11 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 Or drive it from a phone: press R2's pairing button, open `http://<robot-ip>:7700/` and tap **Pair this device**. To move R2 from its
 hotspot to your Wi-Fi, see *Wi-Fi setup without a QR code* in [docs/architecture.md](docs/architecture.md).
 
+On macOS or Linux (or Windows with Python 3.8+), `tools/r2.py` does the same with the same commands:
+`python3 tools/r2.py push-main`, `python3 tools/r2.py status`, and `python3 tools/r2.py install` for the
+first-time install over USB (it finds adb in `tools/platform-tools/` or on your `PATH`). `--help` lists
+everything; options are spelled with two dashes (`--robot`, `--user`, `--role`, `--tag`, `--yes`...).
+
 Other `tools\r2.ps1` commands: `action <name>` (`actions` lists them), `stop`, `log`, `log-previous`,
 `logcat [text]`, `dmesg [text]`, `adb [minutes]`, `adb-off`, `allow-subnets <list>`, `serial '<json>'`, `rollback`, `restart`, `push-agent`,
 `safe-on`/`safe-off`, `wifi-station`/`wifi-ap`, `hotspot`, `hotspot-password`, `stock-on`/`stock-off`, `reboot`, `shutdown`, `fetch-token`, `mqtt`,

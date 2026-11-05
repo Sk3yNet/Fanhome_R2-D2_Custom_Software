@@ -8,6 +8,25 @@ permissions:
   contents: read
 
 jobs:
+  # tools/r2.py, the cross-platform PC tool, against a pretend agent (no robot needed).
+  pc-tool:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, python: '3.8' }   # the oldest Python r2.py supports
+          - { os: ubuntu-latest, python: '3.x' }
+          - { os: macos-latest, python: '3.x' }
+          - { os: windows-latest, python: '3.x' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: PC tool tests
+        run: python -m unittest discover -s tools -p "test_*.py" -v
+
   build:
     runs-on: ubuntu-latest
     steps:
@@ -68,6 +87,18 @@ jobs:
             if ((Get-ApkCert $apk) -ne $cert) { throw "Get-ApkCert $apk gave $(Get-ApkCert $apk)" }
             if ((Get-ApkVersionCode $apk) -ne [int]$code) { throw "Get-ApkVersionCode $apk gave $(Get-ApkVersionCode $apk)" }
           }
+
+      # The same check for tools/r2.py, which reads APKs the same way for its switch-source.
+      - name: r2.py reads APKs like the SDK does
+        run: |
+          BT="$ANDROID_HOME/build-tools/35.0.1"
+          for apk in apps/out/R2Agent.apk apps/out/R2Main.apk; do
+            cert=$("$BT/apksigner" verify --print-certs "$apk" | sed -n 's/.*Signer #1 certificate SHA-256 digest: \([0-9a-f]*\).*/\1/p' | head -1)
+            code=$("$BT/aapt2" dump badging "$apk" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
+            got=$(python3 tools/r2.py apk-info "$apk")
+            echo "$apk  sdk: cert $cert  versionCode $code   r2.py: $got"
+            [ "$got" = "cert $cert  versionCode $code" ]
+          done
 
       # The release workflow's path: a keystore handed in through R2_KEYSTORE, and a version name from a tag.
       # Uses a throwaway key with a different alias, so it can't fall back to the one in secrets/ by accident.
