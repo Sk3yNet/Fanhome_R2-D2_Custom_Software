@@ -178,7 +178,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     }
 
     /** Clean power-off: stop, flush storage, tell the controller, then shut Android down. */
-    /** The main app's latest settings ({"agent":"settings","volume","muted","voice","face"}). */
+    /** The main app's latest settings ({"agent":"settings","volume","muted","voice","face","assist","liveliness"}). */
     private volatile JSONObject settings;
     /** R2 Main's Home Assistant (MQTT) connection state. */
     private volatile String mqttState = "";
@@ -827,6 +827,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             s.put("voice", set.optBoolean("voice"));
             s.put("face_tracking", set.optBoolean("face"));
             s.put("assist", set.optString("assist"));
+            s.put("liveliness", set.optString("liveliness", "quiet"));
         }
         JSONObject run = running;
         if (run != null && supervisor.mainAlive()) {

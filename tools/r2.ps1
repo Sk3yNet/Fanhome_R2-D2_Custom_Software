@@ -32,6 +32,8 @@
 #   watch-pause | watch-resume | watch-stop
 #   watch-on | watch-off     the "Watch with me" switch: off keeps R2 quiet during films
 #   volume <0-100>           droid sounds and music volume (kept across reboots)
+#   liveliness [level]       how much R2 does on his own: off, quiet, chatty or full (docs/liveliness.md);
+#                            no level shows the current one
 #   logcat [text] [-Lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
 #   dmesg [text] [-Lines N]  kernel log
 #   adb [minutes]            switch on adb over Wi-Fi for a while (default 30 min) and connect
@@ -136,7 +138,7 @@ switch ($Command) {
     'status'       { Call GET /status | ConvertTo-Json -Depth 5 }
     'log'          { Call GET /log }
     'log-previous' { Call GET '/log?previous=1' }
-    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off' -split ' ' }
+    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty liveliness-full' -split ' ' }
     'action'       { if (-not $Arg) { throw 'usage: r2.ps1 action <name>  (see: r2.ps1 actions)' }; Call POST "/action?name=$([uri]::EscapeDataString("$Arg"))" }
     'stop'         { Call POST /stop }
     'routines'     {
@@ -197,6 +199,11 @@ switch ($Command) {
     'watch-on'     { Call POST /watch '{"enabled":true}' }
     'watch-off'    { Call POST /watch '{"enabled":false}' }
     'volume'       { if ($Arg -notmatch '^\d+$') { throw 'usage: r2.ps1 volume <0-100>' }; Call POST "/volume?percent=$Arg" }
+    'liveliness'   {
+        if (-not $Arg) { (Call GET /status).liveliness }
+        elseif ($Arg -notin 'off', 'quiet', 'chatty', 'full') { throw 'usage: r2.ps1 liveliness <off|quiet|chatty|full>' }
+        else { Call POST "/action?name=liveliness-$($Arg.ToLower())" }
+    }
     { $_ -in 'logcat', 'dmesg' } {
         $q = "?lines=$Lines"; if ($Arg) { $q += '&grep=' + [uri]::EscapeDataString($Arg) }
         $out = Call GET "/$Command$q"

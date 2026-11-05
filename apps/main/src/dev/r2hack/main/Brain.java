@@ -17,6 +17,8 @@ import org.json.JSONObject;
  * Routines (docs/routines.md) are stored JSON step lists run by RoutineRunner on the same sequencer.
  * A routine named like one of ROUTINE_ACTIONS replaces that action everywhere (voice, buttons, phone app).
  * Places (docs/places.md): routes taught with the joystick, replayed as trips; "goto:<place>" runs one.
+ * Liveliness (docs/liveliness.md) is one setting, off / quiet / chatty / full, for how much R2 does on his own:
+ * read it with liveliness(). IdlePersonality uses it for idle chatter; other features read the same getter.
  */
 final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assist.Host {
     private static final String TAG = "R2Brain";
@@ -27,6 +29,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             "lightsaber", "arm", "short-lcd", "long-lcd", "flash-front", "flash-back", "leia", "luke",
             "mute", "unmute", "pair", "phone-app-on", "phone-app-off", "voice-on", "voice-off", "face-on", "face-off",
             "go-home", "tour",
+            "liveliness-off", "liveliness-quiet", "liveliness-chatty", "liveliness-full",
     };
 
     /**
@@ -51,6 +54,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private static final long PROJECTOR_FALLBACK_MS = 15_000;  // if its audio can't play
     private static final long CLIP_MAX_MS = 60_000;
     private static final long SLEEP_AFTER_MS = 180_000;        // factory: sleep after 3 minutes idle
+    private static final long SLEEP_AFTER_FULL_MS = 600_000;   // activity "full": the show runs 10 minutes
     private static final long PAIR_MS = 30_000;
     private static final long DRIVE_SOUND_MS = 2_000;          // droid sounds while driving straight
 
@@ -67,6 +71,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private final FaceTracker face;
     private final HomeAssistant ha;
     private final RoutineStore routines;
+    private final IdlePersonality idle;
     private volatile String lastRoutine = "";   // how the last routine ended, for listings and /status
     private final Places.Store places;
     /** While a route is being taught: the recording, and what it is for ("kitchen", "kitchen back", "turn-around"). */
@@ -81,12 +86,25 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private volatile long lastStraightMove;
     private volatile boolean driveSounds;
     private volatile boolean faceActive;
+    private volatile long lastManual;        // the last drive or head command from the phone app or web page
 
     Brain(BrainService io) {
         this.io = io;
         this.sounds = new Sounds(io);
         this.robot = new Robot(io);
         robot.sounds = sounds;
+        this.idle = new IdlePersonality(new IdlePersonality.Host() {
+            @Override
+            public void playSound(int number) {
+                sounds.play(number, false);
+            }
+
+            @Override
+            public void head(int angle) {
+                send("head-angle", "angle", angle);
+            }
+        }, new java.util.Random(), loadMoods());
+        idle.setLevel(io.getSharedPreferences("settings", 0).getString("liveliness", IdlePersonality.DEFAULT_LEVEL));
         this.lights = new Lights(robot, new Lights.Output() {
             @Override
             public void led(int r, int b, int y, int g) {
@@ -164,7 +182,47 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 + "\nplaces: " + places.names().size() + ", R2 is at " + places.location()
                 + (teaching.isEmpty() ? "" : ", teaching " + teaching)
                 + "\nwatch-with-me: " + watchLine()
+                + "\n" + idle.status()
                 + "\n" + ha.status();
+    }
+
+    // ---- liveliness -----------------------------------------------------------------------
+
+    /** How lively R2 is on his own: "off", "quiet", "chatty" or "full" (IdlePersonality.LEVELS). */
+    String liveliness() {
+        return idle.level();
+    }
+
+    /** Sets and keeps the liveliness level (anything that isn't a level means the default, "quiet"). */
+    void setLiveliness(String level) {
+        String l = IdlePersonality.normalize(level);
+        io.getSharedPreferences("settings", 0).edit().putString("liveliness", l).apply();
+        idle.setLevel(l);
+        Log.i(TAG, "liveliness " + l);
+        robot.changed(); // reports the settings to the agent and Home Assistant
+    }
+
+    /** Mood banks from assets/moods.json if the build has one, else the factory sounds whose use is known. */
+    private java.util.Map<String, int[]> loadMoods() {
+        java.util.Set<Integer> playable = sounds.numbers();
+        String json = null;
+        try {
+            java.io.InputStream in = io.getAssets().open("moods.json");
+            java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
+            in.close();
+            json = b.toString("UTF-8");
+        } catch (Exception ignored) {
+            // optional
+        }
+        java.util.Map<String, int[]> moods = json == null ? null : IdlePersonality.parseMoods(json, playable);
+        if (moods == null || moods.isEmpty()) {
+            if (json != null) Log.w(TAG, "assets/moods.json has no playable sounds, using the default moods");
+            moods = IdlePersonality.parseMoods(IdlePersonality.DEFAULT_MOODS, playable);
+        }
+        return moods;
     }
 
     /** Called each time the bridge connection to the agent is (re)established. */
@@ -198,7 +256,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         try {
             io.send(new JSONObject().put("agent", "settings").put("volume", sounds.volume()).put("muted", sounds.muted())
                     .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
-                    .put("assist", assist.status()));
+                    .put("assist", assist.status()).put("liveliness", idle.level()));
         } catch (Exception ignored) {
         }
     }
@@ -330,6 +388,12 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "face-on":
             case "face-off":
                 robot.setFlag("face_detection", name.endsWith("on"));
+                return;
+            case "liveliness-off":
+            case "liveliness-quiet":
+            case "liveliness-chatty":
+            case "liveliness-full":
+                setLiveliness(name.substring("liveliness-".length()));
                 return;
             case "phone-app-on":
             case "phone-app-off": {
@@ -1033,8 +1097,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     } catch (InterruptedException ignored) {
                     }
                     long now = System.currentTimeMillis();
-                    if (robot.mode == Robot.READY && now - lastActivity > SLEEP_AFTER_MS) {
-                        Log.i(TAG, "sleeping after " + SLEEP_AFTER_MS / 1000 + " s idle");
+                    long sleepAfter = "full".equals(liveliness()) ? SLEEP_AFTER_FULL_MS : SLEEP_AFTER_MS;
+                    if (robot.mode == Robot.READY && now - lastActivity > sleepAfter) {
+                        Log.i(TAG, "sleeping after " + sleepAfter / 1000 + " s idle");
                         robot.setMode(Robot.SLEEP);
                         lights.refresh();
                     }
@@ -1053,12 +1118,18 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     watch.tick(android.os.SystemClock.elapsedRealtime());
                     if (watch.active()) lastActivity = now; // watching a film together: stay awake
                     voice.setEnabled(robot.voiceRecognition());
+                    // Idle chatter only while awake and nothing else is going on (it doesn't keep R2 awake).
+                    boolean idleNow = robot.mode == Robot.READY && "idle".equals(seq.running()) && !driveSounds
+                            && now - lastManual > 5_000 && !dlna.playing() && !assist.speaking()
+                            && robot.assistState == Assist.IDLE && !robot.listening && !face.tracking() && !watch.active();
+                    idle.tick(now, idleNow, sounds.isPlaying());
                     if (robot.mode == Robot.PAIR && now > pairUntil) {
                         Log.i(TAG, "pairing mode ended");
                         stopPairing();
                     }
                     // Factory: while driving straight, a droid sound every other 2 s beat, alternating two sounds.
-                    if (driveSounds && now - lastStraightMove > 1000) driveSounds = false;
+                    // Activity "off" keeps them quiet.
+                    if (driveSounds && (now - lastStraightMove > 1000 || "off".equals(liveliness()))) driveSounds = false;
                     if (driveSounds && now >= nextDriveSound) {
                         if (drivePhase == 0) sounds.play(S_SING, true);
                         else if (drivePhase == 2) sounds.play(S_REPLY, true);
@@ -1267,6 +1338,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                             .put("action", seq.running()).put("error", robot.error).put("location", places.location())
                             .put("muted", sounds.muted()).put("volume", sounds.volume())
                             .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
+                            .put("liveliness", liveliness())
                             .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION)
                             .put("watch", watch.status(android.os.SystemClock.elapsedRealtime()));
                 } catch (Exception ignored) {
@@ -1433,6 +1505,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     public void drive(int power, int angle) {
         seq.cancel();
         moved(power, angle);
+        lastManual = System.currentTimeMillis();
         try {
             io.send(new JSONObject().put("cmd", "move").put("power", power).put("angle", angle));
         } catch (Exception ignored) {
@@ -1447,6 +1520,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     @Override
     public void head(int angle) {
         seq.cancel();
+        lastManual = System.currentTimeMillis();
         send("head-angle", "angle", angle);
     }
 

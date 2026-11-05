@@ -48,7 +48,7 @@ robot's buttons, the phone app, the web page and `/action`:
 [routines/shake-head.json](routines/shake-head.json) is the built-in shake-head written as a routine.
 
 The other action names (`stop`, `patrol`, `pair`, `mute`, `unmute`, `voice-on`/`-off`, `face-on`/`-off`,
-`phone-app-on`/`-off`) are reserved and can't be used for routines.
+`phone-app-on`/`-off`, `liveliness-off`/`-quiet`/`-chatty`/`-full`) are reserved and can't be used for routines.
 
 ## Format
 
