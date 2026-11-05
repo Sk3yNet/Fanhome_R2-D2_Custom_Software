@@ -30,6 +30,8 @@
   #camBtn { width:100%; }
   select, input[type=text] { flex:1; padding:8px; border-radius:8px; border:1px solid var(--line); background:#0b0e12; color:var(--text); min-width:0; }
   .hint { color:var(--dim); font-size:13px; margin:6px 0; }
+  #subtitle { margin:10px 0 0; padding:10px 12px; border-left:3px solid var(--accent); border-radius:6px; background:#0b0e12; font-size:16px; overflow-wrap:anywhere; }
+  #subtitle small { display:block; color:var(--dim); font-size:12px; margin-bottom:2px; }
   .stack > * { margin-top:8px; }
   .switches { display:grid; gap:10px; margin-top:12px; }
   .sw { display:flex; align-items:center; gap:10px; cursor:pointer; }
@@ -83,6 +85,7 @@
       </div>
       <div class="stat"><i class="led" id="mov"></i><span>moving</span></div>
     </div>
+    <p id="subtitle" aria-live="polite" hidden><small id="subtitleWho"></small><span id="subtitleText"></span></p>
   </section>
 
   <section>
@@ -132,6 +135,7 @@
       <label class="sw"><input type="checkbox" id="swFace" data-on="face-on" data-off="face-off"><span></span>Face tracking</label>
       <label class="sw"><input type="checkbox" id="swReact" data-on="reactions-on" data-off="reactions-off"><span></span>Sound reactions</label>
       <label class="sw"><input type="checkbox" id="swChirps" data-on="chirps-on" data-off="chirps-off"><span></span>New beeps each time</label>
+      <label class="sw"><input type="checkbox" id="swBeeps" data-on="beeps-on" data-off="beeps-off"><span></span>Answer in beeps</label>
     </div>
   </section>
 
@@ -215,7 +219,8 @@ for (const a of ACTIONS) {
 }
 
 let volTouched = 0; // the controls follow /status, except right after you change them
-const SWITCHES = { swSound: s => s.muted == null ? null : !s.muted, swVoice: s => s.voice, swFace: s => s.face_tracking, swChirps: s => s.chirps, swReact: s => s.sound_reactions };
+const SWITCHES = { swSound: s => s.muted == null ? null : !s.muted, swVoice: s => s.voice, swFace: s => s.face_tracking, swChirps: s => s.chirps, swReact: s => s.sound_reactions,
+  swBeeps: s => s.assist_reply == null ? null : s.assist_reply === "beeps" };
 for (const id in SWITCHES) {
   $(id).disabled = true; // until R2 reports the setting
   $(id).onchange = e => {
@@ -287,6 +292,13 @@ async function refresh() {
         + (s.last_routine ? " · last: " + s.last_routine : "");
     }
     if (s.liveliness != null && Date.now() - liveTouched > 3000) showLiveliness(s.liveliness);
+    // Subtitles: what R2 answered through Home Assistant, for 30 s (the translation if he beeped it).
+    const fresh = s.subtitle && s.subtitle_s_ago != null && s.subtitle_s_ago < 30;
+    $("subtitle").hidden = !fresh;
+    if (fresh) {
+      $("subtitleWho").textContent = s.subtitle_beeps ? "R2 beeps (translated):" : "R2 says:";
+      $("subtitleText").textContent = s.subtitle;
+    }
     if (s.volume != null && Date.now() - volTouched > 3000) {
       $("vol").value = s.volume;
       $("volOut").textContent = s.muted ? "muted" : s.volume + "%";

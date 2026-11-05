@@ -82,6 +82,7 @@
 #   assist <off|robot|ha>    Home Assistant voice pipeline (docs/home-assistant-voice.md): off, wake word on the
 #                            robot ("hey R2-D2", then the request goes to Home Assistant), or wake word in Home Assistant
 #   assist-only [ip]         accept the voice connection only from this address (Home Assistant); no ip: anyone on R2's subnet
+#   assist-reply <voice|beeps>  answer in the pipeline's voice, or in droid beeps with the text as subtitles
 #   reboot | shutdown
 #   switch-source <owner/repo | folder> [-Tag v1.2.3] [-Yes]
 #                            move the robot to builds signed with another key (another fork's releases, or your
@@ -295,7 +296,7 @@ switch ($Command) {
     'status'       { Call GET /status | ConvertTo-Json -Depth 5 }
     'log'          { Call GET /log }
     'log-previous' { Call GET '/log?previous=1' }
-    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized chirp lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty liveliness-full chirps-on chirps-off react-clap react-double-clap react-loud reactions-on reactions-off' -split ' ' }
+    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized chirp lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty liveliness-full chirps-on chirps-off beeps-on beeps-off react-clap react-double-clap react-loud reactions-on reactions-off' -split ' ' }
     'action'       { if (-not $Arg) { throw 'usage: r2.ps1 action <name>  (see: r2.ps1 actions)' }; Call POST "/action?name=$([uri]::EscapeDataString("$Arg"))" }
     'chirp'        {
         $moods = 'random', 'ack', 'happy', 'excited', 'question', 'sad', 'worried', 'chatter'
@@ -511,6 +512,10 @@ switch ($Command) {
         Call POST "/assist?mode=$Arg"
     }
     'assist-only'  { Call POST "/assist?host=$([uri]::EscapeDataString("$Arg"))" }
+    'assist-reply' {
+        if ($Arg -notin 'voice', 'beeps') { throw 'usage: r2.ps1 assist-reply <voice|beeps>' }
+        Call POST "/action?name=$(if ($Arg -eq 'beeps') { 'beeps-on' } else { 'beeps-off' })"
+    }
     'reboot'       { Call POST /reboot }
     'shutdown'     { Call POST /shutdown }
     'sim-on'       { Call POST '/sim?on=1' }

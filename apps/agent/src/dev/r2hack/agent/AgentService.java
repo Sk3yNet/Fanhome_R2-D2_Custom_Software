@@ -903,6 +903,13 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             if (set.has("chirps")) s.put("chirps", set.optBoolean("chirps"));
             s.put("assist", set.optString("assist"));
             s.put("liveliness", set.optString("liveliness", "quiet"));
+            s.put("assist_reply", set.optString("assist_reply", "voice"));
+            long at = set.optLong("subtitle_at");
+            if (at > 0) { // R2's last answer through Home Assistant, for the web page's subtitles
+                s.put("subtitle", set.optString("subtitle"));
+                s.put("subtitle_beeps", set.optBoolean("subtitle_beeps"));
+                s.put("subtitle_s_ago", Math.max(0, (System.currentTimeMillis() - at) / 1000));
+            }
         }
         JSONObject run = running;
         if (run != null && supervisor.mainAlive()) {

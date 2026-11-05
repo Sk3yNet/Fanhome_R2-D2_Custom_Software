@@ -32,6 +32,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             "liveliness-off", "liveliness-quiet", "liveliness-chatty", "liveliness-full",
             "react-clap", "react-double-clap", "react-loud", "reactions-on", "reactions-off",
             "chirps-on", "chirps-off",
+            "beeps-on", "beeps-off",
     };
 
     /**
@@ -62,6 +63,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private static final long REACT_GAP_MS = 5_000;            // at most one sound reaction this often
     private static final long ECHO_MS = 700;                   // R2's own noise dies away before he listens again
     private static final double VERY_LOUD_DB = -6;             // "quiet" liveliness reacts only to sounds this loud
+    // Replies in beeps (Assist) with chirps-off: the chatty factory sounds, a short gap between them.
+    private static final int[] BEEP_SOUNDS = {S_REPLY, S_SING, S_ACK, S_WAKE};
+    private static final long BEEP_GAP_MS = 150, BEEP_MAX_MS = 5_000, BEEP_CHIRP_MAX_MS = 10_000;
 
     private final BrainService io;
     private final Sounds sounds;
@@ -88,6 +92,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private volatile JSONObject teachExtra = new JSONObject(); // spoken names and area for a new place
     private final CueStore cues;
     private final WatchWithMe watch;
+    private volatile String subtitle = "";      // what R2 last answered through Home Assistant
+    private volatile long subtitleAt;
+    private volatile boolean subtitleBeeps;     // ...in beeps (the text is the translation)
 
     private volatile long lastActivity = System.currentTimeMillis();
     private volatile long pairUntil;
@@ -159,7 +166,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         });
         this.voice = new Voice(io, this);
         voice.setExtraPhrases(Places.phrases(places.list()));
-        this.assist = new Assist(io, this);
+        this.assist = new Assist(io, this, beeper());
         voice.setStream(assist);
         this.ears = new SoundReactions(new SoundReactions.Listener() {
             @Override
@@ -292,7 +299,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         try {
             io.send(new JSONObject().put("agent", "settings").put("volume", sounds.volume()).put("muted", sounds.muted())
                     .put("chirps", sounds.chirps()).put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
-                    .put("assist", assist.status()).put("liveliness", idle.level())
+                    .put("assist", assist.status()).put("assist_reply", assist.beepReplies() ? "beeps" : "voice")
+                    .put("subtitle", subtitle).put("subtitle_at", subtitleAt).put("subtitle_beeps", subtitleBeeps)
+                    .put("liveliness", idle.level())
                     .put("reactions", reactionsOn()));
         } catch (Exception ignored) {
         }
@@ -475,6 +484,11 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "reactions-off":
                 io.getSharedPreferences("settings", 0).edit().putBoolean("sound_reactions", name.endsWith("on")).apply();
                 reportSettings();
+                if (plugins != null) plugins.event(Plugin.EVENT_STATE, null);
+                return;
+            case "beeps-on": // Home Assistant voice replies: droid beeps with subtitles, or the pipeline's voice
+            case "beeps-off":
+                assist.setBeepReplies(name.endsWith("on"));
                 if (plugins != null) plugins.event(Plugin.EVENT_STATE, null);
                 return;
             case "phone-app-on":
@@ -1543,6 +1557,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                         .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
                         .put("reactions", reactionsOn())
                         .put("liveliness", liveliness())
+                        .put("beeps", assist.beepReplies()).put("reply", subtitle)
                         .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION)
                         .put("watch", watch.status(android.os.SystemClock.elapsedRealtime()));
             } catch (Exception ignored) {
@@ -1693,6 +1708,50 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     @Override
     public boolean playingSound() {
         return sounds.isPlaying();
+    }
+
+    @Override
+    public void onAssistReply(String text, boolean beeps) {
+        subtitle = text;
+        subtitleAt = System.currentTimeMillis();
+        subtitleBeeps = beeps;
+        Log.i(TAG, (beeps ? "beeps: " : "says: ") + text);
+        reportSettings();
+        if (plugins != null) plugins.event(Plugin.EVENT_STATE, null);
+    }
+
+    /**
+     * Replies in beeps: generated chirps shaped like the answer, or (with chirps-off, or if they can't play)
+     * a few factory droid sounds, more for a longer answer.
+     */
+    private Assist.Beeper beeper() {
+        return new Assist.Beeper() {
+            private final java.util.Random rnd = new java.util.Random();
+            private volatile boolean stopped;
+
+            @Override
+            public void say(String text) throws InterruptedException {
+                stopped = false;
+                if (sounds.chirps() && sounds.speak(text, null)) {
+                    // Generated chirps shaped like the sentence (docs/chirps.md), at most 8 s.
+                    long end = System.currentTimeMillis() + BEEP_CHIRP_MAX_MS;
+                    while (!stopped && sounds.isPlaying() && System.currentTimeMillis() < end) Thread.sleep(50);
+                    return;
+                }
+                for (int n : Beeps.plan(text, BEEP_SOUNDS, rnd)) {
+                    if (stopped) return;
+                    if (!sounds.playAndWait(n, BEEP_MAX_MS)) return; // muted, or the sounds aren't there
+                    if (stopped) return;
+                    Thread.sleep(BEEP_GAP_MS);
+                }
+            }
+
+            @Override
+            public void stop() {
+                stopped = true;
+                sounds.stop();
+            }
+        };
     }
 
     @Override
