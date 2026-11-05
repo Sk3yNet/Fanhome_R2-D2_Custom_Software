@@ -251,6 +251,20 @@ class R2CliTest(unittest.TestCase):
         self.assertTrue(out.startswith('R2 is at: home\n'))
         self.assertIn('kitchen', out)
 
+    def test_chirp(self):
+        self.run_cli('chirp')
+        self.assertEqual(self.last()['path'], '/chirp?mood=random')
+        self.run_cli('chirp', 'sad')
+        self.assertEqual(self.last()['path'], '/chirp?mood=sad')
+        self.run_cli('chirp', 'Hello there, master Luke')
+        self.assertEqual((self.last()['path'], self.last()['body']), ('/chirp', b'Hello there, master Luke'))
+
+    def test_switch_source_checks_its_arguments_first(self):
+        self.assertEqual(self.run_cli('restore-settings', 'no-such-folder')[0], 1)
+        with self.assertRaises(r2.R2Error):
+            r2.get_source('not a repo!', None)
+        self.assertEqual(FakeAgent.requests, [])
+
     def test_liveliness(self):
         FakeAgent.replies['/status'] = (200, 'application/json', {'liveliness': 'chatty'})
         self.assertEqual(self.run_cli('liveliness')[1], 'chatty\n')

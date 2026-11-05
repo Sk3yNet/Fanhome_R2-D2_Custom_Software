@@ -9,6 +9,8 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   status | log             agent state / agent event log
   log-previous             agent event log from the previous boot (e.g. after a crash or power loss)
   action <name>            run a robot action, e.g. dance, wake, lightsaber, leia (list: actions)
+  chirp [mood|'text']      a newly generated droid chirp: a mood (ack happy excited question sad worried
+                           chatter; default random), or droid sounds shaped like a sentence (docs/chirps.md)
   stop                     emergency stop (the agent stops the robot itself, then cancels the action;
                            with the drive lock on, driving is locked again)
   drive                    drive lock state (docs/drive-lock.md)
@@ -93,6 +95,14 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   trust | trust-add <sha256> | trust-remove <sha256>
                            signing certificates whose APKs R2 installs (its own is always trusted)
   reboot | shutdown
+  switch-source <owner/repo | folder> [--tag v1.2.3] [--yes]
+                           move the robot to builds signed with another key (another fork's releases, or your
+                           own builds in a folder such as apps/out), keeping settings (docs/releases.md).
+                           No argument: show who signed the robot's apps and which source it follows.
+  save-settings [folder]   back up the main app's and the agent's settings to the PC (over root adb)
+  restore-settings <folder> [--agent]
+                           put the main app's settings back from a backup; --agent also the agent's (then reboots)
+  apk-info <file.apk>      an APK's signing certificate (SHA-256) and versionCode, as switch-source reads them
 
 First-time install over adb (USB, or Wi-Fi adb after 'adb'), as tools/install-on-robot.ps1:
   install                  disable the stock app, put R2Agent in /system/priv-app, install R2Main, reboot
@@ -131,13 +141,16 @@ API_PORT = 7700
 ANNOUNCE_PORT = 7702
 
 ACTIONS = ('stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise '
-           'not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair '
+           'not-recognized chirp lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair '
            'phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty '
-           'liveliness-full').split()
+           'liveliness-full chirps-on chirps-off').split()
+CHIRP_MOODS = ('random', 'ack', 'happy', 'excited', 'question', 'sad', 'worried', 'chatter')
 
 
 class R2Error(Exception):
-    pass
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code  # the HTTP status, for errors the agent sent
 
 
 def q(value):
@@ -292,7 +305,7 @@ class Robot:
         except urllib.error.HTTPError as e:
             reply = decode(e.read(), e.headers.get('Content-Type', ''))
             msg = reply.get('error') if isinstance(reply, dict) and reply.get('error') else reply
-            raise R2Error('HTTP %d: %s' % (e.code, msg))
+            raise R2Error('HTTP %d: %s' % (e.code, msg), e.code)
         except urllib.error.URLError as e:
             raise R2Error('cannot reach the robot at %s: %s' % (self.ip, e.reason))
 
@@ -391,6 +404,15 @@ def cmd_drive_enable(robot, a):
     if not m.isdigit():
         raise R2Error('usage: r2.py drive-enable [minutes]')
     show(robot.call('POST', '/drive?enable=1&minutes=' + m))
+
+
+def cmd_chirp(robot, a):
+    if not a.arg:
+        show(robot.call('POST', '/chirp?mood=random'))
+    elif a.arg in CHIRP_MOODS:
+        show(robot.call('POST', '/chirp?mood=' + a.arg))
+    else:
+        show(robot.call('POST', '/chirp', a.arg))  # text: the body, so long sentences fit
 
 
 def cmd_routines(robot, a):
@@ -764,6 +786,404 @@ def cmd_restore(robot, a):
     adb('reboot')
 
 
+# ---- APK certificate and versionCode (apk-info.ps1) ------------------------------------------------
+
+def _der(b, i):
+    """One DER element at b[i]: (tag, content start, content end)."""
+    tag = b[i]
+    n = b[i + 1]
+    i += 2
+    if n & 0x80:
+        k = n & 0x7f
+        n = int.from_bytes(b[i:i + k], 'big')
+        i += k
+    return tag, i, i + n
+
+
+def _der_children(b, start, end):
+    out = []
+    while start < end:
+        tag, s, e = _der(b, start)
+        out.append((tag, start, s, e))
+        start = e
+    return out
+
+
+def _read_apk_entry(apk, match):
+    import re
+    import zipfile
+    with zipfile.ZipFile(apk) as z:
+        for name in z.namelist():
+            if re.match(match, name):
+                return z.read(name)
+    return None
+
+
+def apk_cert(apk):
+    """SHA-256 of the signing certificate, lowercase hex: the same value as apksigner's "Signer #1 certificate
+    SHA-256 digest" and the one in the release notes. Read from the v1 (JAR) signature, which our builds always
+    have because they support Android 4.4."""
+    p7 = _read_apk_entry(apk, r'^META-INF/[^/]+\.(RSA|DSA|EC)$')
+    if not p7:
+        raise R2Error('%s has no v1 (JAR) signature' % apk)
+    # ContentInfo SEQUENCE { contentType OID, [0] { SignedData SEQUENCE { version, digestAlgorithms,
+    # encapContentInfo, [0] certificates, ... } } }
+    _, s, e = _der(p7, 0)
+    ci = _der_children(p7, s, e)
+    _, s, e = _der(p7, ci[1][2])
+    for tag, start, cs, ce in _der_children(p7, s, e):
+        if tag == 0xa0:  # certificates [0] IMPLICIT SET OF Certificate: we sign with one key, so the first
+            _, _, cert_end = _der(p7, cs)
+            return hashlib.sha256(p7[cs:cert_end]).hexdigest()
+    raise R2Error('%s: no certificate in its signature' % apk)
+
+
+def apk_version_code(apk):
+    """android:versionCode from the binary AndroidManifest.xml."""
+    import struct
+    b = _read_apk_entry(apk, r'^AndroidManifest\.xml$')
+    if not b:
+        raise R2Error('%s has no AndroidManifest.xml' % apk)
+    u16 = lambda o: struct.unpack_from('<H', b, o)[0]
+    u32 = lambda o: struct.unpack_from('<I', b, o)[0]
+    if u16(0) != 0x0003:
+        raise R2Error('%s: AndroidManifest.xml is not binary XML' % apk)
+    res_ids = []
+    off = u16(2)  # first chunk after the file header
+    while off + 8 <= len(b):
+        ctype, header_size, size = u16(off), u16(off + 2), u32(off + 4)
+        if size < 8:
+            break
+        if ctype == 0x0180:  # resource map: attribute name index -> resource id
+            res_ids = [u32(off + header_size + 4 * i) for i in range((size - header_size) // 4)]
+        elif ctype == 0x0102:  # first start tag: <manifest>
+            ext = off + header_size
+            attr_start, attr_size, attr_count = u16(ext + 8), u16(ext + 10), u16(ext + 12)
+            for i in range(attr_count):
+                at = ext + attr_start + i * attr_size
+                name = u32(at + 4)
+                if name < len(res_ids) and res_ids[name] == 0x0101021b:  # android:versionCode
+                    return struct.unpack_from('<i', b, at + 16)[0]
+            raise R2Error('%s: no versionCode in the manifest' % apk)
+        off += size
+    raise R2Error('%s: manifest tag not found' % apk)
+
+
+def cmd_apk_info(robot, a):
+    apk = need(a.arg, 'apk-info <file.apk>')
+    if not os.path.isfile(apk):
+        raise R2Error('no such file: ' + apk)
+    print('cert %s  versionCode %d' % (apk_cert(apk), apk_version_code(apk)))
+
+
+# ---- switching signers (switch-source, save-settings, restore-settings). Plan: docs/releases.md ----
+
+APPS = {
+    'main': {'pkg': 'dev.r2hack.main', 'apk': 'R2Main.apk', 'dirs': ['shared_prefs', 'files/routines', 'files/cues'],
+             'files': ['files/voice/keywords.txt', 'files/places.json']},
+    'agent': {'pkg': 'dev.r2hack.agent', 'apk': 'R2Agent.apk', 'dirs': ['shared_prefs'], 'files': []},
+}
+SOURCE_FILE = os.path.join(SECRETS, 'robot-source.json')
+
+
+def adb_shell(target, cmd):
+    return [l.rstrip('\r') for l in adb('-s', target, 'shell', cmd).splitlines()]
+
+
+def robot_app(target, name):
+    """Installed app on the robot: APK path, versionCode and Linux uid (from dumpsys, as KitKat has no grep)."""
+    import re
+    pkg = APPS[name]['pkg']
+    paths = [l for l in adb_shell(target, 'pm path ' + pkg) if l.startswith('package:')]
+    if not paths:
+        return None
+    dump = '\n'.join(adb_shell(target, 'dumpsys package ' + pkg))
+    info = {'path': paths[0][8:].strip(), 'version': 0, 'uid': None, 'cert': None}
+    m = re.search(r'versionCode=(\d+)', dump)
+    if m:
+        info['version'] = int(m.group(1))
+    m = re.search(r'userId=(\d+)', dump)
+    if m:
+        info['uid'] = m.group(1)
+    return info
+
+
+def robot_signer(target, name, folder):
+    """Pulls the installed APK to folder and reads its certificate there."""
+    info = robot_app(target, name)
+    if not info:
+        return None
+    local = os.path.join(folder, APPS[name]['apk'])
+    adb('-s', target, 'pull', info['path'], local)
+    if not os.path.isfile(local):
+        raise R2Error('could not copy %s from the robot' % info['path'])
+    info['cert'] = apk_cert(local)
+    return info
+
+
+def save_app_settings(target, name, folder):
+    """Copies an app's settings (shared_prefs and the files listed in APPS) to folder/<app>/. Returns the count."""
+    import re
+    data = '/data/data/' + APPS[name]['pkg']
+    rels = list(APPS[name]['files'])
+    for d in APPS[name]['dirs']:
+        # Entries are plain names; an error line ("...: No such file or directory") has a colon or slash.
+        # *.bak is a half-written preferences file, which Android would restore over the real one.
+        rels += ['%s/%s' % (d, e) for e in adb_shell(target, 'ls %s/%s' % (data, d))
+                 if e and not re.search(r'[:/]', e) and not e.endswith('.bak')]
+    n = 0
+    for rel in rels:
+        if '%s/%s' % (data, rel) not in adb_shell(target, "ls '%s/%s'" % (data, rel)):
+            continue  # optional file not there
+        local = os.path.join(folder, name, *rel.split('/'))
+        os.makedirs(os.path.dirname(local), exist_ok=True)
+        adb('-s', target, 'pull', '%s/%s' % (data, rel), local)
+        if not os.path.isfile(local):
+            raise R2Error('could not copy %s/%s' % (data, rel))
+        n += 1
+    return n
+
+
+def restore_app_settings(target, name, folder):
+    """Puts saved settings back and gives them to the app's current uid (a reinstall gets a new one).
+    The app must not be running, or it may write its old settings over them."""
+    base = os.path.join(folder, name)
+    if not os.path.isdir(base):
+        return 0
+    info = robot_app(target, name)
+    if not info or not info['uid']:
+        raise R2Error('%s is not installed' % APPS[name]['pkg'])
+    data = '/data/data/' + APPS[name]['pkg']
+    uid = info['uid']
+    cmds, dirs, files = [], set(), 0
+    for dirpath, _, names in os.walk(base):
+        for fn in names:
+            rel = os.path.relpath(os.path.join(dirpath, fn), base).replace(os.sep, '/')
+            adb('-s', target, 'push', os.path.join(dirpath, fn), '%s/%s' % (data, rel))
+            cmds.append("chown %s:%s '%s/%s'; chmod 660 '%s/%s'" % (uid, uid, data, rel, data, rel))
+            files += 1
+            parts = rel.split('/')
+            for i in range(1, len(parts)):
+                dirs.add('/'.join(parts[:i]))
+    for d in sorted(dirs):
+        cmds.append("chown %s:%s '%s/%s'; chmod 771 '%s/%s'" % (uid, uid, data, d, data, d))
+    for i in range(0, len(cmds), 10):  # a few at a time: adb shell command lines are short on KitKat
+        adb_shell(target, '; '.join(cmds[i:i + 10]))
+    adb_shell(target, 'restorecon -R ' + data)
+    return files
+
+
+def token_works(robot):
+    """False when the agent no longer accepts our key (it lost its data); raises on other errors."""
+    try:
+        robot.call('GET', '/status')
+        return True
+    except R2Error as e:
+        if e.code in (401, 403):
+            return False
+        raise
+
+
+def wait_robot(robot, seconds):
+    deadline = time.monotonic() + seconds
+    time.sleep(20)
+    while time.monotonic() < deadline:
+        if ping(robot.ip, timeout=3) is not None:
+            robot._clock_offset = None  # it rebooted: ask for its clock again
+            return True
+        time.sleep(5)
+    return False
+
+
+def http_get(url, timeout=30, accept=None):
+    headers = {'User-Agent': 'r2-switch-source'}
+    if accept:
+        headers['Accept'] = accept
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as resp:
+        return resp.read()
+
+
+def get_source(spec, tag):
+    """Where the new APKs come from: a folder with R2Agent.apk and R2Main.apk, or the latest (or --tag) GitHub
+    release of owner/repo, downloaded to apps/out/releases/ and checked against its SHA256SUMS."""
+    import re
+    if os.path.isdir(spec):
+        d = os.path.abspath(spec)
+        return {'dir': d, 'label': d, 'repo': None, 'tag': None, 'note_cert': None}
+    if not re.match(r'^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$', spec):
+        raise R2Error('not a folder or owner/repo: ' + spec)
+    api = 'https://api.github.com/repos/%s/releases/%s' % (spec, 'tags/' + tag if tag else 'latest')
+    try:
+        rel = json.loads(http_get(api, accept='application/vnd.github+json').decode('utf-8'))
+    except Exception as e:
+        raise R2Error('no release found at %s (%s)' % (api, e))
+    d = os.path.join(ROOT, 'apps', 'out', 'releases', '%s-%s' % (spec.replace('/', '-'), rel['tag_name']))
+    os.makedirs(d, exist_ok=True)
+    for name in ('R2Agent.apk', 'R2Main.apk', 'SHA256SUMS'):
+        asset = next((x for x in rel.get('assets') or [] if x.get('name') == name), None)
+        if not asset:
+            raise R2Error('release %s of %s has no %s' % (rel['tag_name'], spec, name))
+        print('downloading %s from %s %s' % (name, spec, rel['tag_name']))
+        with open(os.path.join(d, name), 'wb') as f:
+            f.write(http_get(asset['browser_download_url'], timeout=300))
+    with open(os.path.join(d, 'SHA256SUMS'), encoding='utf-8') as f:
+        for line in f:
+            m = re.match(r'^([0-9a-fA-F]{64})\s+\*?(\S+)$', line.strip())
+            if not m:
+                continue
+            with open(os.path.join(d, m.group(2)), 'rb') as g:
+                if hashlib.sha256(g.read()).hexdigest() != m.group(1).lower():
+                    raise R2Error('%s does not match SHA256SUMS: the download is damaged or was changed' % m.group(2))
+    m = re.search(r'certificate SHA-256:\s*`([0-9a-f]{64})`', rel.get('body') or '')
+    return {'dir': d, 'label': '%s %s' % (spec, rel['tag_name']), 'repo': spec, 'tag': rel['tag_name'],
+            'note_cert': m.group(1) if m else None}
+
+
+def stamp():
+    return time.strftime('%Y%m%d-%H%M%S')
+
+
+def cmd_save_settings(robot, a):
+    folder = a.arg or os.path.join(SECRETS, 'settings-' + stamp())
+    target = connect_adb(robot)
+    for name in ('agent', 'main'):
+        print('%s: %d files' % (name, save_app_settings(target, name, folder)))
+    print('saved to %s (it holds the API token and Wi-Fi and MQTT passwords: keep it private)' % folder)
+
+
+def cmd_restore_settings(robot, a):
+    if not a.arg or not os.path.isdir(a.arg):
+        raise R2Error('usage: r2.py restore-settings <folder> [--agent]')
+    target = connect_adb(robot)
+    robot.call('POST', '/safe-mode?on=1')  # stops the main app so it can't overwrite what comes back
+    print('main: %d files restored' % restore_app_settings(target, 'main', a.arg))
+    if a.agent:
+        print('agent: %d files restored, rebooting (the agent takes its token from the backup)'
+              % restore_app_settings(target, 'agent', a.arg))
+        adb('-s', target, 'reboot')
+    else:
+        robot.call('POST', '/safe-mode?on=0')
+        print('main app restarted')
+
+
+def cmd_switch_source(robot, a):
+    target = connect_adb(robot, 60)
+    backup = os.path.join(SECRETS, 'switch-backup-' + stamp())
+    os.makedirs(backup, exist_ok=True)
+    old = {name: robot_signer(target, name, backup) for name in ('agent', 'main')}
+    recorded = None
+    if os.path.isfile(SOURCE_FILE):
+        with open(SOURCE_FILE, encoding='utf-8-sig') as f:
+            recorded = json.load(f)
+    if not a.arg:
+        shutil.rmtree(backup)
+        for name in ('agent', 'main'):
+            if old[name]:
+                print('%-6s signed by %s  (versionCode %s)' % (name, old[name]['cert'], old[name]['version']))
+            else:
+                print('%-6s not installed' % name)
+        print('source: %s, switched %s' % (recorded.get('source'), recorded.get('switched')) if recorded
+              else 'source: not recorded (never switched from this PC)')
+        return
+
+    src = get_source(a.arg, a.tag)
+    new = {}
+    for name in ('agent', 'main'):
+        f = os.path.join(src['dir'], APPS[name]['apk'])
+        if not os.path.isfile(f):
+            raise R2Error('missing ' + f)
+        new[name] = {'file': f, 'cert': apk_cert(f), 'version': apk_version_code(f)}
+    if new['agent']['cert'] != new['main']['cert']:
+        raise R2Error('the two APKs in %s are signed with different keys' % src['label'])
+    if src['note_cert'] and src['note_cert'] != new['main']['cert']:
+        raise R2Error('the release notes name certificate %s, but the APKs are signed with %s'
+                      % (src['note_cert'], new['main']['cert']))
+    change = {name: not old[name] or old[name]['cert'] != new[name]['cert'] for name in ('agent', 'main')}
+    if not old['agent']:
+        raise R2Error('the agent is not installed: use r2.py install first')
+    # The agent lives in /system. When there is also an over-the-air update in /data (push-agent), Android
+    # uses the /system copy at boot only if it is at least as new; otherwise the switch would silently not happen.
+    if change['agent'] and not old['agent']['path'].startswith('/system/') \
+            and new['agent']['version'] < old['agent']['version']:
+        raise R2Error("the new agent (versionCode %s) is older than the robot's over-the-air update (%s). "
+                      'Pick a newer release.' % (new['agent']['version'], old['agent']['version']))
+
+    print('From: %s' % (recorded.get('source') if recorded else 'current builds'))
+    print('  agent  %s' % old['agent']['cert'])
+    print('  main   %s' % (old['main']['cert'] if old['main'] else 'not installed'))
+    print('To:   %s' % src['label'])
+    print('  both   %s' % new['main']['cert'])
+    if not change['agent'] and not change['main']:
+        shutil.rmtree(backup)
+        print('Same signer as on the robot: no switch needed. Update in place with push-main and push-agent.')
+        return
+    print('Changes: %s (reinstalled with the new key; settings are kept)'
+          % ' and '.join(n for n in ('agent', 'main') if change[n]))
+    if not a.yes and input('Compare the certificate with the one the source publishes. Type yes to switch: ').strip() != 'yes':
+        shutil.rmtree(backup)
+        print('cancelled, nothing changed')
+        return
+
+    # 1. Back up. The agent first, so its saved settings don't include the safe mode set next.
+    print('agent settings: %d files' % save_app_settings(target, 'agent', backup))
+    robot.call('POST', '/safe-mode?on=1')  # main app stopped and not relaunched while we work
+    if old['main']:
+        print('main settings: %d files' % save_app_settings(target, 'main', backup))
+    with open(os.path.join(backup, 'switch.json'), 'w', encoding='utf-8') as f:
+        json.dump({'from': recorded, 'to': src['label'], 'backup': backup}, f, indent=2)
+    print('backup with the old APKs: ' + backup)
+
+    # 2. Main app: uninstall (Android refuses an update from another key), install, put settings back.
+    if change['main']:
+        if old['main']:
+            adb_shell(target, 'pm uninstall ' + APPS['main']['pkg'])
+        out = adb('-s', target, 'install', '-r', new['main']['file'])
+        if 'Success' not in out:
+            print('WARNING: main app install failed: ' + out.strip(), file=sys.stderr)
+            if old['main']:
+                adb('-s', target, 'install', '-r', os.path.join(backup, APPS['main']['apk']))
+                restore_app_settings(target, 'main', backup)
+                print('the previous main app and its settings are back')
+            robot.call('POST', '/safe-mode?on=0')
+            raise R2Error('switch stopped; the agent was not changed')
+        print('main app installed, %d settings files restored' % restore_app_settings(target, 'main', backup))
+        # The agent's rollback copy is signed with the old key: drop it. The new build becomes the
+        # rollback copy once it has run through probation.
+        adb_shell(target, 'rm /data/data/%s/files/main-lastgood.apk' % APPS['agent']['pkg'])
+
+    # 3. Agent: replace the /system copy and reboot. Android 4.4 accepts a new certificate for a system app
+    #    at boot ("signature changed; retaining data"), drops an older over-the-air copy, and keeps the data.
+    if change['agent']:
+        adb_shell(target, 'mount -o remount,rw /system')
+        adb('-s', target, 'push', new['agent']['file'], '/system/priv-app/R2Agent.apk')
+        adb_shell(target, 'chmod 644 /system/priv-app/R2Agent.apk; sync; mount -o remount,ro /system')
+        print('agent replaced in /system, rebooting (about a minute)')
+        adb('-s', target, 'reboot')
+        if not wait_robot(robot, 240):
+            raise R2Error('the robot did not come back within 4 minutes. Backup: ' + backup)
+        if not token_works(robot):
+            print('WARNING: The agent no longer accepts the saved key, so it lost its settings in the switch.',
+                  file=sys.stderr)
+            print("To get them back: press the pairing button on R2, run 'r2.py fetch-token', then")
+            print("'r2.py restore-settings %s --agent'. Please report this: docs/releases.md expects the data to stay."
+                  % backup)
+            return
+        target = connect_adb(robot, 30)
+        after = os.path.join(backup, 'after')
+        os.makedirs(after, exist_ok=True)
+        now = robot_signer(target, 'agent', after)
+        if not now or now['cert'] != new['agent']['cert']:
+            raise R2Error('the robot still runs the old agent (%s). Backup: %s' % (now and now['path'], backup))
+        print('agent switched, settings kept')
+    robot.call('POST', '/safe-mode?on=0')
+    os.makedirs(SECRETS, exist_ok=True)
+    with open(SOURCE_FILE, 'w', encoding='utf-8') as f:
+        json.dump({'source': src['label'], 'repo': src['repo'], 'tag': src['tag'], 'cert': new['main']['cert'],
+                   'switched': time.strftime('%Y-%m-%dT%H:%M:%S')}, f, indent=2)
+    print('Done: the robot now runs %s. From now on update it with push-main and push-agent from this source.'
+          % src['label'])
+
+
 # ---- serial console (capture-serial.ps1, serial-cmd.ps1) -------------------------------------------
 
 def open_serial(a):
@@ -839,6 +1259,7 @@ COMMANDS = {
     'log': simple('GET', '/log'),
     'log-previous': simple('GET', '/log?previous=1'),
     'actions': lambda robot, a: print('\n'.join(ACTIONS)),
+    'chirp': cmd_chirp,
     'action': with_name('/action?name=', 'action <name>  (see: r2.py actions)'),
     'stop': simple('POST', '/stop'),
     'drive': simple('GET', '/drive'),
@@ -922,6 +1343,10 @@ COMMANDS = {
     'sim-on': simple('POST', '/sim?on=1'),
     'sim-off': simple('POST', '/sim?on=0'),
     'sim-button': lambda robot, a: show(robot.call('POST', '/sim/button?value=' + q(need(a.arg, 'sim-button <n>')))),
+    'switch-source': cmd_switch_source,
+    'save-settings': cmd_save_settings,
+    'restore-settings': cmd_restore_settings,
+    'apk-info': cmd_apk_info,
     'install': cmd_install,
     'refresh-agent': cmd_refresh_agent,
     'restore': cmd_restore,
@@ -941,6 +1366,9 @@ def parse(argv):
     p.add_argument('--plain', action='store_true', help='client-add: a plain token (Home Assistant)')
     p.add_argument('--lines', '-n', type=int, default=500, help='logcat/dmesg: how many lines (default 500)')
     p.add_argument('--at', help='watch-start/watch-resume: film position, e.g. 1:02:03')
+    p.add_argument('--tag', help='switch-source: a release tag instead of the latest release')
+    p.add_argument('--yes', action='store_true', help='switch-source: do not ask before switching')
+    p.add_argument('--agent', action='store_true', help="restore-settings: also restore the agent's settings")
     p.add_argument('--port', help='serial-*: serial port, e.g. COM4 or /dev/ttyUSB0')
     p.add_argument('--baud', type=int, default=115200, help='serial-*: baud rate (default 115200)')
     p.add_argument('--seconds', type=int, default=180, help='serial-capture: how long (default 180)')
