@@ -251,6 +251,20 @@ class R2CliTest(unittest.TestCase):
         self.assertTrue(out.startswith('R2 is at: home\n'))
         self.assertIn('kitchen', out)
 
+    def test_harden_on_confirms_only_if_the_api_still_answers(self):
+        with mock.patch.object(r2.time, 'sleep'):
+            code, _, err = self.run_cli('harden-on')
+        self.assertEqual(code, 0, err)
+        paths = [r['path'] for r in FakeAgent.requests if r['path'] != '/ping']
+        self.assertEqual(paths, ['/hardening?firewall=1&devices=1&bluetooth=1', '/status', '/hardening/confirm'])
+        FakeAgent.requests = []
+        FakeAgent.replies['/status'] = (500, 'application/json', {'error': 'x'})
+        with mock.patch.object(r2.time, 'sleep'):
+            code, _, err = self.run_cli('harden-on')
+        self.assertEqual(code, 1)
+        self.assertIn('NOT confirmed', err)
+        self.assertNotIn('/hardening/confirm', [r['path'] for r in FakeAgent.requests])
+
     def test_chirp(self):
         self.run_cli('chirp')
         self.assertEqual(self.last()['path'], '/chirp?mood=random')

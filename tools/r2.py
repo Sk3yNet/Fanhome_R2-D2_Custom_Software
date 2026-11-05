@@ -54,6 +54,13 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   adb-always               keep adb over Wi-Fi on, also after reboots (trusted networks only)
   allow-subnets [list]     also accept API clients from these subnets, e.g. 10.0.20.0/24,10.0.30.5
                            (empty string '': only the robot's own subnet; no argument: show the list)
+  hardening                boot hardening report: firewall, device permissions, Bluetooth, and what listens
+                           on the network (docs/hardening.md)
+  harden-on                switch on the firewall (as a 5-minute trial), tighten device permissions and keep
+                           Bluetooth off, then check the API still answers and confirm the firewall
+  harden-trial             firewall trial only, without confirming (it removes itself after 5 minutes)
+  harden-confirm           keep the firewall in a trial, also after reboots
+  harden-off               undo all of it (firewall, device permissions, Bluetooth)
   mqtt [host[:port]] [--user name]
                            Home Assistant over MQTT: set the broker (asks for the password with --user),
                            'off' switches it off, no argument shows the settings and connection state
@@ -555,6 +562,18 @@ def cmd_allow_subnets(robot, a):
         show(robot.call('POST', '/clients/allow?subnets=' + q(a.arg)))
     else:
         show(robot.call('GET', '/clients/allow').get('extra_subnets'))
+
+
+def cmd_harden_on(robot, a):
+    show(robot.call('POST', '/hardening?firewall=1&devices=1&bluetooth=1'))
+    time.sleep(2)
+    # A new connection through the firewall: if it gets through, the firewall can stay.
+    try:
+        robot.call('GET', '/status', timeout=10)
+    except R2Error as e:
+        raise R2Error('The API stopped answering with the firewall on, so it was NOT confirmed; '
+                      'it removes itself within 5 minutes. (%s)' % e)
+    show(robot.call('POST', '/hardening/confirm'))
 
 
 def cmd_mqtt(robot, a):
@@ -1304,6 +1323,11 @@ COMMANDS = {
     'adb-off': simple('POST', '/adb?on=0'),
     'adb-always': simple('POST', '/adb?always=1'),
     'allow-subnets': cmd_allow_subnets,
+    'hardening': simple('GET', '/hardening'),
+    'harden-trial': simple('POST', '/hardening?firewall=1'),
+    'harden-confirm': simple('POST', '/hardening/confirm'),
+    'harden-off': simple('POST', '/hardening?all=0'),
+    'harden-on': cmd_harden_on,
     'mqtt': cmd_mqtt,
     'push-main': cmd_push,
     'push-agent': cmd_push,
