@@ -27,6 +27,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             "lightsaber", "arm", "short-lcd", "long-lcd", "flash-front", "flash-back", "leia", "luke",
             "mute", "unmute", "pair", "phone-app-on", "phone-app-off", "voice-on", "voice-off", "face-on", "face-off",
             "liveliness-off", "liveliness-quiet", "liveliness-chatty", "liveliness-full",
+            "react-clap", "react-double-clap", "react-loud", "reactions-on", "reactions-off",
     };
 
     /**
@@ -53,6 +54,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private static final long SLEEP_AFTER_MS = 180_000;        // factory: sleep after 3 minutes idle
     private static final long PAIR_MS = 30_000;
     private static final long DRIVE_SOUND_MS = 2_000;          // droid sounds while driving straight
+    private static final long REACT_GAP_MS = 5_000;            // at most one sound reaction this often
+    private static final long ECHO_MS = 700;                   // R2's own noise dies away before he listens again
+    private static final double VERY_LOUD_DB = -6;             // "quiet" liveliness reacts only to sounds this loud
 
     private final BrainService io;
     private final Sounds sounds;
@@ -68,6 +72,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private final HomeAssistant ha;
     private final RoutineStore routines;
     private final IdlePersonality idle;
+    private final SoundReactions ears;
+    private volatile long lastReaction, ownNoiseUntil;
     private volatile String lastRoutine = "";   // how the last routine ended, for listings and /status
     private final CueStore cues;
     private final WatchWithMe watch;
@@ -140,6 +146,23 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         this.voice = new Voice(io, this);
         this.assist = new Assist(io, this);
         voice.setStream(assist);
+        this.ears = new SoundReactions(new SoundReactions.Listener() {
+            @Override
+            public void onSound(String kind, double peakDb) {
+                onLoudSound(kind, peakDb);
+            }
+        });
+        voice.setEar(new Voice.Ear() {
+            @Override
+            public boolean wantsAudio() {
+                return reactionsWanted();
+            }
+
+            @Override
+            public void audio(short[] buf, int n) {
+                ears.audio(buf, n, makingNoise());
+            }
+        });
         this.face = new FaceTracker(this);
         this.ha = new HomeAssistant(haHost());
         watch.setEnabled(io.getSharedPreferences("settings", 0).getBoolean("watch", true));
@@ -163,7 +186,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         String[] modes = {"?", "ready", "sleeping", "pairing", "patrol", "phone control"};
         return "mode: " + modes[robot.mode] + ", action: " + seq.running() + "\n" + sounds.status() + "\n"
                 + dlna.status() + "\n" + camera.status() + "\n" + phone.status() + "\n" + voice.status()
-                + "\n" + assist.status()
+                + "\n" + assist.status() + "\n" + reactionsStatus()
                 + "\nface: " + (face.tracking() ? "tracking a face" : faceActive ? "looking" : "off") + "\nname: " + robot.name()
                 + "\nbattery: " + (robot.battery < 0 ? "?" : robot.battery + "%")
                 + "\nroutines: " + routines.names().size() + (lastRoutine.isEmpty() ? "" : ", last: " + lastRoutine)
@@ -241,7 +264,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         try {
             io.send(new JSONObject().put("agent", "settings").put("volume", sounds.volume()).put("muted", sounds.muted())
                     .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
-                    .put("assist", assist.status()).put("liveliness", idle.level()));
+                    .put("assist", assist.status()).put("liveliness", idle.level())
+                    .put("reactions", reactionsOn()));
         } catch (Exception ignored) {
         }
     }
@@ -367,6 +391,12 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "liveliness-full":
                 setLiveliness(name.substring("liveliness-".length()));
                 return;
+            case "reactions-on":
+            case "reactions-off":
+                io.getSharedPreferences("settings", 0).edit().putBoolean("sound_reactions", name.endsWith("on")).apply();
+                reportSettings();
+                ha.stateChanged();
+                return;
             case "phone-app-on":
             case "phone-app-off": {
                 boolean on = name.endsWith("on");
@@ -476,6 +506,34 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "long-lcd": return lcdToggle(false);
             case "flash-front": return modeOnly(13); // a toggle: run it again to end the flash
             case "flash-back": return modeOnly(14);
+            case "react-clap":
+                return new Sequencer.Job() {
+                    public void run() throws Exception {
+                        sounds.play(S_REPLY, true);  // "hm?"
+                        if (reactWithHead()) {
+                            head(25, 300);
+                            head(0, STEP_MS * 2);
+                        }
+                    }
+                };
+            case "react-double-clap":
+                return new Sequencer.Job() {
+                    public void run() throws Exception {
+                        lights.refresh();
+                        sounds.play(S_SING, true);   // happy: someone wants him
+                        if (reactWithHead()) for (int a : new int[] {-20, 20, -20, 0}) head(a, 400);
+                    }
+                };
+            case "react-loud":
+                return new Sequencer.Job() {
+                    public void run() throws Exception {
+                        sounds.play(S_HUH, true);    // startled
+                        if (reactWithHead()) {
+                            head(-30, 0);
+                            head(0, STEP_MS * 2);
+                        }
+                    }
+                };
             case "leia": return hologram(1, S_LEIA);
             case "luke": return hologram(2, S_LUKE);
             default: return null;
@@ -766,6 +824,59 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         }
     }
 
+    // ---- sound reactions (claps and loud sounds) -------------------------------------------
+
+    private boolean reactionsOn() {
+        return io.getSharedPreferences("settings", 0).getBoolean("sound_reactions", true);
+    }
+
+    /** The microphone stays open for sound reactions while they are on and liveliness isn't off. */
+    private boolean reactionsWanted() {
+        return reactionsOn() && !"off".equals(liveliness());
+    }
+
+    /** Head moves are part of a reaction only at full liveliness. */
+    private boolean reactWithHead() {
+        return "full".equals(liveliness());
+    }
+
+    /**
+     * True while R2 is making noise of his own (a sound, an action, driving, the phone app in control),
+     * and for a moment after, so he doesn't react to himself.
+     */
+    private boolean makingNoise() {
+        long now = System.currentTimeMillis();
+        boolean noisy = sounds.isPlaying() || !"idle".equals(seq.running()) || driveSounds
+                || robot.mode == Robot.USER_CONTROL || robot.mode == Robot.PATROL;
+        if (noisy) ownNoiseUntil = now + ECHO_MS;
+        return noisy || now < ownNoiseUntil;
+    }
+
+    /**
+     * Something was heard. Quiet liveliness reacts only to very loud sounds; chatty and full to claps,
+     * double claps and loud sounds. While R2 sleeps only a double clap counts, and it wakes him.
+     * A routine named react-clap, react-double-clap or react-loud replaces the built-in reaction.
+     */
+    private void onLoudSound(String kind, double peakDb) {
+        Log.i(TAG, "heard " + kind + String.format(java.util.Locale.US, " (%.0f dB, floor %.0f dB)", peakDb, ears.floorDb()));
+        if (!reactionsWanted()) return;
+        String lv = liveliness();
+        if ("quiet".equals(lv) && !(SoundReactions.LOUD.equals(kind) && peakDb >= VERY_LOUD_DB)) return;
+        int m = robot.mode;
+        if (m == Robot.SLEEP ? !SoundReactions.DOUBLE_CLAP.equals(kind) : m != Robot.READY) return;
+        // During a film (watch with me) the cue file does the reacting; bangs in the film shouldn't startle him.
+        if (!"idle".equals(seq.running()) || voice.awake() || robot.assistState != Assist.IDLE || watch.active()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastReaction < REACT_GAP_MS) return;
+        lastReaction = now;
+        action("react-" + kind);
+    }
+
+    private String reactionsStatus() {
+        String state = !reactionsOn() ? "off" : "off".equals(liveliness()) ? "off (liveliness off)" : "on, " + liveliness();
+        return "sound reactions: " + state + ", " + ears.status();
+    }
+
     // ---- modes -----------------------------------------------------------------------
 
     private void startPairing() {
@@ -1032,6 +1143,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                             .put("action", seq.running()).put("error", robot.error)
                             .put("muted", sounds.muted()).put("volume", sounds.volume())
                             .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
+                            .put("reactions", reactionsOn())
                             .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION)
                             .put("watch", watch.status(android.os.SystemClock.elapsedRealtime()));
                 } catch (Exception ignored) {

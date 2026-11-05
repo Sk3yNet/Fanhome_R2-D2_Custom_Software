@@ -74,6 +74,7 @@ final class HomeAssistant {
             {"mute", "Mute", "mdi:volume-off"}, {"voice", "Voice commands", "mdi:microphone"},
             {"face", "Face tracking", "mdi:face-recognition"},
             {"watch", "Watch with me", "mdi:movie-open-play"},
+            {"reactions", "Sound reactions", "mdi:hand-clap"},
     };
 
     static final String[] MODES = {"ready", "sleeping", "pairing", "patrol", "phone control"};
@@ -393,6 +394,9 @@ final class HomeAssistant {
             case "watch":
                 host.setWatch(on);
                 break;
+            case "reactions":
+                host.action(on ? "reactions-on" : "reactions-off");
+                break;
             default:
                 break;
         }
@@ -414,6 +418,7 @@ final class HomeAssistant {
                 JSONObject w = st.optJSONObject("watch");
                 return w != null && w.optBoolean("enabled");
             }
+            case "reactions": return st.optBoolean("reactions");
             default: return null;
         }
     }

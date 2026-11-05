@@ -5,12 +5,13 @@ asked read it, so one switch turns them all up or down.
 
 | Level | Idle chatter (this page) | Other features |
 |-------|--------------------------|----------------|
-| `off` | none | sound reactions off |
+| `off` | none | [sound reactions](sound-reactions.md) off |
 | `quiet` (default) | a sound every 1 to 2 minutes, no head moves | reactions to very loud sounds only, no head move |
-| `chatty` | something every 25 to 50 s; about a third of the time he looks around instead | normal reactions |
-| `full` | something every 10 to 25 s; half the time he looks around, sometimes with a sound | normal reactions, may turn the head |
+| `chatty` | something every 25 to 50 s; about a third of the time he looks around instead | reactions to claps, double claps and loud sounds, no head move |
+| `full` | something every 10 to 25 s; half the time he looks around, sometimes with a sound | normal reactions, with head moves |
 
-The setting is kept across reboots.
+The setting is kept across reboots. Sound reactions also have their own on/off switch
+(`reactions-on` / `reactions-off`), see [sound-reactions.md](sound-reactions.md).
 
 ## Setting it
 

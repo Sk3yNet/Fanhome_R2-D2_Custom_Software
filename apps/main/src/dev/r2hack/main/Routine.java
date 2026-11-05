@@ -37,7 +37,7 @@ final class Routine {
     static final Set<String> STEP_ACTIONS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
             "wake", "turn-left", "turn-right", "turn-around", "forward", "circle", "dance", "shake-head",
             "who-are-you", "noise", "not-recognized", "lightsaber", "arm", "short-lcd", "long-lcd",
-            "flash-front", "flash-back", "leia", "luke")));
+            "flash-front", "flash-back", "leia", "luke", "react-clap", "react-double-clap", "react-loud")));
 
     enum Kind { WAIT, SOUND, HEAD, MODE, DRIVE, LED, CMD, ACTION, WAIT_UNTIL, REPEAT, ROUTINE }
 

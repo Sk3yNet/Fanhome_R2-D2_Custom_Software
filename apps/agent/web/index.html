@@ -98,6 +98,7 @@
       <label class="sw"><input type="checkbox" id="swSound" data-on="unmute" data-off="mute"><span></span>Sound</label>
       <label class="sw"><input type="checkbox" id="swVoice" data-on="voice-on" data-off="voice-off"><span></span>Voice commands</label>
       <label class="sw"><input type="checkbox" id="swFace" data-on="face-on" data-off="face-off"><span></span>Face tracking</label>
+      <label class="sw"><input type="checkbox" id="swReact" data-on="reactions-on" data-off="reactions-off"><span></span>Sound reactions</label>
     </div>
   </section>
 
@@ -168,7 +169,7 @@ for (const a of ACTIONS) {
 }
 
 let volTouched = 0; // the controls follow /status, except right after you change them
-const SWITCHES = { swSound: s => s.muted == null ? null : !s.muted, swVoice: s => s.voice, swFace: s => s.face_tracking };
+const SWITCHES = { swSound: s => s.muted == null ? null : !s.muted, swVoice: s => s.voice, swFace: s => s.face_tracking, swReact: s => s.sound_reactions };
 for (const id in SWITCHES) {
   $(id).disabled = true; // until R2 reports the setting
   $(id).onchange = e => {

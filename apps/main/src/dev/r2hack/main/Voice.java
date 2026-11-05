@@ -28,6 +28,9 @@ import java.util.zip.ZipFile;
  * and each command keeps it listening for another 15 s. With Home Assistant's voice pipeline (Assist)
  * connected, what follows "hey R2-D2" goes there instead, or all audio does if Home Assistant spots the
  * wake word itself.
+ *
+ * The same microphone audio also goes to an Ear (sound reactions: claps and loud noises), which can keep
+ * the microphone open while voice commands are off, or when the speech model can't load.
  */
 final class Voice {
     interface Host {
@@ -46,6 +49,14 @@ final class Voice {
         boolean takeWake();
 
         /** True while audio should go to audio() instead of the keyword spotter. */
+        boolean wantsAudio();
+
+        void audio(short[] buf, int n);
+    }
+
+    /** Something else that hears every bit of microphone audio, whatever the voice commands do with it. */
+    interface Ear {
+        /** True while the ear wants the microphone open (it stays open for voice commands anyway). */
         boolean wantsAudio();
 
         void audio(short[] buf, int n);
@@ -79,6 +90,8 @@ final class Voice {
     private volatile String problem = "starting";
     private volatile long awakeUntil;
     private volatile Stream stream;
+    private volatile Ear ear;
+    private volatile boolean commands;  // the recognizer is ready
 
     Voice(Context ctx, Host host) {
         this.ctx = ctx;
@@ -88,6 +101,10 @@ final class Voice {
 
     void setStream(Stream s) {
         stream = s;
+    }
+
+    void setEar(Ear e) {
+        ear = e;
     }
 
     void setEnabled(boolean on) {
@@ -119,6 +136,28 @@ final class Voice {
     }
 
     private void loop() throws Exception {
+        long decoder = 0;
+        try {
+            decoder = startRecognizer();
+            commands = true;
+            problem = null;
+            Log.i(TAG, "voice commands ready");
+        } catch (Throwable e) {
+            problem = "unavailable (" + e.getMessage() + ")";
+            Log.w(TAG, "voice commands unavailable; the microphone still serves sound reactions", e);
+        }
+        listen(decoder);
+    }
+
+    /** True while the microphone should be open: for voice commands, or for the ear. */
+    private boolean wantMic() {
+        if (!host.mayListen()) return false;
+        if (enabled && commands) return true;
+        Ear e = ear;
+        return e != null && e.wantsAudio();
+    }
+
+    private long startRecognizer() throws Exception {
         File dir = prepareModel();
         long config = PocketSphinxJNI.Decoder_defaultConfig();
         SphinxBaseJNI.Config_setString(config, null, "-hmm", new File(dir, "ptm").getPath());
@@ -129,13 +168,15 @@ final class Voice {
         if (decoder == 0) throw new Exception("recognizer would not start");
         PocketSphinxJNI.Decoder_setKws(decoder, null, "command", keywordsFile().getPath());
         PocketSphinxJNI.Decoder_setSearch(decoder, null, "command");
+        return decoder;
+    }
 
+    private void listen(long decoder) throws Exception {
         int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
         short[] buf = new short[RATE * 4 / 10]; // 0.4 s, like the factory recognizer
-        problem = null;
-        Log.i(TAG, "voice commands ready");
+        String micProblem = null;
         while (true) {
-            if (!enabled || !host.mayListen()) {
+            if (!wantMic()) {
                 if (awakeUntil != 0) sleepVoice();
                 Thread.sleep(500);
                 continue;
@@ -144,19 +185,27 @@ final class Voice {
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, buf.length * 2));
             if (rec.getState() != AudioRecord.STATE_INITIALIZED) {
                 rec.release();
-                problem = "microphone not available";
+                micProblem = problem = "microphone not available";
                 Thread.sleep(5000);
                 continue;
             }
-            problem = null;
+            if (micProblem != null && micProblem.equals(problem)) problem = null;
+            micProblem = null;
             rec.startRecording();
-            PocketSphinxJNI.Decoder_startUtt(decoder, null);
+            if (decoder != 0) PocketSphinxJNI.Decoder_startUtt(decoder, null);
             boolean streamed = false;
             try {
-                while (enabled && host.mayListen()) {
+                while (wantMic()) {
                     int n = rec.read(buf, 0, buf.length);
                     if (n < 0) throw new Exception("microphone read failed (" + n + ")");
                     if (n == 0) continue;
+                    Ear e = ear;
+                    if (e != null) e.audio(buf, n);
+                    if (!enabled || decoder == 0) { // only the ear is listening
+                        if (awakeUntil != 0) sleepVoice();
+                        streamed = true; // when commands come back, start a fresh utterance
+                        continue;
+                    }
                     Stream st = stream;
                     if (st != null && st.wantsAudio()) {
                         st.audio(buf, n);
@@ -182,7 +231,7 @@ final class Voice {
                 Log.w(TAG, "listening stopped", e);
                 Thread.sleep(2000);
             } finally {
-                PocketSphinxJNI.Decoder_endUtt(decoder, null);
+                if (decoder != 0) PocketSphinxJNI.Decoder_endUtt(decoder, null);
                 rec.stop();
                 rec.release();
             }

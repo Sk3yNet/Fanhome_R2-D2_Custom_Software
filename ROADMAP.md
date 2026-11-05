@@ -286,3 +286,9 @@ stored on the projector board's SPI flash chip. Hardware details, options and st
 ## 11. Usability and housekeeping
 - [ ] **Uninstall without a PC:** a button combination on the robot that switches the factory app back
       on and reboots.
+
+## 12. Personality
+- [ ] **React to claps and loud sounds:** a clap gets a curious chirp, a double clap a happy song (and
+      wakes R2), a loud sound a startled one, with head moves at full liveliness. Follows the shared
+      liveliness setting and has its own on/off switch. See [docs/sound-reactions.md](docs/sound-reactions.md).
+      *Built, not yet tested on the robot.* The detection thresholds need tuning on the real microphone.
