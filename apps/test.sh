@@ -5,7 +5,7 @@
 # (FollowTracker, FollowControl, Follower), Home Assistant link
 # (HomeAssistant, without a broker), the chirp generator (Chirp), Home Assistant voice replies (Assist, Beeps),
 # the plugin interface (PluginManager,
-# PluginContext, the built-in plugins), the agent's hotspot password helpers (Hotspot) and its boot
+# PluginContext, the built-in plugins), the agent's hotspot password helpers (Hotspot), drive lock (DriveLock, MotionGuard) and boot
 # hardening rules (HardeningRules; the firewall scripts also run against a real iptables in a throwaway
 # network namespace when this machine allows one) and security (signed requests, clients and permissions,
 # the APK signature check, and the web page's signing code). Example chirps are written to
@@ -144,3 +144,8 @@ if command -v node > /dev/null; then
 else
     echo "(skipping the web page signing test: node not found)"
 fi
+
+javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \
+    "$AGENT_SRC/DriveLock.java" "$AGENT_SRC/MotionGuard.java" "$AGENT_SRC/Config.java" \
+    "$APPS_DIR/agent/test/dev/r2hack/agent/DriveLockTest.java"
+java -cp "$OUT:$JAR" dev.r2hack.agent.DriveLockTest

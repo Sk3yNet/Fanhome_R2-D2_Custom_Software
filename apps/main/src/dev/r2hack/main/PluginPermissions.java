@@ -32,13 +32,13 @@ final class PluginPermissions {
     static {
         Map<String, String> m = new LinkedHashMap<>();
         m.put(STATUS, "read the robot's state and events");
-        m.put(ACTIONS, "run built-in actions, go to places, and react along with a film (watch-with-me)");
+        m.put(ACTIONS, "run built-in actions, go to places, enable driving (drive lock), and react along with a film (watch-with-me)");
         m.put(DRIVE, "drive and move the head");
         m.put(ROUTINES_RUN, "list and run routines");
         m.put(ROUTINES_EDIT, "save and delete routines");
         m.put(SOUND, "play droid sounds");
         m.put(LIGHTS, "set the status lights");
-        m.put(SETTINGS, "change volume, mute, voice, face tracking, liveliness and watch-with-me");
+        m.put(SETTINGS, "change volume, mute, voice, face tracking, liveliness, watch-with-me and the drive lock");
         ALL = Collections.unmodifiableMap(m);
     }
 

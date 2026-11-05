@@ -39,6 +39,10 @@ final class Routine {
             "who-are-you", "noise", "not-recognized", "lightsaber", "arm", "short-lcd", "long-lcd",
             "flash-front", "flash-back", "leia", "luke", "react-clap", "react-double-clap", "react-loud")));
 
+    /** Built-in actions that drive R2's wheels, so they need the drive lock open (see docs/drive-lock.md). */
+    static final Set<String> DRIVE_ACTIONS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+            "turn-left", "turn-right", "turn-around", "forward", "circle", "dance", "patrol")));
+
     enum Kind { WAIT, SOUND, CHIRP, HEAD, MODE, DRIVE, LED, CMD, ACTION, WAIT_UNTIL, REPEAT, ROUTINE }
 
     static final class Step {

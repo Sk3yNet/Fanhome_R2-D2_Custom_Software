@@ -21,6 +21,8 @@ import org.json.JSONObject;
  * the broker must be on the robot's own subnet or in an allowed extra subnet (POST /clients/allow).
  * Only the actions in BUTTONS, the switches below and the activity select can be run from MQTT: no pairing,
  * no phone-app switch, nothing that installs or reboots.
+ * "Driving enabled" and "Require enabling to drive" are the agent's drive lock (docs/drive-lock.md);
+ * driving buttons are refused with a "huh" sound while it is locked.
  *
  * No Android classes, so it can be tested on a plain JVM against a real broker.
  */
@@ -48,6 +50,12 @@ final class HomeAssistant {
         void goTo(String place);
 
         void projector(int mode);
+
+        /** Enables (for the agent's default idle minutes) or disables driving; see docs/drive-lock.md. */
+        void enableDriving(boolean on);
+
+        /** Switches the drive lock itself on or off. */
+        void setDriveLock(boolean on);
 
         void setVolume(int percent);
 
@@ -93,6 +101,8 @@ final class HomeAssistant {
             {"watch", "Watch with me", "mdi:movie-open-play"},
             {"reactions", "Sound reactions", "mdi:hand-clap"},
             {"beeps", "Answer in beeps", "mdi:message-processing"},
+            {"drive", "Driving enabled", "mdi:steering"},
+            {"drive-lock", "Require enabling to drive", "mdi:lock"},
     };
 
     static final String[] MODES = {"ready", "sleeping", "pairing", "patrol", "phone control"};
@@ -494,6 +504,12 @@ final class HomeAssistant {
             case "beeps":
                 host.action(on ? "beeps-on" : "beeps-off");
                 break;
+            case "drive":
+                host.enableDriving(on);
+                break;
+            case "drive-lock":
+                host.setDriveLock(on);
+                break;
             default:
                 break;
         }
@@ -517,6 +533,8 @@ final class HomeAssistant {
             }
             case "reactions": return st.optBoolean("reactions");
             case "beeps": return st.optBoolean("beeps");
+            case "drive": return st.optBoolean("drive_enabled");
+            case "drive-lock": return st.optBoolean("drive_lock");
             default: return null;
         }
     }
@@ -691,6 +709,7 @@ final class HomeAssistant {
             m.put(p + "/switch/" + node + "/" + obj + "/config", entity(sw[1], node, obj, device, origin)
                     .put("state_topic", b + "/switch/" + sw[0]).put("command_topic", b + "/switch/" + sw[0] + "/set")
                     .put("icon", sw[2]));
+            if ("drive-lock".equals(sw[0])) m.get(p + "/switch/" + node + "/" + obj + "/config").put("entity_category", "config");
         }
         return m;
     }

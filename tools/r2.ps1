@@ -6,7 +6,12 @@
 #   action <name>            run a robot action, e.g. dance, wake, lightsaber, leia (list: actions)
 #   chirp [mood|'text']      a newly generated droid chirp: a mood (ack happy excited question sad worried
 #                            chatter; default random), or droid sounds shaped like a sentence (docs/chirps.md)
-#   stop                     emergency stop (the agent stops the robot itself, then cancels the action)
+#   stop                     emergency stop (the agent stops the robot itself, then cancels the action;
+#                            with the drive lock on, driving is locked again)
+#   drive                    drive lock state (docs/drive-lock.md)
+#   drive-lock [on|off]      require enabling before R2 drives (kept across reboots); no argument shows it
+#   drive-enable [minutes]   enable driving until R2 hasn't driven for this long (default 10, max 120)
+#   drive-disable            lock driving again now (stops R2 if it is driving)
 #   routines                 list the stored routines (docs/routines.md) and what's running
 #   routine <name>           show one routine's JSON
 #   routine-put <file.json>  upload a routine (checked on the robot; replaces one with the same name)
@@ -386,6 +391,19 @@ switch ($Command) {
         else { Call POST /chirp $Arg }   # text: the body, so long sentences fit
     }
     'stop'         { Call POST /stop }
+    'drive'        { Call GET /drive | ConvertTo-Json }
+    'drive-lock'   {
+        if (-not $Arg) { Call GET /drive | ConvertTo-Json }
+        elseif ($Arg -eq 'on') { (Call POST '/drive?lock=1').result }
+        elseif ($Arg -eq 'off') { (Call POST '/drive?lock=0').result }
+        else { throw 'usage: r2.ps1 drive-lock [on|off]' }
+    }
+    'drive-enable' {
+        $m = if ($Arg) { $Arg } else { '10' }
+        if ($m -notmatch '^\d+$') { throw 'usage: r2.ps1 drive-enable [minutes]' }
+        (Call POST "/drive?enable=1&minutes=$m").result
+    }
+    'drive-disable' { (Call POST '/drive?enable=0').result }
     'routines'     {
         $d = Call GET /routines
         "running: $($d.running)" + $(if ($d.last_routine) { "   last: $($d.last_routine)" } else { '' })

@@ -34,7 +34,8 @@ needed). *Built, not yet tested on the robot.*
 ## Safety limits
 R2 has no obstacle, bump or drop sensors that R2 Main can read (the controller may have some; see
 ROADMAP), so follow me only drives where you just walked, slowly, and stops whenever it is unsure. Don't
-use it near stairs or drops. The agent's low-battery stop and motion watchdog apply as usual.
+use it near stairs or drops. The agent's low-battery stop and motion watchdog apply as usual. With the drive lock on
+([drive-lock.md](drive-lock.md)), follow me only starts while driving is enabled, and stops when it locks.
 
 ## Tuning
 The numbers are first guesses and live at the top of `apps/main/src/dev/r2hack/main/FollowControl.java`

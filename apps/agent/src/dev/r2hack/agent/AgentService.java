@@ -110,12 +110,32 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         bridge.start();
         sim = getSharedPreferences("agent", MODE_PRIVATE).getBoolean("sim", false);
         serial = sim ? new SimController(this) : new SerialLink(this, this);
+        boolean lockOn = getSharedPreferences("agent", MODE_PRIVATE).getBoolean("drive-lock", false);
         guard = new MotionGuard(new MotionGuard.Output() {
             @Override
             public boolean write(String line) {
                 return serial.send(line);
             }
-        });
+
+            @Override
+            public void log(String msg) {
+                EventLog.i(msg);
+            }
+
+            @Override
+            public void onDriveChanged() {
+                sendDriveState();
+            }
+
+            @Override
+            public void onDriveRefused() {
+                try {
+                    toMain(new JSONObject().put("agent", "drive-refused"));
+                } catch (Exception ignored) {
+                }
+            }
+        }, new DriveLock(lockOn, DriveLock.REAL_CLOCK));
+        if (lockOn) EventLog.i("drive lock on: driving needs enabling");
         serial.start();
         guard.start();
         startControllerKeepalive();
@@ -159,6 +179,19 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         else if ("hello".equals(kind)) {
             supervisor.onHeartbeat();
             sendMqttSettings(); // R2 Main keeps them in memory only
+            sendDriveState();
+        }
+        else if ("drive-set".equals(kind)) { // from R2 Main (Home Assistant): enable, minutes, lock
+            if (guard == null) return;
+            if (msg.has("lock")) setDriveLock(msg.optBoolean("lock"));
+            if (msg.has("enable")) {
+                if (msg.optBoolean("enable")) {
+                    int minutes = msg.optInt("minutes", DriveLock.DEFAULT_MINUTES);
+                    guard.enableDriving(Math.max(1, Math.min(DriveLock.MAX_MINUTES, minutes)));
+                } else {
+                    guard.disableDriving("requested by the main app");
+                }
+            }
         }
         else if ("mqtt-status".equals(kind)) mqttState = msg.optString("state");
         else if ("shutdown".equals(kind)) shutdown("requested by the main app");
@@ -201,6 +234,34 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     @Override
     public void stopRobot() {
         if (guard != null) guard.stop("agent stop");
+    }
+
+    /** The emergency stop: stops R2 and, with the drive lock on, locks driving again. */
+    private void emergencyStop() {
+        stopRobot();
+        if (guard != null) guard.disableDriving("emergency stop");
+    }
+
+    private void setDriveLock(boolean on) {
+        getSharedPreferences("agent", MODE_PRIVATE).edit().putBoolean("drive-lock", on).commit();
+        guard.setLockRequired(on);
+    }
+
+    /** The drive lock as /drive and /status show it. */
+    private JSONObject driveState() throws Exception {
+        DriveLock l = guard.driveLock();
+        return new JSONObject().put("lock", l.required()).put("enabled", l.required() && l.enabled())
+                .put("allowed", l.allowed()).put("seconds_left", l.required() ? l.secondsLeft() : 0)
+                .put("idle_minutes", l.idleMinutes()).put("state", l.state());
+    }
+
+    /** Tells R2 Main the drive lock state (its actions, routines, Home Assistant and lights use it). */
+    private void sendDriveState() {
+        if (guard == null) return;
+        try {
+            toMain(driveState().put("agent", "drive"));
+        } catch (Exception ignored) {
+        }
     }
 
     /** Clean power-off: stop, flush storage, tell the controller, then shut Android down. */
@@ -392,6 +453,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                         if (!readySent) readySent = serial.send("{\"cmd\":\"ready\"}");
                         serial.send("{\"cmd\":\"gin\"}");
                     }
+                    sendDriveState(); // so R2 Main notices the enable running out, and catches up after a restart
                     try { // network state for the main app (status lights, phone app)
                         toMain(new JSONObject().put("agent", "network").put("ap", wifi.isAp())
                                 .put("ssid", wifi.currentSsid()).put("ip", String.valueOf(WifiFailover.ipAddress())));
@@ -580,6 +642,11 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 if (passive) return passiveError();
                 String line = req.bodyText.trim();
                 JSONObject serialCmd = new JSONObject(line); // reject non-JSON
+                String refused = guard.refusal(line);
+                if (refused != null) {
+                    sendToController(line); // logs it and tells the main app, as for any refused command
+                    return HttpApi.Response.json(409, "{\"error\":" + JSONObject.quote("refused: " + refused) + "}");
+                }
                 boolean serialSent = sendToController(line);
                 // R2 Main records joystick drives while a route is taught, and otherwise notes that R2 moved by hand.
                 String sc = serialCmd.optString("cmd");
@@ -587,7 +654,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 return result(serialSent ? "sent" : "serial not open");
             case "POST /stop": // emergency stop: the agent stops the robot itself, then tells the main app
                 if (passive) return passiveError();
-                stopRobot();
+                emergencyStop();
                 toMain(new JSONObject().put("agent", "action").put("name", "stop"));
                 return result("stopped");
             case "POST /action": {
@@ -772,6 +839,39 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 }
                 EventLog.i("plugin " + req.query.get("name") + ": config changed");
                 return plugins(new JSONObject().put("op", "config").put("name", req.query.get("name") == null ? "" : req.query.get("name")).put("config", body));
+            }
+            case "GET /drive":
+                if (passive) return passiveError();
+                return HttpApi.Response.json(200, driveState().toString(2));
+            case "POST /drive": { // lock=1|0 (kept across reboots), enable=1 [&minutes=N] | enable=0
+                if (passive) return passiveError();
+                String lock = req.query.get("lock"), enable = req.query.get("enable");
+                if (lock == null && enable == null) {
+                    return bad("use lock=1|0 (require enabling before driving) and/or enable=1 [&minutes=1-"
+                            + DriveLock.MAX_MINUTES + "] | enable=0");
+                }
+                if (lock != null && !"1".equals(lock) && !"0".equals(lock)) return bad("lock must be 1 or 0");
+                if (lock != null && Clients.level(req.role) < Clients.level(Clients.ADMIN)) {
+                    return HttpApi.Response.json(403, "{\"error\":\"switching the drive lock on or off needs an admin client\"}");
+                }
+                if (enable != null && !"1".equals(enable) && !"0".equals(enable)) return bad("enable must be 1 or 0");
+                int minutes = DriveLock.DEFAULT_MINUTES;
+                if (req.query.containsKey("minutes")) {
+                    try {
+                        minutes = Integer.parseInt(req.query.get("minutes").trim());
+                    } catch (NumberFormatException e) {
+                        minutes = -1;
+                    }
+                    if (minutes < 1 || minutes > DriveLock.MAX_MINUTES) return bad("minutes must be 1 to " + DriveLock.MAX_MINUTES);
+                }
+                if (lock != null) setDriveLock("1".equals(lock));
+                if ("1".equals(enable)) guard.enableDriving(minutes);
+                else if ("0".equals(enable)) guard.disableDriving("API request");
+                DriveLock l = guard.driveLock();
+                String msg = !l.required() ? "drive lock off: driving is always allowed"
+                        : l.enabled() ? "driving enabled; it locks again after " + l.idleMinutes() + " min without driving"
+                        : "driving locked; enable it with POST /drive?enable=1";
+                return HttpApi.Response.json(200, driveState().put("result", msg).toString(2));
             }
             case "POST /shutdown":
                 new Thread(new Runnable() {
@@ -1076,6 +1176,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             s.put("bridge_clients", bridge.clientCount());
             s.put("moving", guard.moving());
             s.put("battery_low", guard.lowBattery());
+            s.put("drive", driveState());
         }
         JSONObject set = settings;
         if (set != null) {

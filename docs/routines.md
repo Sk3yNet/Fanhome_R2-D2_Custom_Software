@@ -188,9 +188,13 @@ routine (then stops the robot) when one trips:
 - **Stop:** `POST /stop`, `POST /routine/stop`, the "stop" voice command, the phone app's stop, or
   starting any other action or routine.
 - **Agent connection lost:** if R2 Main loses its bridge to the agent, it cancels what's running.
+- **Drive lock:** with the drive lock on and driving not enabled, a routine that can drive (a `drive`
+  step, a driving `mode` or `cmd`, a driving `action`, also inside `repeat` or a called routine) doesn't
+  start at all; if driving locks while it runs, it ends at its next drive step. Routines that don't
+  drive run as usual. See [drive-lock.md](drive-lock.md).
 
 On top of that, every command still passes through the agent's motion guard (watchdog, head limits,
-low-battery refusal; see [architecture.md](architecture.md)). A built-in action run as an `action` step
+low-battery refusal, drive lock; see [architecture.md](architecture.md)). A built-in action run as an `action` step
 runs to its end before the next check (the longest, `leia`/`luke`, up to about a minute); stop still
 cancels it at once.
 

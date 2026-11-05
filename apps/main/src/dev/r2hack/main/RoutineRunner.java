@@ -8,6 +8,8 @@ import org.json.JSONObject;
  * the overall timeout, the controller reporting a new error, R2 going on the charger (unless the
  * routine says while_charging), or the battery below the agent's driving limit. Cancelling (stop,
  * a new action, the agent connection dropping) interrupts the thread; the Sequencer then sends stop.
+ * A routine that drives doesn't start while the drive lock is closed, and ends when it closes.
+ * Its other steps run normally.
  * Plain Java and org.json only, so it can be tested off the robot (apps/test.sh).
  */
 final class RoutineRunner {
@@ -36,7 +38,12 @@ final class RoutineRunner {
 
         /** The controller's error text from gin ("" if none). */
         String error();
+
+        /** False while the agent's drive lock keeps the wheels locked (docs/drive-lock.md). */
+        boolean driveAllowed();
     }
+
+    static final String DRIVE_LOCKED = "driving is locked (enable it first)";
 
     /** A safety rule or a failed wait_until ended the routine. */
     static final class Abort extends Exception {
@@ -125,7 +132,65 @@ final class RoutineRunner {
         deadline = clock.now() + r.timeoutMs;
         errorAtStart = host.error();
         check();
+        if (!host.driveAllowed() && drives(r.steps, 0)) throw new Abort(DRIVE_LOCKED);
         runSteps(r.steps, 0, r.name);
+    }
+
+    /** Whether a controller command makes the wheels move (the agent's MotionGuard uses the same rule). */
+    static boolean drives(JSONObject cmd) {
+        String c = cmd.optString("cmd");
+        if ("move".equals(c)) return cmd.optInt("power") != 0;
+        if ("mode".equals(c)) {
+            int m = cmd.optInt("mode", -1);
+            return m == 2 || m == 3 || m == 4 || m == 5 || m == 9 || m == 12;
+        }
+        return false;
+    }
+
+    /** Whether any of these steps (or a routine they call) can drive. */
+    private boolean drives(java.util.List<Routine.Step> steps, int calls) {
+        if (calls > MAX_CALL_DEPTH) return false; // run() reports the loop
+        for (Routine.Step s : steps) {
+            switch (s.kind) {
+                case DRIVE:
+                    if (s.power > 0) return true;
+                    break;
+                case MODE:
+                    if (drives(modeCmd(s.number))) return true;
+                    break;
+                case CMD:
+                    if (drives(s.json)) return true;
+                    break;
+                case ACTION:
+                    if (Routine.DRIVE_ACTIONS.contains(s.name)) return true;
+                    break;
+                case REPEAT:
+                    if (drives(s.steps, calls)) return true;
+                    break;
+                case ROUTINE: {
+                    Routine inner = host.load(s.name);
+                    if (inner != null && drives(inner.steps, calls + 1)) return true;
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+        return false;
+    }
+
+    private static JSONObject modeCmd(int mode) {
+        try {
+            return new JSONObject().put("cmd", "mode").put("mode", mode);
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
+    /** Sends a command, refusing a drive command while the drive lock is closed. */
+    private void send(JSONObject cmd) throws Abort {
+        if (drives(cmd) && !host.driveAllowed()) throw new Abort(DRIVE_LOCKED);
+        host.send(cmd);
     }
 
     private void runSteps(java.util.List<Routine.Step> steps, int calls, String path) throws Exception {
@@ -161,10 +226,10 @@ final class RoutineRunner {
                 }
                 break;
             case HEAD:
-                host.send(new JSONObject().put("cmd", "head-angle").put("angle", s.number));
+                send(new JSONObject().put("cmd", "head-angle").put("angle", s.number));
                 break;
             case MODE:
-                host.send(new JSONObject().put("cmd", "mode").put("mode", s.number));
+                send(modeCmd(s.number));
                 break;
             case DRIVE: {
                 long end = clock.now() + s.ms;
@@ -172,7 +237,7 @@ final class RoutineRunner {
                 try {
                     while (true) {
                         check();
-                        host.send(new JSONObject().put("cmd", "move").put("power", s.power).put("angle", s.angle));
+                        send(new JSONObject().put("cmd", "move").put("power", s.power).put("angle", s.angle));
                         long left = end - clock.now();
                         if (left <= 0) break;
                         pause(Math.min(DRIVE_REPEAT_MS, left));
@@ -187,9 +252,10 @@ final class RoutineRunner {
             }
             case LED:
             case CMD:
-                host.send(new JSONObject(s.json.toString())); // a copy: the host may change it
+                send(new JSONObject(s.json.toString())); // a copy: the host may change it
                 break;
             case ACTION:
+                if (Routine.DRIVE_ACTIONS.contains(s.name) && !host.driveAllowed()) throw new Abort(DRIVE_LOCKED);
                 host.runAction(s.name);
                 break;
             case WAIT_UNTIL: {

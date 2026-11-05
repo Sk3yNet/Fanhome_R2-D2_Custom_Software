@@ -56,6 +56,8 @@ public final class PluginTest {
         public void routineEvent(String name, String from) { calls.add("event " + name + " from " + from); }
         public java.util.Set<String> triggerTopics() { return java.util.Collections.singleton("z/door"); }
         public void triggerMessage(String topic, String payload, boolean retained) { calls.add("mqtt " + topic); }
+        public void enableDriving(boolean on) { calls.add("drive-enable " + on); }
+        public void setDriveLock(boolean on) { calls.add("drive-lock " + on); }
         public void log(String msg) { logs.add(msg); }
     }
 
@@ -223,6 +225,17 @@ public final class PluginTest {
         final PluginContext settings = new PluginContext("p", h, new TreeSet<>(Arrays.asList("settings")), noStore());
         settings.action("mute");
         denied("dance with only settings", new Runnable() { public void run() { settings.action("dance"); } });
+
+        // Drive lock (docs/drive-lock.md): enabling needs "actions"; the lock switch needs "settings",
+        // and switching it off also "actions".
+        h.calls.clear();
+        actions.enableDriving(true);
+        settings.setDriveLock(true);
+        check("drive lock calls reach R2 Main", h.calls.equals(Arrays.asList("drive-enable true", "drive-lock true")));
+        denied("enable driving with only settings", new Runnable() { public void run() { settings.enableDriving(true); } });
+        denied("lock switch with only actions", new Runnable() { public void run() { actions.setDriveLock(true); } });
+        denied("lock off with only settings", new Runnable() { public void run() { settings.setDriveLock(false); } });
+        denied("enable driving without permissions", new Runnable() { public void run() { none.enableDriving(true); } });
 
         all.close();
         denied("calls after close", new Runnable() { public void run() { all.action("dance"); } });
