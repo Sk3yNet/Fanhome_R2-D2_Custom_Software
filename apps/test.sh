@@ -2,10 +2,11 @@
 # Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore), places (Places),
 # watch-with-me (CueFile, CueStore, WatchWithMe), idle personality (IdlePersonality), sound reactions
 # (SoundReactions), Home Assistant link
-# (HomeAssistant, without a broker), the chirp generator (Chirp), the agent's hotspot password helpers
-# (Hotspot) and its boot hardening rules (HardeningRules; the firewall scripts also run against a real
-# iptables in a throwaway network namespace when this machine allows one). Example chirps are written to
-# apps/out/chirps/*.wav for listening.
+# (HomeAssistant, without a broker), the chirp generator (Chirp), the plugin interface (PluginManager,
+# PluginContext, the built-in plugins), the agent's hotspot password helpers (Hotspot) and its boot
+# hardening rules (HardeningRules; the firewall scripts also run against a real iptables in a throwaway
+# network namespace when this machine allows one). Example chirps are written to apps/out/chirps/*.wav
+# for listening.
 # Usage: apps/test.sh
 # Needs a JDK and Android's real org.json, taken from Robolectric's android-all jar for Android 4.4
 # (the SDK's android.jar only has stubs). The jar is downloaded once to tools/test-libs/, or set
@@ -52,6 +53,13 @@ javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$J
     "$AGENT_SRC/Hotspot.java" "$AGENT_SRC/EventLog.java" \
     "$APPS_DIR/agent/test/dev/r2hack/agent/HotspotTest.java"
 java -cp "$OUT:$JAR" dev.r2hack.agent.HotspotTest
+
+javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR:$OUT" -d "$OUT" \
+    "$SRC/Plugin.java" "$SRC/PluginPermissions.java" "$SRC/PluginContext.java" "$SRC/PluginManager.java" \
+    "$SRC/BatteryAlertPlugin.java" "$SRC/HomeAssistantPlugin.java" "$SRC/HomeAssistant.java" \
+    "$SRC/MqttClient.java" "$SRC/LocalNet.java" \
+    "$APPS_DIR/main/test/dev/r2hack/main/PluginTest.java"
+java -cp "$OUT:$JAR" dev.r2hack.main.PluginTest
 
 # Boot hardening (agent): rules and parsers, then the generated firewall scripts on a real iptables.
 AGENT=$APPS_DIR/agent

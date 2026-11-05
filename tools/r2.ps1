@@ -36,6 +36,13 @@
 #   volume <0-100>           droid sounds and music volume (kept across reboots)
 #   liveliness [level]       how much R2 does on his own: off, quiet, chatty or full (docs/liveliness.md);
 #                            no level shows the current one
+#   plugins                  list the plugins (docs/plugins.md): state, what each asks for and is granted
+#   plugin-on | plugin-off <name>
+#                            enable / disable a plugin, e.g. plugin-off home-assistant
+#   plugin-grant <name>=<permissions>
+#                            what a plugin may do, e.g. plugin-grant battery-alert=status (empty: nothing)
+#   plugin-config <name>=<file.json>
+#                            merge the JSON object in the file into a plugin's config
 #   logcat [text] [-Lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
 #   dmesg [text] [-Lines N]  kernel log
 #   adb [minutes]            switch on adb over Wi-Fi for a while (default 30 min) and connect
@@ -354,6 +361,25 @@ switch ($Command) {
     'watch-stop'   { Call POST /watch '{"state":"stopped"}' }
     'watch-on'     { Call POST /watch '{"enabled":true}' }
     'watch-off'    { Call POST /watch '{"enabled":false}' }
+    'plugins'      {
+        $d = Call GET /plugins
+        $d.plugins | Format-Table name, enabled, state, @{ n = 'granted'; e = { $_.granted -join ',' } }, @{ n = 'asks_for'; e = { $_.asks_for -join ',' } } -AutoSize -Wrap
+        'permissions:'; $d.permissions.PSObject.Properties | ForEach-Object { "  $($_.Name): $($_.Value)" }
+    }
+    { $_ -in 'plugin-on', 'plugin-off' } {
+        if (-not $Arg) { throw "usage: r2.ps1 $Command <name>  (see: r2.ps1 plugins)" }
+        $on = if ($Command -eq 'plugin-on') { 1 } else { 0 }
+        Call POST "/plugin?name=$([uri]::EscapeDataString($Arg))&enabled=$on"
+    }
+    'plugin-grant' {
+        if ($Arg -notmatch '^([^=]+)=(.*)$') { throw 'usage: r2.ps1 plugin-grant <name>=<permissions>, e.g. battery-alert=status,sound' }
+        Call POST "/plugin?name=$([uri]::EscapeDataString($Matches[1]))&grant=$([uri]::EscapeDataString($Matches[2]))"
+    }
+    'plugin-config' {
+        if ($Arg -notmatch '^([^=]+)=(.+)$' -or -not (Test-Path $Matches[2])) { throw 'usage: r2.ps1 plugin-config <name>=<file.json>' }
+        $name = $Matches[1]
+        Call POST "/plugin/config?name=$([uri]::EscapeDataString($name))" (Get-Content $Matches[2] -Raw -Encoding UTF8)
+    }
     'volume'       { if ($Arg -notmatch '^\d+$') { throw 'usage: r2.ps1 volume <0-100>' }; Call POST "/volume?percent=$Arg" }
     'liveliness'   {
         if (-not $Arg) { (Call GET /status).liveliness }

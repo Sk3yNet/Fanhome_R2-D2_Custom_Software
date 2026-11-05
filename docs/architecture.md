@@ -53,7 +53,8 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `GET /mqtt` · `POST /mqtt` (`{"host","port","username","password","prefix","enabled"}`) ·
 `GET /places` · `GET /place?name=` · `POST /place` · `POST /place/delete?name=` · `POST /goto?place=` · `POST /tour` ·
 `POST /place/here?name=` · `POST /place/teach?name=&what=there|back|turn` · `POST /place/teach/save` · `POST /place/teach/cancel` ·
-`POST /places/settings` (rooms, see [places.md](places.md))
+`POST /places/settings` (rooms, see [places.md](places.md)) ·
+`GET /plugins` · `POST /plugin?name=&enabled=1|0&grant=<permissions>` · `POST /plugin/config?name=` (JSON body) (see [plugins.md](plugins.md))
 
 Only clients on the robot's own subnet (its Wi-Fi network or its hotspot), loopback, or IPv6 link-local are
 served. A client on another private network, such as a guest network, another VLAN or a VPN, is refused
@@ -160,6 +161,9 @@ stream server picks the format from the file extension). Confirmed with Home Ass
 (radio) and with Music Assistant.
 
 ## Home Assistant over MQTT (R2 Main)
+This is the `home-assistant` plugin ([plugins.md](plugins.md)): it runs with the permissions it was granted,
+and `tools\r2.ps1 plugin-off home-assistant` switches it off.
+
 R2 shows up in Home Assistant as a device through MQTT discovery, using the broker Home Assistant already
 uses (for example the Mosquitto add-on). Set it once:
 

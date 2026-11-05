@@ -74,7 +74,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private final Voice voice;
     private final Assist assist;
     private final FaceTracker face;
-    private final HomeAssistant ha;
+    private final HomeAssistantPlugin ha;
+    private final PluginManager plugins;
     private final RoutineStore routines;
     private final IdlePersonality idle;
     private final SoundReactions ears;
@@ -131,6 +132,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             @Override
             public void run() {
                 reportRunning();
+                pluginsEvent(Plugin.EVENT_RUNNING);
             }
         });
         this.routines = new RoutineStore(new File(io.getFilesDir(), "routines"), ROUTINE_ACTIONS);
@@ -177,12 +179,22 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             }
         });
         this.face = new FaceTracker(this);
-        this.ha = new HomeAssistant(haHost());
+        this.ha = new HomeAssistantPlugin(new HomeAssistantPlugin.StatusSink() {
+            @Override
+            public void mqttStatus(String state) {
+                try {
+                    Brain.this.io.send(new JSONObject().put("agent", "mqtt-status").put("state", state));
+                } catch (Exception ignored) {
+                }
+            }
+        });
         watch.setEnabled(io.getSharedPreferences("settings", 0).getBoolean("watch", true));
+        this.plugins = new PluginManager(new File(io.getFilesDir(), "plugins.json"), pluginHost,
+                Arrays.<Plugin>asList(ha, new BatteryAlertPlugin()));
         robot.addListener(new Robot.Listener() {
             @Override
             public void onRobotChanged() {
-                ha.stateChanged();
+                plugins.event(Plugin.EVENT_STATE, null);
             }
         });
         camera.setRawListener(face);
@@ -190,7 +202,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         camera.start();
         phone.start();
         voice.start();
-        ha.start();
+        plugins.startAll();
         assist.start();
         startTimers();
     }
@@ -207,7 +219,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 + (teaching.isEmpty() ? "" : ", teaching " + teaching)
                 + "\nwatch-with-me: " + watchLine()
                 + "\n" + idle.status()
-                + "\n" + ha.status();
+                + "\n" + plugins.status();
     }
 
     // ---- liveliness -----------------------------------------------------------------------
@@ -336,8 +348,16 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 Log.i(TAG, "identity imported: " + robot.name());
                 break;
             case "mqtt": // broker settings from POST /mqtt (sent again each time we connect to the agent)
-                ha.configure(msg);
+                ha.mqttSettings(msg);
                 break;
+            case "plugins": { // GET /plugins, POST /plugin, POST /plugin/config
+                JSONObject reply = plugins.request(msg);
+                try {
+                    io.send(reply.put("agent", "plugins-reply").put("seq", msg.optInt("seq")));
+                } catch (Exception ignored) {
+                }
+                break;
+            }
             case "routines":
                 if (msg.optString("op").startsWith("cue") || "watch".equals(msg.optString("op"))) onWatchRequest(msg);
                 else onRoutinesRequest(msg);
@@ -378,6 +398,10 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
 
     private void onButton(int value) {
         Log.i(TAG, "button " + value);
+        try {
+            plugins.event(Plugin.EVENT_BUTTON, new JSONObject().put("value", value));
+        } catch (Exception ignored) {
+        }
         switch (value) {
             case 1: break; // power off: handled by the agent so it works even if this app is hung
             case 2:
@@ -451,7 +475,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "reactions-off":
                 io.getSharedPreferences("settings", 0).edit().putBoolean("sound_reactions", name.endsWith("on")).apply();
                 reportSettings();
-                ha.stateChanged();
+                if (plugins != null) plugins.event(Plugin.EVENT_STATE, null);
                 return;
             case "phone-app-on":
             case "phone-app-off": {
@@ -647,6 +671,38 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         return null;
     }
 
+    /** Saves a routine (the API's and plugins' way); returns what happened. */
+    private String saveRoutine(JSONObject j) throws Routine.Invalid {
+        String name = j.optString("name");
+        for (String a : ACTIONS) {
+            if (a.equals(name) && !ROUTINE_ACTIONS.contains(name)) {
+                throw new Routine.Invalid("\"" + name + "\" is a reserved action name");
+            }
+        }
+        boolean existed = routines.exists(name);
+        Routine r = routines.save(j);
+        Log.i(TAG, "routine saved: " + r.name);
+        routinesChanged();
+        return (existed ? "replaced " : "saved ") + r.name + " (" + r.stepCount() + " steps)"
+                + (ROUTINE_ACTIONS.contains(r.name) ? "; it now replaces the built-in " + r.name + " action" : "");
+    }
+
+    /** Deletes a routine; returns "deleted ..." or an error. */
+    private String deleteRoutine(String name) {
+        if (seq.isRunning(name)) seq.cancel();
+        if (!routines.delete(name)) return "no routine named " + name;
+        routinesChanged();
+        return "deleted " + name + (ROUTINE_ACTIONS.contains(name) ? "; the built-in " + name + " action is back" : "");
+    }
+
+    private void routinesChanged() {
+        if (plugins == null) return;
+        try {
+            plugins.event(Plugin.EVENT_ROUTINES, new JSONObject().put("names", new JSONArray(routines.names())));
+        } catch (Exception ignored) {
+        }
+    }
+
     private final RoutineRunner.Host routineHost = new RoutineRunner.Host() {
         @Override
         public void send(JSONObject cmd) {
@@ -748,27 +804,15 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     if (name.isEmpty()) name = j.optString("name");
                     else if (!j.has("name")) j.put("name", name);
                     if (!name.equals(j.optString("name"))) throw new Routine.Invalid("the name in the URL and in the routine differ");
-                    for (String a : ACTIONS) {
-                        if (a.equals(name) && !ROUTINE_ACTIONS.contains(name)) {
-                            throw new Routine.Invalid("\"" + name + "\" is a reserved action name");
-                        }
-                    }
-                    boolean existed = routines.exists(name);
-                    Routine r = routines.save(j);
-                    Log.i(TAG, "routine saved: " + r.name);
-                    reply.put("ok", true).put("result", (existed ? "replaced " : "saved ") + r.name + " (" + r.stepCount() + " steps)"
-                            + (ROUTINE_ACTIONS.contains(r.name) ? "; it now replaces the built-in " + r.name + " action" : ""));
+                    reply.put("ok", true).put("result", saveRoutine(j));
                     break;
                 }
-                case "delete":
-                    if (seq.isRunning(name)) seq.cancel();
-                    if (routines.delete(name)) {
-                        reply.put("ok", true).put("result", "deleted " + name
-                                + (ROUTINE_ACTIONS.contains(name) ? "; the built-in " + name + " action is back" : ""));
-                    } else {
-                        reply.put("ok", false).put("error", "no routine named " + name);
-                    }
+                case "delete": {
+                    String result = deleteRoutine(name);
+                    if (result.startsWith("deleted")) reply.put("ok", true).put("result", result);
+                    else reply.put("ok", false).put("error", result);
                     break;
+                }
                 case "run": {
                     String err = routines.exists(name) ? runRoutine(name) : "no routine named " + name;
                     if (err == null) reply.put("ok", true).put("result", "running " + name);
@@ -836,7 +880,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     /** Voice phrases, Home Assistant's place list and the agent's /status follow the places. */
     private void placesChanged() {
         voice.setExtraPhrases(Places.phrases(places.list()));
-        ha.stateChanged();
+        if (plugins != null) plugins.event(Plugin.EVENT_STATE, null);
         reportRunning();
     }
 
@@ -1375,7 +1419,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
 
         @Override
         public void changed() {
-            ha.stateChanged();
+            if (plugins != null) plugins.event(Plugin.EVENT_STATE, null);
         }
     };
 
@@ -1472,94 +1516,130 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         io.send(reply);
     }
 
-    // ---- Home Assistant ---------------------------------------------------------------------
+    // ---- plugins --------------------------------------------------------------------------
 
-    private HomeAssistant.Host haHost() {
-        return new HomeAssistant.Host() {
-            @Override
-            public JSONObject haState() {
-                JSONObject s = new JSONObject();
-                try {
-                    int m = robot.mode;
-                    s.put("battery", robot.battery).put("charging", robot.charging)
-                            .put("lightsaber", robot.lightsaber != 0).put("arm", robot.arm != 0)
-                            .put("projector", robot.projector).put("lcd_s", robot.lcdS >= 2).put("lcd_l", robot.lcdL >= 2)
-                            .put("mode", m >= 1 && m <= HomeAssistant.MODES.length ? HomeAssistant.MODES[m - 1] : "ready")
-                            .put("action", seq.running()).put("error", robot.error).put("location", places.location())
-                            .put("muted", sounds.muted()).put("volume", sounds.volume())
-                            .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
-                            .put("reactions", reactionsOn())
-                            .put("liveliness", liveliness())
-                            .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION)
-                            .put("watch", watch.status(android.os.SystemClock.elapsedRealtime()));
-                } catch (Exception ignored) {
-                }
-                return s;
-            }
-
-            @Override
-            public void action(String name) {
-                Brain.this.action(name);
-            }
-
-            @Override
-            public java.util.List<String> routineNames() {
-                return routines.names();
-            }
-
-            @Override
-            public void runRoutine(String name) {
-                Brain.this.runRoutine(name);
-            }
-
-            @Override
-            public java.util.List<String> placeNames() {
-                return places.names();
-            }
-
-            @Override
-            public void goTo(String place) {
-                Brain.this.goTo(place);
-            }
-
-            @Override
-            public void projector(int mode) {
-                Brain.this.projector(mode);
-            }
-
-            @Override
-            public void setVolume(int percent) {
-                sounds.setVolume(percent);
-            }
-
-            @Override
-            public void log(String msg) {
-                Log.i(TAG, msg);
-            }
-
-            @Override
-            public void watchUpdate(JSONObject msg) {
-                try {
-                    Log.i(TAG, "home assistant: watch " + watch.update(msg, true, android.os.SystemClock.elapsedRealtime()));
-                } catch (IllegalArgumentException e) {
-                    Log.w(TAG, "home assistant: watch update ignored: " + e.getMessage());
-                }
-            }
-
-            @Override
-            public void setWatch(boolean on) {
-                setWatchEnabled(on);
-            }
-
-            @Override
-            public void haStatus(String state) {
-                try {
-                    io.send(new JSONObject().put("agent", "mqtt-status").put("state", state));
-                } catch (Exception ignored) {
-                }
-            }
-        };
+    private void pluginsEvent(String type) {
+        if (plugins == null) return; // during startup
+        try {
+            plugins.event(type, new JSONObject().put("name", seq.running()).put("last_routine", lastRoutine));
+            plugins.event(Plugin.EVENT_STATE, null); // "action" is part of the state
+        } catch (Exception ignored) {
+        }
     }
+
+    /** What plugins can reach; PluginContext checks their permissions before calling any of it. */
+    private final PluginContext.Host pluginHost = new PluginContext.Host() {
+        @Override
+        public JSONObject state() {
+            JSONObject s = new JSONObject();
+            try {
+                int m = robot.mode;
+                s.put("battery", robot.battery).put("charging", robot.charging)
+                        .put("lightsaber", robot.lightsaber != 0).put("arm", robot.arm != 0)
+                        .put("projector", robot.projector).put("lcd_s", robot.lcdS >= 2).put("lcd_l", robot.lcdL >= 2)
+                        .put("mode", m >= 1 && m <= HomeAssistant.MODES.length ? HomeAssistant.MODES[m - 1] : "ready")
+                        .put("action", seq.running()).put("error", robot.error).put("location", places.location())
+                        .put("muted", sounds.muted()).put("volume", sounds.volume())
+                        .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
+                        .put("reactions", reactionsOn())
+                        .put("liveliness", liveliness())
+                        .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION)
+                        .put("watch", watch.status(android.os.SystemClock.elapsedRealtime()));
+            } catch (Exception ignored) {
+            }
+            return s;
+        }
+
+        @Override
+        public boolean isAction(String name) {
+            return Arrays.asList(ACTIONS).contains(name);
+        }
+
+        @Override
+        public void action(String name) {
+            Brain.this.action(name);
+        }
+
+        @Override
+        public void stop() {
+            Brain.this.action("stop");
+        }
+
+        @Override
+        public void projector(int mode) {
+            Brain.this.projector(mode);
+        }
+
+        @Override
+        public java.util.List<String> routineNames() {
+            return routines.names();
+        }
+
+        @Override
+        public String runRoutine(String name) {
+            return routines.exists(name) ? Brain.this.runRoutine(name) : "no routine named " + name;
+        }
+
+        @Override
+        public String saveRoutine(JSONObject routine) throws Routine.Invalid {
+            return Brain.this.saveRoutine(routine);
+        }
+
+        @Override
+        public String deleteRoutine(String name) {
+            String r = Brain.this.deleteRoutine(name);
+            return r.startsWith("deleted") ? null : r;
+        }
+
+        @Override
+        public void controller(JSONObject cmd) {
+            wake();
+            io.send(cmd);
+        }
+
+        @Override
+        public void playSound(int number) {
+            sounds.play(number, true);
+        }
+
+        @Override
+        public void setVolume(int percent) {
+            sounds.setVolume(percent);
+        }
+
+        @Override
+        public void led(int r, int b, int y, int g) {
+            try {
+                io.send(new JSONObject().put("cmd", "led").put("r", r).put("b", b).put("y", y).put("g", g));
+            } catch (Exception ignored) {
+            }
+        }
+
+        @Override
+        public java.util.List<String> placeNames() {
+            return places.names();
+        }
+
+        @Override
+        public void goTo(String place) {
+            Brain.this.goTo(place);
+        }
+
+        @Override
+        public String watchUpdate(JSONObject msg) {
+            return watch.update(msg, true, android.os.SystemClock.elapsedRealtime());
+        }
+
+        @Override
+        public void setWatch(boolean on) {
+            setWatchEnabled(on);
+        }
+
+        @Override
+        public void log(String msg) {
+            Log.i(TAG, msg);
+        }
+    };
 
     // ---- Voice.Host and FaceTracker.Host ----------------------------------------------------
 

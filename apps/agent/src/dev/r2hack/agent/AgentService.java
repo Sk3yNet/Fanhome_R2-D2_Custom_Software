@@ -143,7 +143,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         else if ("shutdown".equals(kind)) shutdown("requested by the main app");
         else if ("settings".equals(kind)) settings = msg;
         else if ("running".equals(kind)) running = msg;
-        else if ("routines-reply".equals(kind)) mainRequests.onReply(msg);
+        else if ("routines-reply".equals(kind) || "plugins-reply".equals(kind)) mainRequests.onReply(msg);
         else if ("wifi-scan".equals(kind)) {
             try {
                 toMain(new JSONObject().put("agent", "wifi-list").put("seq", msg.optInt("seq"))
@@ -258,6 +258,18 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         }
         if ("goto".equals(op) && ask.optString("name").isEmpty()) return bad("place= is required, e.g. ?place=kitchen or ?place=home");
         JSONObject reply = mainRequests.ask(ask.put("agent", "routines"), ROUTINE_REPLY_MS);
+        if (reply == null) return HttpApi.Response.json(503, "{\"error\":\"the main app is not connected or did not answer\"}");
+        boolean ok = reply.optBoolean("ok");
+        reply.remove("agent");
+        reply.remove("seq");
+        reply.remove("ok");
+        return HttpApi.Response.json(ok ? 200 : 400, reply.toString(2));
+    }
+
+    /** Hands a plugin request to the main app (PluginManager.request) and returns its answer. */
+    private HttpApi.Response plugins(JSONObject ask) throws Exception {
+        if (passive) return passiveError();
+        JSONObject reply = mainRequests.ask(ask.put("agent", "plugins"), ROUTINE_REPLY_MS);
         if (reply == null) return HttpApi.Response.json(503, "{\"error\":\"the main app is not connected or did not answer\"}");
         boolean ok = reply.optBoolean("ok");
         reply.remove("agent");
@@ -549,6 +561,33 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                     return bad("the body must be a JSON object, e.g. {\"state\":\"playing\",\"cue\":\"a-new-hope\",\"position\":0}");
                 }
                 return routines(new JSONObject().put("op", "watch").put("watch", body));
+            }
+            case "GET /plugins":
+                return plugins(new JSONObject().put("op", "list"));
+            case "POST /plugin": { // ?name=&enabled=1|0 and/or &grant=status,actions (empty: nothing)
+                String name = req.query.get("name"), en = req.query.get("enabled");
+                boolean grant = req.query.containsKey("grant");
+                if (name == null || name.isEmpty()) return bad("name= is required, e.g. ?name=home-assistant");
+                if (en == null && !grant) return bad("send enabled=1|0 and/or grant=<permissions>");
+                if (en != null && !"1".equals(en) && !"0".equals(en)) return bad("enabled= must be 1 or 0");
+                EventLog.i("plugin " + name + (en == null ? "" : "1".equals(en) ? ": enable" : ": disable")
+                        + (grant ? ", grant [" + req.query.get("grant") + "]" : ""));
+                HttpApi.Response r;
+                if (grant) {
+                    r = plugins(new JSONObject().put("op", "grant").put("name", name).put("permissions", req.query.get("grant")));
+                    if (r.code != 200 || en == null) return r;
+                }
+                return plugins(new JSONObject().put("op", "1".equals(en) ? "enable" : "disable").put("name", name));
+            }
+            case "POST /plugin/config": { // ?name= ; body: JSON object merged into the plugin's config (null removes a key)
+                JSONObject body;
+                try {
+                    body = new JSONObject(req.bodyText);
+                } catch (Exception e) {
+                    return bad("the body must be a JSON object: " + e.getMessage());
+                }
+                EventLog.i("plugin " + req.query.get("name") + ": config changed");
+                return plugins(new JSONObject().put("op", "config").put("name", req.query.get("name") == null ? "" : req.query.get("name")).put("config", body));
             }
             case "POST /shutdown":
                 new Thread(new Runnable() {
