@@ -103,6 +103,9 @@ He can also be a voice assistant for Home Assistant's Assist, including AI conve
 (see [docs/home-assistant-voice.md](docs/home-assistant-voice.md)). *Built, not yet tested on the robot.*
 With `tools\r2.ps1 mqtt <broker-ip> -User <name>` R2 joins Home Assistant through MQTT discovery: battery and
 charging sensors, buttons for the actions and routines, and switches for the lightsaber, arm, projectors and displays. *Built, not yet tested on the robot.*
+**Watch with me:** R2 reacts along with a film (gasps, cheers, head turns) from a cue file of times, following
+your media player's position through Home Assistant, or started by hand with `tools\r2.ps1 watch-start`
+(see [docs/watch-with-me.md](docs/watch-with-me.md)). *Built, not yet tested on the robot.*
 
 Droid sounds come from the factory app on your robot and need a sound map in
 `apps\main\assets\sounds.json`, which isn't included; without it every action still runs, silently. The robot is found automatically by its UDP announcement, or use `-Robot <ip>`.

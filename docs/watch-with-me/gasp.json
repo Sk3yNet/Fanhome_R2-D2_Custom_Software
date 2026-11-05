@@ -1,0 +1,12 @@
+{
+  "name": "gasp",
+  "description": "Watch-with-me: startled, a quick look away and back",
+  "timeout": 10,
+  "while_charging": true,
+  "steps": [
+    {"sound": 12},
+    {"head": -35},
+    {"wait": 0.8},
+    {"head": 0}
+  ]
+}

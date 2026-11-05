@@ -47,6 +47,7 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...` ·
 `POST /assist?mode=off|robot|ha&host=<ip>` (Home Assistant voice satellite, see [home-assistant-voice.md](home-assistant-voice.md)) ·
 `GET /routines` · `GET /routine?name=` · `POST /routine` (JSON body) · `POST /routine/run?name=` · `POST /routine/stop` · `POST /routine/delete?name=` (see [routines.md](routines.md)) ·
+`GET /cues` · `GET /cue?name=` · `POST /cue` (JSON body) · `POST /cue/delete?name=` · `GET /watch` · `POST /watch` (`{"state","position","title","cue","enabled"}`; see [watch-with-me.md](watch-with-me.md)) ·
 `GET /mqtt` · `POST /mqtt` (`{"host","port","username","password","prefix","enabled"}`) ·
 `GET /places` · `GET /place?name=` · `POST /place` · `POST /place/delete?name=` · `POST /goto?place=` · `POST /tour` ·
 `POST /place/here?name=` · `POST /place/teach?name=&what=there|back|turn` · `POST /place/teach/save` · `POST /place/teach/cancel` ·
@@ -153,20 +154,21 @@ shows it.
 
 The device (named after the robot) has:
 - **Sensors:** battery (%), charging, mode (ready, sleeping, pairing, patrol, phone control), the action
-  that is running, and the controller's error (diagnostic).
+  that is running, the controller's error (diagnostic), and the watch-with-me state.
 - **Buttons:** stop, wake up, turn left / right / around, go forward, walk a circle, patrol, dance, shake
   head, who are you, make some noise, flash front / back light, go home, tour the rooms, and one button per
   stored routine (`Routine <name>`). Rooms ([places.md](places.md)): a **Location** sensor and a **Go to** select. A routine that is saved or deleted shows up or disappears within a second or so.
 - **Switches:** lightsaber, arm, projector Princess Leia, projector Skywalker, short and long display,
-  mute, voice commands, face tracking. A switch runs the matching action only if R2 isn't already in that
+  mute, voice commands, face tracking, watch with me ([watch-with-me.md](watch-with-me.md)). A switch runs the matching action only if R2 isn't already in that
   state. The lightsaber, arm, projector and display states come from the controller's status, which R2
   reads every 5 s, so a switch can take a few seconds to show its new state.
 - **Volume** (0–100 %), shared with the droid sounds and the media player.
 - **Availability:** R2 is shown as unavailable when R2 Main stops or loses the broker (MQTT last will).
 
 Topics are under `r2d2/<robot id>/`: state in `battery`, `charging`, `mode`, `action`, `error`,
-`volume`, `switch/<name>`; commands in `action/run` (payload: the action name), `routine/run` (payload: the routine name), `switch/<name>/set`
-(`ON`/`OFF`) and `volume/set`. When Home Assistant restarts (`homeassistant/status` = `online`), R2 sends
+`volume`, `switch/<name>`, `watch/state`, `watch/attributes`; commands in `action/run` (payload: the action name), `routine/run` (payload: the routine name), `switch/<name>/set`
+(`ON`/`OFF`), `volume/set` and `watch/set` (a media player's state and position, see
+[watch-with-me.md](watch-with-me.md)). When Home Assistant restarts (`homeassistant/status` = `online`), R2 sends
 discovery and state again.
 
 **Safety and security:** MQTT commands run as ordinary actions, so the agent's motion watchdog,

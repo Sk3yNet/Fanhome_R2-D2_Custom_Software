@@ -29,7 +29,7 @@ final class HomeAssistant {
         /**
          * The robot's state: battery (int, -1 unknown), charging (0/1/2), lightsaber, arm, lcd_s, lcd_l
          * (booleans), projector (0/1/2), mode (string), action (string), error (string), muted, voice,
-         * face (booleans), volume (0-100), name, uuid, version, location (strings).
+         * face (booleans), volume (0-100), name, uuid, version, location (strings), watch (WatchWithMe.status()).
          */
         JSONObject haState();
 
@@ -49,6 +49,12 @@ final class HomeAssistant {
         void projector(int mode);
 
         void setVolume(int percent);
+
+        /** A media player update for watch-with-me (docs/watch-with-me.md), from the watch/set topic. */
+        void watchUpdate(JSONObject msg);
+
+        /** The "Watch with me" switch. */
+        void setWatch(boolean on);
 
         void log(String msg);
 
@@ -74,6 +80,7 @@ final class HomeAssistant {
             {"short-lcd", "Short display", "mdi:led-strip"}, {"long-lcd", "Long display", "mdi:led-strip"},
             {"mute", "Mute", "mdi:volume-off"}, {"voice", "Voice commands", "mdi:microphone"},
             {"face", "Face tracking", "mdi:face-recognition"},
+            {"watch", "Watch with me", "mdi:movie-open-play"},
     };
 
     static final String[] MODES = {"ready", "sleeping", "pairing", "patrol", "phone control"};
@@ -249,7 +256,7 @@ final class HomeAssistant {
                     discoveredFor = "";
                 }
                 c.subscribe(base() + "/action/run", base() + "/routine/run", base() + "/goto/set", base() + "/switch/+/set", base() + "/volume/set",
-                        s.prefix + "/status");
+                        watchTopic(), s.prefix + "/status");
                 client = c;
                 setStatus("connected to " + addr.getHostAddress() + ":" + s.port);
                 stateChanged(); // publish discovery and state now
@@ -351,6 +358,14 @@ final class HomeAssistant {
             stateChanged();
             return;
         }
+        if (topic.equals(watchTopic())) {
+            try {
+                host.watchUpdate(new JSONObject(payload));
+            } catch (Exception e) {
+                host.log("home assistant: watch update is not a JSON object: " + clip(payload));
+            }
+            return;
+        }
         String sw = b + "/switch/";
         if (topic.startsWith(sw) && topic.endsWith("/set")) {
             String id = topic.substring(sw.length(), topic.length() - 4);
@@ -392,6 +407,9 @@ final class HomeAssistant {
             case "face":
                 host.action(on ? "face-on" : "face-off");
                 break;
+            case "watch":
+                host.setWatch(on);
+                break;
             default:
                 break;
         }
@@ -409,6 +427,10 @@ final class HomeAssistant {
             case "mute": return st.optBoolean("muted");
             case "voice": return st.optBoolean("voice");
             case "face": return st.optBoolean("face");
+            case "watch": {
+                JSONObject w = st.optJSONObject("watch");
+                return w != null && w.optBoolean("enabled");
+            }
             default: return null;
         }
     }
@@ -487,6 +509,20 @@ final class HomeAssistant {
         m.put(b + "/volume", String.valueOf(st.optInt("volume")));
         m.put(b + "/location", st.optString("location", "unknown"));
         for (String[] sw : SWITCHES) m.put(b + "/switch/" + sw[0], switchState(sw[0], st) ? "ON" : "OFF");
+        JSONObject w = st.optJSONObject("watch");
+        if (w != null) {
+            m.put(b + "/watch/state", w.optString("state", "off"));
+            // No position here: it would change every second. Home Assistant has the player's own position.
+            JSONObject attrs = new JSONObject();
+            try {
+                for (String k : new String[] {"cue", "title", "last", "skipped"}) attrs.put(k, w.opt(k));
+                JSONObject next = w.optJSONObject("next");
+                attrs.put("next", next == null ? "" : next.optString("at") + " " + next.optString("what")
+                        + (next.optString("note").isEmpty() ? "" : " (" + next.optString("note") + ")"));
+            } catch (Exception ignored) {
+            }
+            m.put(b + "/watch/attributes", attrs.toString());
+        }
         return m;
     }
 
@@ -522,6 +558,9 @@ final class HomeAssistant {
                 .put("state_topic", b + "/volume").put("command_topic", b + "/volume/set")
                 .put("min", 0).put("max", 100).put("step", 5).put("unit_of_measurement", "%")
                 .put("icon", "mdi:volume-high"));
+        m.put(p + "/sensor/" + node + "/watch_state/config", entity("Watch-with-me state", node, "watch_state", device, origin)
+                .put("state_topic", b + "/watch/state").put("json_attributes_topic", b + "/watch/attributes")
+                .put("icon", "mdi:movie-open-play"));
         for (String[] btn : BUTTONS) {
             String obj = "action_" + btn[0].replace('-', '_');
             JSONObject e = entity(btn[1], node, obj, device, origin)
@@ -568,6 +607,11 @@ final class HomeAssistant {
 
     String base() {
         return "r2d2/" + nodeId();
+    }
+
+    /** Where Home Assistant sends media player updates for watch-with-me. */
+    String watchTopic() {
+        return base() + "/watch/set";
     }
 
     String availabilityTopic() {
