@@ -64,6 +64,10 @@ routine engine in section 6.
 - [ ] **Sleep after 3 minutes idle** (sleep lights, voice and camera paused); any action wakes the robot. *Built, not yet tested on the robot.*
 - [ ] **Idle personality:** while awake and idle, random sounds from mood banks and an occasional look around, set by
       one liveliness switch (off, quiet, chatty, full) that other features share ([liveliness.md](docs/liveliness.md)). *Built, not yet tested on the robot.*
+- [ ] **React to claps and loud sounds:** a clap gets a curious chirp, a double clap a happy song (and
+      wakes R2), a loud sound a startled one, with head moves at full liveliness. Follows the shared
+      liveliness setting and has its own on/off switch. See [docs/sound-reactions.md](docs/sound-reactions.md).
+      *Built, not yet tested on the robot.* The detection thresholds need tuning on the real microphone.
 
 ### Voice commands
 - [x] Offline voice commands for the actions and toggles above, including "Princess Leia" and

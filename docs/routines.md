@@ -47,11 +47,13 @@ A routine named like one of these built-in actions replaces it everywhere: voice
 robot's buttons, the phone app, the web page and `/action`:
 `wake`, `turn-left`, `turn-right`, `turn-around`, `forward`, `circle`, `dance`, `shake-head`,
 `who-are-you`, `noise`, `not-recognized`, `lightsaber`, `arm`, `short-lcd`, `long-lcd`, `flash-front`,
-`flash-back`, `leia`, `luke`. Delete the routine to get the built-in one back.
+`flash-back`, `leia`, `luke`, and the sound reactions `react-clap`, `react-double-clap` and `react-loud`
+([sound-reactions.md](sound-reactions.md)). Delete the routine to get the built-in one back.
 [routines/shake-head.json](routines/shake-head.json) is the built-in shake-head written as a routine.
 
 The other action names (`stop`, `patrol`, `pair`, `mute`, `unmute`, `voice-on`/`-off`, `face-on`/`-off`,
-`phone-app-on`/`-off`, `liveliness-off`/`-quiet`/`-chatty`/`-full`) are reserved and can't be used for routines.
+`phone-app-on`/`-off`, `liveliness-off`/`-quiet`/`-chatty`/`-full`,
+`reactions-on`/`-off`) are reserved and can't be used for routines.
 
 ## Format
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore, Triggers), places (Places),
-# watch-with-me (CueFile, CueStore, WatchWithMe), idle personality (IdlePersonality), "follow me"
+# watch-with-me (CueFile, CueStore, WatchWithMe), idle personality (IdlePersonality), sound reactions
+# (SoundReactions), "follow me"
 # (FollowTracker, FollowControl, Follower), Home Assistant link
 # (HomeAssistant, without a broker), the chirp generator (Chirp), Home Assistant voice replies (Assist, Beeps),
 # the plugin interface (PluginManager,
@@ -36,18 +37,20 @@ SRC=$APPS_DIR/main/src/dev/r2hack/main
 javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \
     "$SRC/Routine.java" "$SRC/RoutineRunner.java" "$SRC/RoutineStore.java" "$SRC/Triggers.java" "$SRC/Places.java" "$SRC/Chirp.java" \
     "$SRC/CueFile.java" "$SRC/CueStore.java" "$SRC/WatchWithMe.java" "$SRC/IdlePersonality.java" \
-    "$SRC/HomeAssistant.java" "$SRC/MqttClient.java" "$SRC/LocalNet.java" \
+    "$SRC/SoundReactions.java" "$SRC/HomeAssistant.java" "$SRC/MqttClient.java" "$SRC/LocalNet.java" \
     "$SRC/FollowTracker.java" "$SRC/FollowControl.java" "$SRC/Follower.java" \
     "$APPS_DIR/main/test/dev/r2hack/main/RoutineTest.java" "$APPS_DIR/main/test/dev/r2hack/main/PlacesTest.java" \
     "$APPS_DIR/main/test/dev/r2hack/main/WatchTest.java" \
     "$APPS_DIR/main/test/dev/r2hack/main/IdleTest.java" "$APPS_DIR/main/test/dev/r2hack/main/HomeAssistantTest.java" \
     "$APPS_DIR/main/test/dev/r2hack/main/ChirpTest.java" \
+    "$APPS_DIR/main/test/dev/r2hack/main/SoundReactionsTest.java" \
     "$APPS_DIR/main/test/dev/r2hack/main/FollowTest.java"
 java -cp "$OUT:$JAR" dev.r2hack.main.RoutineTest "$ROOT/docs/routines"
 java -cp "$OUT:$JAR" dev.r2hack.main.PlacesTest
 java -cp "$OUT:$JAR" dev.r2hack.main.WatchTest "$ROOT/docs/watch-with-me"
 java -cp "$OUT:$JAR" dev.r2hack.main.IdleTest
 java -cp "$OUT:$JAR" dev.r2hack.main.HomeAssistantTest
+java -cp "$OUT:$JAR" dev.r2hack.main.SoundReactionsTest
 java -cp "$OUT:$JAR" dev.r2hack.main.ChirpTest "$APPS_DIR/out/chirps"
 java -cp "$OUT:$JAR" dev.r2hack.main.FollowTest
 

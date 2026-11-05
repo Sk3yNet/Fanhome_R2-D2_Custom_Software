@@ -91,6 +91,7 @@ final class HomeAssistant {
             {"mute", "Mute", "mdi:volume-off"}, {"voice", "Voice commands", "mdi:microphone"},
             {"face", "Face tracking", "mdi:face-recognition"},
             {"watch", "Watch with me", "mdi:movie-open-play"},
+            {"reactions", "Sound reactions", "mdi:hand-clap"},
             {"beeps", "Answer in beeps", "mdi:message-processing"},
     };
 
@@ -487,6 +488,9 @@ final class HomeAssistant {
             case "watch":
                 host.setWatch(on);
                 break;
+            case "reactions":
+                host.action(on ? "reactions-on" : "reactions-off");
+                break;
             case "beeps":
                 host.action(on ? "beeps-on" : "beeps-off");
                 break;
@@ -511,6 +515,7 @@ final class HomeAssistant {
                 JSONObject w = st.optJSONObject("watch");
                 return w != null && w.optBoolean("enabled");
             }
+            case "reactions": return st.optBoolean("reactions");
             case "beeps": return st.optBoolean("beeps");
             default: return null;
         }
