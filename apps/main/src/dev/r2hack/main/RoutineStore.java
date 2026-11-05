@@ -95,7 +95,7 @@ final class RoutineStore {
         return new File(dir, name + ".json");
     }
 
-    private static String read(File f) throws Exception {
+    static String read(File f) throws Exception {
         InputStream in = new FileInputStream(f);
         try {
             ByteArrayOutputStream b = new ByteArrayOutputStream();

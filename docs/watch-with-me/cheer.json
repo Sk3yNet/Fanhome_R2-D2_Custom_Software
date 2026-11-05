@@ -1,0 +1,14 @@
+{
+  "name": "cheer",
+  "description": "Watch-with-me: happy whistle, wiggle the head, flash the front light",
+  "timeout": 15,
+  "while_charging": true,
+  "steps": [
+    {"sound": 1},
+    {"led": {"r": 5, "b": 5}},
+    {"repeat": 2, "steps": [{"head": -25}, {"wait": 0.6}, {"head": 25}, {"wait": 0.6}]},
+    {"head": 0},
+    {"wait": 1},
+    {"led": {"r": 2, "b": 2}}
+  ]
+}

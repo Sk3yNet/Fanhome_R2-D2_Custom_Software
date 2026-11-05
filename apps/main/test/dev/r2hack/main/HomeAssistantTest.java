@@ -27,6 +27,8 @@ public final class HomeAssistantTest {
         public void runRoutine(String name) { }
         public void projector(int mode) { }
         public void setVolume(int percent) { }
+        public void watchUpdate(JSONObject msg) { }
+        public void setWatch(boolean on) { }
         public void log(String msg) { }
         public void haStatus(String state) { }
     }

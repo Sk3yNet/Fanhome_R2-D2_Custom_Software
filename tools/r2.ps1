@@ -11,6 +11,16 @@
 #   routine-run <name>       run a routine (also: action <name>)
 #   routine-stop             end the running routine or action
 #   routine-delete <name>    delete a routine (a replaced built-in action comes back)
+#   cues                     list the watch-with-me cue files (docs/watch-with-me.md)
+#   cue <name>               show one cue file's JSON
+#   cue-put <file.json>      upload a cue file (checked on the robot; replaces one with the same name)
+#   cue-delete <name>        delete a cue file
+#   watch                    watch-with-me: what R2 is watching, where, and the next reaction
+#   watch-start <cue> [-At h:mm:ss]
+#                            start reacting along with a film by hand (press play at the same moment),
+#                            from the start or from -At; Home Assistant does this by itself when set up
+#   watch-pause | watch-resume | watch-stop
+#   watch-on | watch-off     the "Watch with me" switch: off keeps R2 quiet during films
 #   volume <0-100>           droid sounds and music volume (kept across reboots)
 #   liveliness [level]       how much R2 does on his own: off, quiet, chatty or full (docs/liveliness.md);
 #                            no level shows the current one
@@ -52,7 +62,8 @@ param(
     [Parameter(Position = 1)][string]$Arg,
     [string]$Robot,
     [string]$User,
-    [int]$Lines = 500
+    [int]$Lines = 500,
+    [string]$At
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
@@ -133,6 +144,30 @@ switch ($Command) {
     'routine-run'  { if (-not $Arg) { throw 'usage: r2.ps1 routine-run <name>' }; Call POST "/routine/run?name=$([uri]::EscapeDataString($Arg))" }
     'routine-stop' { Call POST /routine/stop }
     'routine-delete' { if (-not $Arg) { throw 'usage: r2.ps1 routine-delete <name>' }; Call POST "/routine/delete?name=$([uri]::EscapeDataString($Arg))" }
+    'cues'         {
+        $d = Call GET /cues
+        $d.cues | Format-Table name, title, cues, offset, @{ n = 'match'; e = { $_.match -join ', ' } }, error -AutoSize
+    }
+    'cue'          { if (-not $Arg) { throw 'usage: r2.ps1 cue <name>' }; (Call GET "/cue?name=$([uri]::EscapeDataString($Arg))").cue | ConvertTo-Json -Depth 20 }
+    'cue-put'      {
+        if (-not $Arg -or -not (Test-Path $Arg)) { throw 'usage: r2.ps1 cue-put <file.json>  (examples: docs\watch-with-me\)' }
+        Call POST /cue (Get-Content $Arg -Raw -Encoding UTF8)
+    }
+    'cue-delete'   { if (-not $Arg) { throw 'usage: r2.ps1 cue-delete <name>' }; Call POST "/cue/delete?name=$([uri]::EscapeDataString($Arg))" }
+    'watch'        { Call GET /watch | ConvertTo-Json -Depth 5 }
+    'watch-start'  {
+        if (-not $Arg) { throw 'usage: r2.ps1 watch-start <cue file> [-At h:mm:ss]  (list: r2.ps1 cues)' }
+        $body = @{ state = 'playing'; cue = $Arg; position = $(if ($At) { $At } else { 0 }) }
+        Call POST /watch ($body | ConvertTo-Json -Compress)
+    }
+    'watch-pause'  { Call POST /watch '{"state":"paused"}' }
+    'watch-resume' {
+        $body = @{ state = 'playing' }; if ($At) { $body.position = $At }
+        Call POST /watch ($body | ConvertTo-Json -Compress)
+    }
+    'watch-stop'   { Call POST /watch '{"state":"stopped"}' }
+    'watch-on'     { Call POST /watch '{"enabled":true}' }
+    'watch-off'    { Call POST /watch '{"enabled":false}' }
     'volume'       { if ($Arg -notmatch '^\d+$') { throw 'usage: r2.ps1 volume <0-100>' }; Call POST "/volume?percent=$Arg" }
     'liveliness'   {
         if (-not $Arg) { (Call GET /status).liveliness }
