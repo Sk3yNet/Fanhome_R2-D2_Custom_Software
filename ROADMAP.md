@@ -187,6 +187,10 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       a joystick for driving and head, action buttons, routine triggers, an emergency stop, and the
       camera view. *Built, not yet tested on the robot.* Served at `http://<robot>:7700/`: status, joystick, head slider, action buttons and a stop button. The camera view is built too (shown only while open).
 - [ ] Uses the same authentication as the API (section 3).
+- [ ] **Activity presets:** one choice of Off, Quiet, Chatty or Full show for how lively R2 is on his own
+      (idle chatter and head turns, reactions to loud sounds, drive sounds, how long he stays awake), on the
+      web page and as a select in Home Assistant. *Built, not yet tested on the robot.* It is the
+      `liveliness` setting; see [docs/liveliness.md](docs/liveliness.md).
 - [ ] Later: gamepad support.
 
 ## 8. SD card installation (soft-mod)
@@ -213,7 +217,7 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       routines; switches for lightsaber, arm and projector; robot availability. *Built, not yet tested on the robot.*
       Also mode, current action and error sensors, display, mute, voice and face switches, and volume.
       Set the broker with `tools\r2.ps1 mqtt`; it must be on the robot's subnet or an allowed one.
-      Each stored routine gets a button too.
+      Each stored routine gets a button too, and the activity presets are a select.
 - [ ] **Watch with me:** R2 reacts during a film (sounds, head turns, lights) from a cue file of times,
       following a Home Assistant media player's position over MQTT, or started by hand
       (`tools\r2.ps1 watch-start`). Reactions never drive. See [docs/watch-with-me.md](docs/watch-with-me.md).
