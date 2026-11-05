@@ -101,6 +101,9 @@ Sounds are played from the factory app already installed on the robot; nothing i
 sound-number map lives in `apps\main\assets\sounds.json` (`{"7": "<resource name>", ...}`), which is
 not part of this repository. Without it R2 Main still runs every action, just silently.
 
+While R2 is awake and idle he chatters and looks around now and then, as much as the **liveliness**
+setting (off, quiet, chatty, full) allows: [liveliness.md](liveliness.md).
+
 ## Routines (R2 Main)
 Routines are JSON step lists (sounds, head moves, modes, driving, lights, built-in actions, waits on
 the robot's state, repeats) that R2 Main stores and runs on the same sequencer as the actions, with

@@ -111,6 +111,11 @@ final class Sounds {
         return true;
     }
 
+    /** The sound numbers this build can play (from assets/sounds.json, found in the factory app). */
+    java.util.Set<Integer> numbers() {
+        return new java.util.HashSet<>(ids.keySet());
+    }
+
     synchronized boolean isPlaying() {
         try {
             return player != null && player.isPlaying();
