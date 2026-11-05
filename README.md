@@ -107,6 +107,10 @@ charging sensors, buttons for the actions and routines, and switches for the lig
 your media player's position through Home Assistant, or started by hand with `tools\r2.ps1 watch-start`
 (see [docs/watch-with-me.md](docs/watch-with-me.md)). *Built, not yet tested on the robot.*
 
+Instead of the same recorded confirmation beep every time, R2 makes up a new chirp each time
+(`tools\r2.ps1 action chirps-off` brings the factory beep back), and `tools\r2.ps1 chirp happy` asks for one
+in a mood. See [docs/chirps.md](docs/chirps.md). *Built, not yet tested on the robot.*
+
 Droid sounds come from the factory app on your robot and need a sound map in
 `apps\main\assets\sounds.json`, which isn't included; without it every action still runs, silently. The robot is found automatically by its UDP announcement, or use `-Robot <ip>`.
 

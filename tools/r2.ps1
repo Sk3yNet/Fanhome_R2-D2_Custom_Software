@@ -4,6 +4,8 @@
 #   status | log             agent state / agent event log
 #   log-previous             agent event log from the previous boot (e.g. after a crash or power loss)
 #   action <name>            run a robot action, e.g. dance, wake, lightsaber, leia (list: actions)
+#   chirp [mood|'text']      a newly generated droid chirp: a mood (ack happy excited question sad worried
+#                            chatter; default random), or droid sounds shaped like a sentence (docs/chirps.md)
 #   stop                     emergency stop (the agent stops the robot itself, then cancels the action)
 #   routines                 list the stored routines (docs/routines.md) and what's running
 #   routine <name>           show one routine's JSON
@@ -49,6 +51,13 @@
 #   adb-always               keep adb over Wi-Fi on, also after reboots (trusted networks only)
 #   allow-subnets [list]     also accept API clients from these subnets, e.g. 10.0.20.0/24,10.0.30.5
 #                            (empty: only the robot's own subnet; no argument: show the list)
+#   hardening                boot hardening report: firewall, device permissions, Bluetooth, and what listens
+#                            on the network (docs/hardening.md)
+#   harden-on                switch on the firewall (as a 5-minute trial), tighten device permissions and keep
+#                            Bluetooth off, then check the API still answers and confirm the firewall
+#   harden-trial             firewall trial only, without confirming (it removes itself after 5 minutes)
+#   harden-confirm           keep the firewall in a trial, also after reboots
+#   harden-off               undo all of it (firewall, device permissions, Bluetooth)
 #   mqtt [host[:port]] [-User name]
 #                            Home Assistant over MQTT: set the broker (asks for the password with -User),
 #                            'off' switches it off, no argument shows the settings and connection state
@@ -74,13 +83,23 @@
 #                            robot ("hey R2-D2", then the request goes to Home Assistant), or wake word in Home Assistant
 #   assist-only [ip]         accept the voice connection only from this address (Home Assistant); no ip: anyone on R2's subnet
 #   reboot | shutdown
+#   switch-source <owner/repo | folder> [-Tag v1.2.3] [-Yes]
+#                            move the robot to builds signed with another key (another fork's releases, or your
+#                            own builds in a folder such as apps\out), keeping settings (docs/releases.md).
+#                            No argument: show who signed the robot's apps and which source it follows.
+#   save-settings [folder]   back up the main app's and the agent's settings to the PC (over root adb)
+#   restore-settings <folder> [-Agent]
+#                            put the main app's settings back from a backup; -Agent also the agent's (then reboots)
 param(
     [Parameter(Position = 0, Mandatory = $true)][string]$Command,
     [Parameter(Position = 1)][string]$Arg,
     [string]$Robot,
     [string]$User,
     [int]$Lines = 500,
-    [string]$At
+    [string]$At,
+    [string]$Tag,
+    [switch]$Yes,
+    [switch]$Agent
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
@@ -140,13 +159,150 @@ function Call([string]$Method, [string]$Path, $Body, [string]$InFile, [int]$Time
     Invoke-RestMethod @p
 }
 
+# ---- Switching signers (switch-source, save-settings, restore-settings). Plan: docs/releases.md ----
+$adbExe = Join-Path $PSScriptRoot 'platform-tools\adb.exe'
+$apps = @{
+    main  = @{ pkg = 'dev.r2hack.main'; apk = 'R2Main.apk'; dirs = @('shared_prefs', 'files/routines', 'files/cues'); files = @('files/voice/keywords.txt', 'files/places.json') }
+    agent = @{ pkg = 'dev.r2hack.agent'; apk = 'R2Agent.apk'; dirs = @('shared_prefs'); files = @() }
+}
+$sourceFile = Join-Path $root 'secrets\robot-source.json'
+
+function Invoke-AdbShell([string]$Target, [string]$Cmd) {
+    @(& $adbExe -s $Target shell $Cmd) | ForEach-Object { "$_".TrimEnd("`r") }
+}
+
+# Installed app on the robot: APK path, versionCode and Linux uid (from dumpsys, as KitKat has no grep).
+function Get-RobotApp([string]$Target, [string]$Name) {
+    $pkg = $apps[$Name].pkg
+    $path = @(Invoke-AdbShell $Target "pm path $pkg") -match '^package:' | Select-Object -First 1
+    if (-not $path) { return $null }
+    $dump = (Invoke-AdbShell $Target "dumpsys package $pkg") -join "`n"
+    $info = @{ path = $path.Substring(8).Trim(); version = 0; uid = $null; cert = $null }
+    if ($dump -match 'versionCode=(\d+)') { $info.version = [long]$Matches[1] }
+    if ($dump -match 'userId=(\d+)') { $info.uid = $Matches[1] }
+    return $info
+}
+
+# Pulls the installed APK to $Dir and reads its certificate there.
+function Get-RobotSigner([string]$Target, [string]$Name, [string]$Dir) {
+    $info = Get-RobotApp $Target $Name
+    if (-not $info) { return $null }
+    $local = Join-Path $Dir $apps[$Name].apk
+    & $adbExe -s $Target pull $info.path $local 2>&1 | Out-Null
+    if (-not (Test-Path $local)) { throw "could not copy $($info.path) from the robot" }
+    $info.cert = Get-ApkCert $local
+    return $info
+}
+
+# Copies an app's settings (shared_prefs and the files listed in $apps) to $Dir\<app>\. Returns the file count.
+function Save-AppSettings([string]$Target, [string]$Name, [string]$Dir) {
+    $data = "/data/data/$($apps[$Name].pkg)"
+    $rels = @($apps[$Name].files)
+    foreach ($d in $apps[$Name].dirs) {
+        # Entries are plain names; an error line ("...: No such file or directory") has a colon or slash.
+        # *.bak is a half-written preferences file, which Android would restore over the real one.
+        $rels += Invoke-AdbShell $Target "ls $data/$d" | Where-Object { $_ -and $_ -notmatch '[:/]' -and $_ -notmatch '\.bak$' } | ForEach-Object { "$d/$_" }
+    }
+    $n = 0
+    foreach ($rel in $rels) {
+        if (@(Invoke-AdbShell $Target "ls '$data/$rel'") -notcontains "$data/$rel") { continue }   # optional file not there
+        $local = Join-Path (Join-Path $Dir $Name) $rel
+        New-Item -ItemType Directory -Force (Split-Path $local) | Out-Null
+        & $adbExe -s $Target pull "$data/$rel" $local 2>&1 | Out-Null
+        if (-not (Test-Path $local)) { throw "could not copy $data/$rel" }
+        $n++
+    }
+    return $n
+}
+
+# Puts saved settings back and gives them to the app's current uid (a reinstall gets a new one).
+# The app must not be running, or it may write its old settings over them.
+function Restore-AppSettings([string]$Target, [string]$Name, [string]$Dir) {
+    $base = Join-Path $Dir $Name
+    if (-not (Test-Path $base)) { return 0 }
+    $info = Get-RobotApp $Target $Name
+    if (-not $info -or -not $info.uid) { throw "$($apps[$Name].pkg) is not installed" }
+    $data = "/data/data/$($apps[$Name].pkg)"
+    $baseFull = (Resolve-Path $base).Path
+    $cmds = @(); $dirs = @{}
+    foreach ($f in Get-ChildItem $base -Recurse -File) {
+        $rel = $f.FullName.Substring($baseFull.Length + 1) -replace '\\', '/'
+        & $adbExe -s $Target push $f.FullName "$data/$rel" 2>&1 | Out-Null
+        $cmds += "chown $($info.uid):$($info.uid) '$data/$rel'; chmod 660 '$data/$rel'"
+        $parts = $rel.Split('/')
+        for ($i = 1; $i -lt $parts.Count; $i++) { $dirs[($parts[0..($i - 1)] -join '/')] = $true }
+    }
+    foreach ($d in $dirs.Keys) { $cmds += "chown $($info.uid):$($info.uid) '$data/$d'; chmod 771 '$data/$d'" }
+    for ($i = 0; $i -lt $cmds.Count; $i += 10) {   # a few at a time: adb shell command lines are short on KitKat
+        Invoke-AdbShell $Target ($cmds[$i..([Math]::Min($i + 9, $cmds.Count - 1))] -join '; ') | Out-Null
+    }
+    Invoke-AdbShell $Target "restorecon -R $data" | Out-Null
+    return @($cmds).Count - $dirs.Count
+}
+
+# False when the agent no longer accepts our token (it lost its data); throws on other errors.
+function Test-Token {
+    try { Call GET /status | Out-Null; return $true }
+    catch {
+        $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($code -in 401, 403) { return $false }
+        throw
+    }
+}
+
+function Wait-Robot([int]$Seconds) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    Start-Sleep -Seconds 20
+    while ((Get-Date) -lt $deadline) {
+        try { $ip = Get-Robot; Invoke-RestMethod "http://${ip}:7700/ping" -TimeoutSec 3 | Out-Null; return $true }
+        catch { Start-Sleep -Seconds 5 }
+    }
+    return $false
+}
+
+# Where the new APKs come from: a folder with R2Agent.apk and R2Main.apk, or the latest (or -Tag) GitHub
+# release of owner/repo, downloaded to apps\out\releases\ and checked against its SHA256SUMS.
+function Get-Source([string]$Spec, [string]$ReleaseTag) {
+    if (Test-Path $Spec -PathType Container) {
+        $dir = (Resolve-Path $Spec).Path
+        return @{ dir = $dir; label = $dir; repo = $null; tag = $null; noteCert = $null }
+    }
+    if ($Spec -notmatch '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$') { throw "not a folder or owner/repo: $Spec" }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $api = "https://api.github.com/repos/$Spec/releases/" + $(if ($ReleaseTag) { "tags/$ReleaseTag" } else { 'latest' })
+    $headers = @{ 'User-Agent' = 'r2-switch-source'; Accept = 'application/vnd.github+json' }
+    try { $rel = Invoke-RestMethod $api -Headers $headers -TimeoutSec 30 }
+    catch { throw "no release found at $api ($($_.Exception.Message))" }
+    $dir = Join-Path $root ("apps\out\releases\" + ($Spec -replace '/', '-') + "-$($rel.tag_name)")
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    foreach ($name in 'R2Agent.apk', 'R2Main.apk', 'SHA256SUMS') {
+        $asset = $rel.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+        if (-not $asset) { throw "release $($rel.tag_name) of $Spec has no $name" }
+        Write-Host "downloading $name from $Spec $($rel.tag_name)"
+        Invoke-WebRequest $asset.browser_download_url -OutFile (Join-Path $dir $name) -Headers @{ 'User-Agent' = 'r2-switch-source' } -UseBasicParsing -TimeoutSec 300
+    }
+    foreach ($line in Get-Content (Join-Path $dir 'SHA256SUMS')) {
+        if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?(\S+)$') { continue }
+        $actual = (Get-FileHash (Join-Path $dir $Matches[2]) -Algorithm SHA256).Hash
+        if ($actual -ne $Matches[1]) { throw "$($Matches[2]) does not match SHA256SUMS: the download is damaged or was changed" }
+    }
+    $noteCert = if ($rel.body -match 'certificate SHA-256:\s*`([0-9a-f]{64})`') { $Matches[1] } else { $null }
+    return @{ dir = $dir; label = "$Spec $($rel.tag_name)"; repo = $Spec; tag = $rel.tag_name; noteCert = $noteCert }
+}
+
 switch ($Command) {
     'find'         { $ip = Find-Robot 10; if ($ip) { "robot at $ip" } else { 'no announcement heard' } }
     'status'       { Call GET /status | ConvertTo-Json -Depth 5 }
     'log'          { Call GET /log }
     'log-previous' { Call GET '/log?previous=1' }
-    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty liveliness-full' -split ' ' }
+    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized chirp lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty liveliness-full chirps-on chirps-off' -split ' ' }
     'action'       { if (-not $Arg) { throw 'usage: r2.ps1 action <name>  (see: r2.ps1 actions)' }; Call POST "/action?name=$([uri]::EscapeDataString("$Arg"))" }
+    'chirp'        {
+        $moods = 'random', 'ack', 'happy', 'excited', 'question', 'sad', 'worried', 'chatter'
+        if (-not $Arg) { Call POST '/chirp?mood=random' }
+        elseif ($Arg -in $moods) { Call POST "/chirp?mood=$Arg" }
+        else { Call POST /chirp $Arg }   # text: the body, so long sentences fit
+    }
     'stop'         { Call POST /stop }
     'routines'     {
         $d = Call GET /routines
@@ -264,6 +420,19 @@ switch ($Command) {
         if ($PSBoundParameters.ContainsKey('Arg')) { Call POST "/clients/allow?subnets=$([uri]::EscapeDataString("$Arg"))" }
         else { (Call GET /clients/allow).extra_subnets }
     }
+    'hardening'    { Call GET /hardening | ConvertTo-Json -Depth 6 }
+    'harden-trial' { Call POST '/hardening?firewall=1' }
+    'harden-confirm' { Call POST /hardening/confirm }
+    'harden-off'   { Call POST '/hardening?all=0' }
+    'harden-on'    {
+        (Call POST '/hardening?firewall=1&devices=1&bluetooth=1').result
+        Start-Sleep -Seconds 2
+        # A new connection through the firewall: if it gets through, the firewall can stay.
+        try { Call GET /status -Timeout 10 | Out-Null } catch {
+            throw "The API stopped answering with the firewall on, so it was NOT confirmed; it removes itself within 5 minutes. ($_)"
+        }
+        (Call POST /hardening/confirm).result
+    }
     'mqtt'         {
         if (-not $Arg) { Call GET /mqtt | ConvertTo-Json }
         elseif ($Arg -eq 'off') { Call POST /mqtt '{"enabled":false}' }
@@ -347,5 +516,129 @@ switch ($Command) {
     'sim-on'       { Call POST '/sim?on=1' }
     'sim-off'      { Call POST '/sim?on=0' }
     'sim-button'   { Call POST "/sim/button?value=$Arg" }
+    'save-settings' {
+        . (Join-Path $PSScriptRoot 'apk-info.ps1')
+        $dir = if ($Arg) { $Arg } else { Join-Path $root ('secrets\settings-' + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
+        $target = Connect-Adb
+        foreach ($name in 'agent', 'main') { "{0}: {1} files" -f $name, (Save-AppSettings $target $name $dir) }
+        "saved to $dir (it holds the API token and Wi-Fi and MQTT passwords: keep it private)"
+    }
+    'restore-settings' {
+        if (-not $Arg -or -not (Test-Path $Arg -PathType Container)) { throw 'usage: r2.ps1 restore-settings <folder> [-Agent]' }
+        $target = Connect-Adb
+        Call POST '/safe-mode?on=1' | Out-Null   # stops the main app so it can't overwrite what comes back
+        "main: {0} files restored" -f (Restore-AppSettings $target 'main' $Arg)
+        if ($Agent) {
+            "agent: {0} files restored, rebooting (the agent takes its token from the backup)" -f (Restore-AppSettings $target 'agent' $Arg)
+            & $adbExe -s $target reboot
+        } else { Call POST '/safe-mode?on=0' | Out-Null; 'main app restarted' }
+    }
+    'switch-source' {
+        . (Join-Path $PSScriptRoot 'apk-info.ps1')
+        $target = Connect-Adb 60
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $backup = Join-Path $root "secrets\switch-backup-$stamp"
+        New-Item -ItemType Directory -Force $backup | Out-Null
+        $old = @{}
+        foreach ($name in 'agent', 'main') { $old[$name] = Get-RobotSigner $target $name $backup }
+        $recorded = if (Test-Path $sourceFile) { Get-Content $sourceFile -Raw | ConvertFrom-Json } else { $null }
+        if (-not $Arg) {
+            Remove-Item $backup -Recurse -Force
+            foreach ($name in 'agent', 'main') {
+                if ($old[$name]) { '{0,-6} signed by {1}  (versionCode {2})' -f $name, $old[$name].cert, $old[$name].version }
+                else { '{0,-6} not installed' -f $name }
+            }
+            if ($recorded) { "source: $($recorded.source), switched $($recorded.switched)" } else { 'source: not recorded (never switched from this PC)' }
+            return
+        }
+
+        $src = Get-Source $Arg $Tag
+        $new = @{}
+        foreach ($name in 'agent', 'main') {
+            $f = Join-Path $src.dir $apps[$name].apk
+            if (-not (Test-Path $f)) { throw "missing $f" }
+            $new[$name] = @{ file = $f; cert = (Get-ApkCert $f); version = (Get-ApkVersionCode $f) }
+        }
+        if ($new.agent.cert -ne $new.main.cert) { throw "the two APKs in $($src.label) are signed with different keys" }
+        if ($src.noteCert -and $src.noteCert -ne $new.main.cert) {
+            throw "the release notes name certificate $($src.noteCert), but the APKs are signed with $($new.main.cert)"
+        }
+        $change = @{}
+        foreach ($name in 'agent', 'main') { $change[$name] = -not $old[$name] -or $old[$name].cert -ne $new[$name].cert }
+        if (-not $old.agent) { throw 'the agent is not installed: use tools\install-on-robot.ps1 install first' }
+        # The agent lives in /system. When there is also an over-the-air update in /data (push-agent), Android
+        # uses the /system copy at boot only if it is at least as new; otherwise the switch would silently not happen.
+        if ($change.agent -and $old.agent.path -notlike '/system/*' -and $new.agent.version -lt $old.agent.version) {
+            throw "the new agent (versionCode $($new.agent.version)) is older than the robot's over-the-air update ($($old.agent.version)). Pick a newer release."
+        }
+
+        "From: $(if ($recorded) { $recorded.source } else { 'current builds' })"
+        "  agent  $($old.agent.cert)"
+        "  main   $(if ($old.main) { $old.main.cert } else { 'not installed' })"
+        "To:   $($src.label)"
+        "  both   $($new.main.cert)"
+        if (-not $change.agent -and -not $change.main) {
+            Remove-Item $backup -Recurse -Force
+            'Same signer as on the robot: no switch needed. Update in place with push-main and push-agent.'
+            return
+        }
+        "Changes: $((@('agent', 'main') | Where-Object { $change[$_] }) -join ' and ') (reinstalled with the new key; settings are kept)"
+        if (-not $Yes -and (Read-Host 'Compare the certificate with the one the source publishes. Type yes to switch') -ne 'yes') {
+            Remove-Item $backup -Recurse -Force; 'cancelled, nothing changed'; return
+        }
+
+        # 1. Back up. The agent first, so its saved settings don't include the safe mode set next.
+        "agent settings: $(Save-AppSettings $target 'agent' $backup) files"
+        Call POST '/safe-mode?on=1' | Out-Null   # main app stopped and not relaunched while we work
+        if ($old.main) { "main settings: $(Save-AppSettings $target 'main' $backup) files" }
+        @{ from = $recorded; to = $src.label; backup = $backup } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $backup 'switch.json')
+        "backup with the old APKs: $backup"
+
+        # 2. Main app: uninstall (Android refuses an update from another key), install, put settings back.
+        if ($change.main) {
+            if ($old.main) { Invoke-AdbShell $target "pm uninstall $($apps.main.pkg)" | Out-Null }
+            $out = (& $adbExe -s $target install -r $new.main.file 2>&1) -join "`n"
+            if ($out -notmatch 'Success') {
+                Write-Warning "main app install failed: $out"
+                if ($old.main) {
+                    & $adbExe -s $target install -r (Join-Path $backup $apps.main.apk) | Out-Null
+                    Restore-AppSettings $target 'main' $backup | Out-Null
+                    'the previous main app and its settings are back'
+                }
+                Call POST '/safe-mode?on=0' | Out-Null
+                throw 'switch stopped; the agent was not changed'
+            }
+            "main app installed, $(Restore-AppSettings $target 'main' $backup) settings files restored"
+            # The agent's rollback copy is signed with the old key: drop it. The new build becomes the
+            # rollback copy once it has run through probation.
+            Invoke-AdbShell $target "rm $('/data/data/' + $apps.agent.pkg)/files/main-lastgood.apk" | Out-Null
+        }
+
+        # 3. Agent: replace the /system copy and reboot. Android 4.4 accepts a new certificate for a system app
+        #    at boot ("signature changed; retaining data"), drops an older over-the-air copy, and keeps the data.
+        if ($change.agent) {
+            Invoke-AdbShell $target 'mount -o remount,rw /system' | Out-Null
+            & $adbExe -s $target push $new.agent.file /system/priv-app/R2Agent.apk 2>&1 | Out-Null
+            Invoke-AdbShell $target 'chmod 644 /system/priv-app/R2Agent.apk; sync; mount -o remount,ro /system' | Out-Null
+            'agent replaced in /system, rebooting (about a minute)'
+            & $adbExe -s $target reboot
+            if (-not (Wait-Robot 240)) { throw "the robot did not come back within 4 minutes. Backup: $backup" }
+            if (-not (Test-Token)) {
+                Write-Warning 'The agent no longer accepts the saved token, so it lost its settings in the switch.'
+                "To get them back: press the pairing button on R2, run 'tools\r2.ps1 fetch-token', then"
+                "'tools\r2.ps1 restore-settings $backup -Agent'. Please report this: docs/releases.md expects the data to stay."
+                return
+            }
+            $target = Connect-Adb 30
+            $after = Join-Path $backup 'after'; New-Item -ItemType Directory -Force $after | Out-Null
+            $now = Get-RobotSigner $target 'agent' $after
+            if ($now.cert -ne $new.agent.cert) { throw "the robot still runs the old agent ($($now.path)). Backup: $backup" }
+            'agent switched, settings kept'
+        }
+        Call POST '/safe-mode?on=0' | Out-Null
+        @{ source = $src.label; repo = $src.repo; tag = $src.tag; cert = $new.main.cert; switched = (Get-Date -Format 's') } |
+            ConvertTo-Json | Set-Content $sourceFile
+        "Done: the robot now runs $($src.label). From now on update it with push-main and push-agent from this source."
+    }
     default        { throw "unknown command $Command" }
 }

@@ -29,6 +29,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     private Supervisor supervisor;
     private WifiFailover wifi;
     private AdbControl adb;
+    private Hardening hardening;
     private boolean passive;
     private boolean sim;
     /** Setup window: opened by the pairing button; Wi-Fi setup and the token work without a token meanwhile. */
@@ -44,6 +45,8 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         }
     });
     private static final long ROUTINE_REPLY_MS = 5_000;
+    /** Chirp.MOODS in the main app, plus "random". */
+    private static final String[] CHIRP_MOODS = {"random", "ack", "happy", "excited", "question", "sad", "worried", "chatter"};
 
     @Override
     public void onCreate() {
@@ -73,6 +76,8 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         loadExtraSubnets();
         adb = new AdbControl(getSharedPreferences("agent", MODE_PRIVATE));
         adb.start();
+        hardening = new Hardening(this, getSharedPreferences("agent", MODE_PRIVATE));
+        hardening.start(passive, subnetStrings());
         supervisor = new Supervisor(this, this);
         wifi = new WifiFailover(this, passive);
         wifi.start();
@@ -418,6 +423,24 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 return toMain(new JSONObject().put("agent", "action").put("name", name))
                         ? result("sent " + name + " to the main app") : bad("main app not connected");
             }
+            case "POST /chirp": { // a new droid chirp: ?mood=happy, and/or text (?text= or the body) for the beeps-only reply
+                if (passive) return passiveError();
+                String mood = req.query.containsKey("mood") ? req.query.get("mood").trim() : "";
+                String text = req.query.containsKey("text") ? req.query.get("text") : req.bodyText == null ? "" : req.bodyText;
+                if (!mood.isEmpty() && !java.util.Arrays.asList(CHIRP_MOODS).contains(mood)) {
+                    return bad("mood must be one of " + java.util.Arrays.toString(CHIRP_MOODS));
+                }
+                if (text.length() > 2000) return bad("text is limited to 2000 characters");
+                JSONObject m = new JSONObject().put("agent", "chirp").put("mood", mood).put("text", text);
+                if (req.query.containsKey("seed")) {
+                    try {
+                        m.put("seed", Long.parseLong(req.query.get("seed").trim()));
+                    } catch (NumberFormatException e) {
+                        return bad("seed must be a whole number");
+                    }
+                }
+                return toMain(m) ? result("chirping" + (mood.isEmpty() ? "" : " (" + mood + ")")) : bad("main app not connected");
+            }
             case "POST /assist": { // Home Assistant voice: mode=off|robot|ha and/or host=<Home Assistant's IP, or empty>
                 String mode = req.query.get("mode");
                 boolean hasHost = req.query.containsKey("host");
@@ -667,6 +690,15 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 }
                 return result(adb.enable(minutes));
             }
+            case "GET /hardening":
+                return HttpApi.Response.json(200, hardening.report().toString(2));
+            case "POST /hardening": { // firewall=1|0 (1 starts a trial), devices=1|0, bluetooth=1|0 (1 = keep it off), all=0
+                if (passive) return passiveError();
+                return result(hardening.set(req.query.get("firewall"), req.query.get("devices"),
+                        req.query.get("bluetooth"), req.query.get("all")));
+            }
+            case "POST /hardening/confirm": // keeps a firewall trial; this request itself got through the firewall
+                return result(hardening.confirm());
             case "GET /clients/allow":
                 return HttpApi.Response.json(200, new JSONObject().put("extra_subnets", subnetList()).toString());
             case "POST /clients/allow": { // ?subnets=10.0.20.0/24,192.168.5.10 (empty: only the robot's own subnet)
@@ -688,6 +720,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 for (HttpApi.Subnet n : list) stored.append(stored.length() == 0 ? "" : ",").append(n);
                 getSharedPreferences("agent", MODE_PRIVATE).edit().putString("extra-subnets", stored.toString()).commit();
                 EventLog.i("http: extra allowed subnets now [" + stored + "]");
+                hardening.onSubnetsChanged(subnetStrings());
                 sendMqttSettings(); // the MQTT broker follows the same rule
                 return result(list.isEmpty() ? "only clients on the robot's own subnet are accepted"
                         : "also accepting clients from " + stored);
@@ -848,6 +881,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         s.put("adb_wifi_always", adb.always());
         s.put("adb_wifi_seconds_left", adb.secondsLeft());
         s.put("extra_subnets", subnetList());
+        s.put("hardening", hardening.summary());
         s.put("mqtt", mqttState.isEmpty() ? "unknown" : mqttState);
         if (serial != null) {
             s.put("serial_open", serial.isOpen());
@@ -865,6 +899,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             s.put("muted", set.optBoolean("muted"));
             s.put("voice", set.optBoolean("voice"));
             s.put("face_tracking", set.optBoolean("face"));
+            if (set.has("chirps")) s.put("chirps", set.optBoolean("chirps"));
             s.put("assist", set.optString("assist"));
             s.put("liveliness", set.optString("liveliness", "quiet"));
         }
@@ -915,6 +950,12 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             }
         }
         HttpApi.setExtraSubnets(list);
+    }
+
+    private static java.util.List<String> subnetStrings() {
+        java.util.List<String> l = new java.util.ArrayList<>();
+        for (HttpApi.Subnet n : HttpApi.extraSubnets()) l.add(n.toString());
+        return l;
     }
 
     private static org.json.JSONArray subnetList() {

@@ -47,6 +47,12 @@ routine engine in section 6.
 - [ ] Load the sounds at runtime from the factory files on the robot, the same way as the serial library,
       so nothing gets redistributed. *Built, not yet tested on the robot.* Later, optional user sound packs.
 - [ ] Mute and volume, kept across reboots. *Built, not yet tested on the robot.* Mute is reachable as an action; volume is set with `POST /volume`, the DLNA renderer and Home Assistant.
+- [ ] **New droid chirps on the fly** instead of the same recorded confirmation beep each time (Fanhome
+      owners' most common sound complaint). R2 Main generates R2-style phrases (blips, glides, warbles,
+      trills) in seven moods, plus droid sounds shaped like a sentence for a beeps-only reply. Used for the
+      confirmation beep (`chirps-off` brings back the factory one), the `chirp` action, `POST /chirp`,
+      `{"chirp": "happy"}` routine steps and a Home Assistant button. See [docs/chirps.md](docs/chirps.md).
+      *Built, not yet tested on the robot.*
 
 ### Buttons, status and lights
 - [ ] **Robot buttons:** power off (a clean shutdown of both the controller and Android), hotspot/Wi-Fi
@@ -136,16 +142,22 @@ Known exposure: kernel privilege-escalation bugs (e.g. Dirty COW), the media fra
 the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne), root adb and
 `ro.secure=0` from the engineering build, and world-writable device nodes.
 - [ ] **Firewall at boot:** iptables rules that allow only the agent's ports, only from the local subnet,
-      and drop everything else, including stray system services.
+      and drop everything else, including stray system services. *Built, not yet tested on the robot.*
+      Opt-in (`tools\r2.ps1 harden-on`), from private addresses and allowed subnets only, as a 5-minute trial
+      that removes itself unless confirmed. See [docs/hardening.md](docs/hardening.md).
 - [ ] **Turn off what isn't used:** Bluetooth (unless phone app compatibility needs it), MTP, unused system
-      apps and services, and any listener we don't need.
+      apps and services, and any listener we don't need. *Built, not yet tested on the robot* (first step):
+      Bluetooth is kept off, and `tools\r2.ps1 hardening` lists every listener and its app. Switching off
+      system apps waits for that list from the robot; MTP stays, to keep USB adb safe.
 - [ ] **No untrusted content:** no WebView, no media from the network, no downloads from URLs. Only the
       robot's own sound files and our signed updates.
 - [ ] **Current TLS in our apps:** bundle a modern TLS library for outbound connections (MQTT, Home
       Assistant, GitHub) instead of relying on the system's.
 - [ ] **Least privilege:** keep the agent's shell commands to a minimum, give R2 Main no extra
       permissions, and sandbox plugins.
-- [ ] **Fix device node permissions** at boot, e.g. world-writable UARTs.
+- [ ] **Fix device node permissions** at boot, e.g. world-writable UARTs. *Built, not yet tested on the robot.*
+      UARTs (not the console), raw memory, the eMMC, I2C/SPI and the sunxi_debug backdoor; the
+      controller UART goes to the agent's user.
 - [ ] **Production-style build:** turn off root adb and `ro.secure=0` with a modified boot image (shares the
       boot-image work in section 8), keeping the serial console for recovery.
 - [ ] **Patch the Wi-Fi stack:** rebuild wpa_supplicant/hostapd with the KRACK fixes.
@@ -160,7 +172,9 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       without a token, signs them with the key in the repository's secrets, and publishes them; forks
       release with their own key. Setup and switching between signers: [docs/releases.md](docs/releases.md).
 - [ ] **Switch between signers without manual steps** (e.g. upstream releases ↔ a fork's): a
-      `switch-source` command that keeps settings. Plan in [docs/releases.md](docs/releases.md).
+      `switch-source` command that keeps settings. *Built, not yet tested on the robot.*
+      `tools\r2.ps1 switch-source <owner/repo | folder>` checks the new certificate, backs up both apps'
+      settings, reinstalls with the new key and restores them. See [docs/releases.md](docs/releases.md).
 - [ ] **Cross-platform PC tool:** replace the PowerShell scripts with one small Python CLI (status, push,
       logs, adb, install, restore) for Windows, macOS and Linux.
 - [ ] Setup script for the build toolchain (JDK, Android SDK, platform-tools).
@@ -201,7 +215,7 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       (idle chatter and head turns, reactions to loud sounds, drive sounds, how long he stays awake), on the
       web page and as a select in Home Assistant. *Built, not yet tested on the robot.* It is the
       `liveliness` setting; see [docs/liveliness.md](docs/liveliness.md).
-- [ ] Later: gamepad support.
+- [ ] Gamepad support: drive with the left stick, head with the right, STOP and actions on buttons. *Built, not yet tested on the robot.* See docs/architecture.md (Web control page).
 
 ## 8. SD card installation (soft-mod)
 New users should be able to put an SD card into an untouched robot and either install this software,

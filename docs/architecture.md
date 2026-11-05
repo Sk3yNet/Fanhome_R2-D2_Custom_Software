@@ -45,9 +45,11 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `GET /hotspot` · `POST /hotspot` (`{"password"}`; empty: a new random one) · `POST /identity` ·
 `POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2` ·
 `POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...` ·
+`GET /hardening` · `POST /hardening?firewall=1|0&devices=1|0&bluetooth=1|0` · `POST /hardening?all=0` · `POST /hardening/confirm` (boot hardening, see [hardening.md](hardening.md)) ·
 `POST /assist?mode=off|robot|ha&host=<ip>` (Home Assistant voice satellite, see [home-assistant-voice.md](home-assistant-voice.md)) ·
 `GET /routines` · `GET /routine?name=` · `POST /routine` (JSON body) · `POST /routine/run?name=` · `POST /routine/stop` · `POST /routine/delete?name=` (see [routines.md](routines.md)) ·
 `GET /cues` · `GET /cue?name=` · `POST /cue` (JSON body) · `POST /cue/delete?name=` · `GET /watch` · `POST /watch` (`{"state","position","title","cue","enabled"}`; see [watch-with-me.md](watch-with-me.md)) ·
+`POST /chirp?mood=<mood>` or `POST /chirp` with text as the body (a generated droid chirp, see [chirps.md](chirps.md)) ·
 `GET /mqtt` · `POST /mqtt` (`{"host","port","username","password","prefix","enabled"}`) ·
 `GET /places` · `GET /place?name=` · `POST /place` · `POST /place/delete?name=` · `POST /goto?place=` · `POST /tour` ·
 `POST /place/here?name=` · `POST /place/teach?name=&what=there|back|turn` · `POST /place/teach/save` · `POST /place/teach/cancel` ·
@@ -66,10 +68,25 @@ without any token, otherwise over root adb), and `r2.ps1` then
 uses it. Your own builds also accept the development token from `secrets\agent-token.txt`;
 `apps\build.ps1 -Release` builds without it.
 
+## Boot hardening
+Off until switched on: `tools\r2.ps1 harden-on` sets up a firewall that lets the local network reach only
+R2's ports (API, media player, voice satellite, phone app, adb while it's on, hotspot DHCP/DNS), removes
+world access from the UARTs, the eMMC and other risky device nodes, and keeps Bluetooth off. The firewall
+starts as a 5-minute trial and only stays if a request gets through it. `harden-off` undoes all of it, and
+USB adb and the serial console are never affected. Details and the robot test plan: [hardening.md](hardening.md).
+
 ## Web control page
 Open `http://<robot-ip>:7700/` on a phone or PC on the same network and enter the token once. It shows
 battery, charging and movement; has a joystick (repeated `move` commands while held, so the motion
 watchdog stops R2 if the page or Wi-Fi goes away), a head slider, the actions, and a stop button.
+
+A gamepad works too (browser Gamepad API, standard layout: Xbox, PlayStation and most USB or Bluetooth
+pads). The left stick drives through the same repeated `move` commands, the right trigger raises the power
+cap from the Max power slider up to 100, the right stick turns the head (click it to center), START
+enables driving when the drive lock is on (docs/drive-lock.md), B/Circle or Back is STOP, and A, X, Y and the D-pad run actions (listed under **Gamepad** on the page). A stick has to
+return to the center before it drives: after connecting, after STOP and after the page was hidden, so a
+drifting stick can't start R2. Driving stops when the pad disconnects or the page is hidden or loses focus.
+Chrome and Edge allow gamepads on R2's plain-http page; Firefox only allows them on https or localhost.
 
 ## Simulator
 `tools\r2.ps1 sim-on` then `reboot` makes the agent use a

@@ -25,11 +25,12 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
 
     static final String[] ACTIONS = {
             "stop", "wake", "turn-left", "turn-right", "turn-around", "forward", "circle", "patrol",
-            "dance", "shake-head", "who-are-you", "noise", "not-recognized",
+            "dance", "shake-head", "who-are-you", "noise", "not-recognized", "chirp",
             "lightsaber", "arm", "short-lcd", "long-lcd", "flash-front", "flash-back", "leia", "luke",
             "mute", "unmute", "pair", "phone-app-on", "phone-app-off", "voice-on", "voice-off", "face-on", "face-off",
             "go-home", "tour",
             "liveliness-off", "liveliness-quiet", "liveliness-chatty", "liveliness-full",
+            "chirps-on", "chirps-off",
     };
 
     /**
@@ -267,7 +268,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private void reportSettings() {
         try {
             io.send(new JSONObject().put("agent", "settings").put("volume", sounds.volume()).put("muted", sounds.muted())
-                    .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
+                    .put("chirps", sounds.chirps()).put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
                     .put("assist", assist.status()).put("liveliness", idle.level()));
         } catch (Exception ignored) {
         }
@@ -340,6 +341,10 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "drove": // a command someone sent through the agent's /serial, e.g. the web page's joystick
                 onDrove(msg.optJSONObject("cmd"));
                 break;
+            case "chirp": // POST /chirp: {"mood"} and/or {"text"}, optional "seed"
+                chirp(msg.optString("mood", ""), msg.optString("text", ""),
+                        msg.has("seed") ? Long.valueOf(msg.optLong("seed")) : null);
+                break;
             case "wifi-list":
             case "wifi-join-result":
                 phone.onAgentMessage(msg);
@@ -347,6 +352,24 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             default:
                 break;
         }
+    }
+
+    /**
+     * Plays a generated chirp: in a mood (Chirp.MOODS or "random"), or shaped like text (the beeps-only
+     * reply; the mood, if given, colors it). seed null: a new one each time. Interrupts the sound playing.
+     * Returns false if nothing played (muted, or audio failed).
+     */
+    boolean chirp(String mood, String text, Long seed) {
+        wake();
+        if (mood != null && !mood.isEmpty() && !Chirp.knownMood(mood)) {
+            Log.w(TAG, "unknown chirp mood " + mood + ", using chatter");
+            mood = "chatter";
+        }
+        long s = seed != null ? seed : System.nanoTime();
+        if (text != null && !text.trim().isEmpty()) {
+            return sounds.playPcm(Chirp.speak(text, mood, s), true);
+        }
+        return sounds.chirp(mood == null || mood.isEmpty() ? "random" : mood, s, true);
     }
 
     private void onButton(int value) {
@@ -390,7 +413,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 dlna.stopMedia();
                 assist.stop();
                 stopMotion();
-                sounds.play(S_ACK, true);
+                sounds.ack(S_ACK);
                 return;
             case "mute":
                 sounds.setMuted(true);
@@ -399,7 +422,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "unmute":
                 sounds.setMuted(false);
                 robot.changed();
-                sounds.play(S_ACK, true);
+                sounds.ack(S_ACK);
                 return;
             case "pair":
                 if (robot.mode == Robot.PAIR) stopPairing();
@@ -408,6 +431,11 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "voice-on":
             case "voice-off":
                 robot.setFlag("voice_recognition", name.endsWith("on")); // the timers apply it
+                return;
+            case "chirps-on": // the confirmation beep: a new chirp each time (on) or the factory beep (off)
+            case "chirps-off":
+                sounds.setChirps(name.endsWith("on"));
+                sounds.ack(S_ACK);
                 return;
             case "face-on":
             case "face-off":
@@ -474,7 +502,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "shake-head":
                 return new Sequencer.Job() {
                     public void run() throws Exception {
-                        sounds.play(S_ACK, true);
+                        sounds.ack(S_ACK);
                         for (int a : new int[] {-45, 45, -45, 45, 0}) head(a, STEP_MS);
                     }
                 };
@@ -487,7 +515,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 return new Sequencer.Job() {
                     public void run() throws Exception {
                         projectorOff();
-                        sounds.play(S_ACK, true);
+                        sounds.ack(S_ACK);
                         send("mode", "mode", 9);
                         robot.setMode(Robot.PATROL);
                         lights.refresh();
@@ -513,12 +541,18 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     }
                 };
             case "noise": return soundOnly(S_NOISE);
+            case "chirp": // a new chirp in a random mood
+                return new Sequencer.Job() {
+                    public void run() {
+                        sounds.chirp("random");
+                    }
+                };
             case "not-recognized": return soundOnly(S_HUH);
             case "lightsaber":
                 return new Sequencer.Job() {
                     public void run() throws Exception {
                         projectorOff();
-                        sounds.play(S_ACK, true);
+                        sounds.ack(S_ACK);
                         send("lightsaber", "power", robot.lightsaber != 0 ? 0 : 1);
                     }
                 };
@@ -526,7 +560,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 return new Sequencer.Job() {
                     public void run() throws Exception {
                         projectorOff();
-                        sounds.play(S_ACK, true);
+                        sounds.ack(S_ACK);
                         send("arm", "power", robot.arm != 0 ? 0 : 1);
                     }
                 };
@@ -620,6 +654,11 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         @Override
         public void playSound(int number) {
             sounds.play(number, true);
+        }
+
+        @Override
+        public void playChirp(String mood) {
+            sounds.chirp(mood);
         }
 
         @Override
@@ -1015,7 +1054,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private Sequencer.Job controllerMove(final int mode) {
         return new Sequencer.Job() {
             public void run() throws Exception {
-                sounds.play(S_ACK, true);
+                sounds.ack(S_ACK);
                 mode(mode, TURN_DELAY_MS);
             }
         };
@@ -1045,7 +1084,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 if (shortOne) s = !s;
                 else l = !l;
                 projectorOff();
-                sounds.play(S_ACK, true);
+                sounds.ack(S_ACK);
                 io.send(new JSONObject().put("cmd", "lcd").put("s", s ? 2 : 1).put("l", l ? 2 : 1));
             }
         };
@@ -1117,7 +1156,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         pairUntil = System.currentTimeMillis() + PAIR_MS;
         robot.setMode(Robot.PAIR);
         lights.refresh();
-        sounds.play(S_ACK, true);
+        sounds.ack(S_ACK);
         Log.i(TAG, "pairing mode for " + PAIR_MS / 1000 + " s: new phones are accepted");
     }
 
@@ -1519,7 +1558,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     @Override
     public void onAssistWake(boolean sound) {
         wake();
-        if (sound) sounds.play(S_ACK, true); // a short chirp: R2 heard "hey R2-D2" and is listening
+        if (sound) sounds.ack(S_ACK); // a short chirp: R2 heard "hey R2-D2" and is listening
     }
 
     @Override
