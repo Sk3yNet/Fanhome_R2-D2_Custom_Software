@@ -19,7 +19,7 @@ final class PluginContext {
          * The robot's state: battery (int, -1 unknown), charging (0/1/2), lightsaber, arm, lcd_s, lcd_l
          * (booleans), projector (0/1/2), mode (string), action (string), error (string), muted, voice,
          * face (booleans), volume (0-100), liveliness, name, uuid, version, location (strings),
-         * watch (WatchWithMe.status()).
+         * watch (WatchWithMe.status()), drive_lock, drive_enabled (booleans, docs/drive-lock.md).
          */
         JSONObject state();
 
@@ -73,6 +73,12 @@ final class PluginContext {
 
         /** A message on one of triggerTopics(); retained: replayed by the broker, not new. */
         void triggerMessage(String topic, String payload, boolean retained);
+
+        /** Enables (for the default idle minutes) or locks driving, through the agent's drive lock. */
+        void enableDriving(boolean on);
+
+        /** Switches the drive lock itself on or off. */
+        void setDriveLock(boolean on);
 
         void log(String msg);
     }
@@ -278,6 +284,27 @@ final class PluginContext {
     void setWatch(boolean on) {
         need(PluginPermissions.SETTINGS, "watch-with-me switch");
         host.setWatch(on);
+    }
+
+    // ---- drive lock (docs/drive-lock.md) ----
+
+    /**
+     * Enables driving (or locks it again) while the drive lock is on. Needs "actions", like the built-in
+     * actions that drive (turn, forward, patrol...), which it is what unlocks.
+     */
+    void enableDriving(boolean on) {
+        need(PluginPermissions.ACTIONS, on ? "enabling driving" : "locking driving");
+        host.enableDriving(on);
+    }
+
+    /**
+     * Switches the drive lock on (needs "settings") or off (needs "settings" and "actions", since it lets
+     * everything drive without enabling).
+     */
+    void setDriveLock(boolean on) {
+        need(PluginPermissions.SETTINGS, "drive lock switch");
+        if (!on) need(PluginPermissions.ACTIONS, "switching the drive lock off");
+        host.setDriveLock(on);
     }
 
     // ---- always allowed ----

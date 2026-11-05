@@ -38,7 +38,7 @@ is enabled again or R2 Main restarts. After `stop`, its context refuses every ca
 
 The state object: `battery` (-1 unknown), `charging` (0/1/2), `lightsaber`, `arm`, `lcd_s`, `lcd_l`
 (booleans), `projector` (0/1/2), `mode` (ready, sleeping, pairing, patrol, phone control), `action`,
-`error`, `location`, `muted`, `voice`, `face`, `volume`, `liveliness`, `name`, `uuid`, `version`, `watch` (watch-with-me's status).
+`error`, `location`, `muted`, `voice`, `face`, `volume`, `liveliness`, `name`, `uuid`, `version`, `watch` (watch-with-me's status), `drive_lock`, `drive_enabled` ([drive lock](drive-lock.md)).
 
 `BatteryAlertPlugin.java` is a short worked example (off by default).
 Plugins avoid Android classes so they can be tested on a plain JVM; see `apps/main/test/dev/r2hack/main/PluginTest.java`, run by `apps/test.sh`.
@@ -47,13 +47,13 @@ Plugins avoid Android classes so they can be tested on a plain JVM; see `apps/ma
 | Permission | `PluginContext` calls |
 |---|---|
 | `status` | `state()`, and every event |
-| `actions` | `action(name)` for the built-in actions (dance, lightsaber, leia...), `projector(mode)`, `placeNames()` and `goTo(place)` ([rooms](places.md)), `watchUpdate(json)` (a film's state for [watch-with-me](watch-with-me.md)) |
+| `actions` | `action(name)` for the built-in actions (dance, lightsaber, leia...), `projector(mode)`, `placeNames()` and `goTo(place)` ([rooms](places.md)), `watchUpdate(json)` (a film's state for [watch-with-me](watch-with-me.md)), `enableDriving(on)` ([drive lock](drive-lock.md)) |
 | `drive` | `drive(power, angle)`, `head(angle)`, `controller(cmd)` for `move`, `head-angle`, `head-shift`, `head-dir`, `mode`, `projector`, `arm`, `lightsaber`, `lcd` |
 | `routines.run` | `routineNames()`, `runRoutine(name)` |
 | `routines.edit` | `saveRoutine(json)`, `deleteRoutine(name)` |
 | `sound` | `playSound(number)` |
 | `lights` | `led(r, b, y, g)` |
-| `settings` | `setVolume(percent)`, `setWatch(on)` (the watch-with-me switch), and the actions mute, unmute, voice-on/off, face-on/off, liveliness-* |
+| `settings` | `setVolume(percent)`, `setWatch(on)` (the watch-with-me switch), `setDriveLock(on)` (switching it off also needs `actions`), and the actions mute, unmute, voice-on/off, face-on/off, liveliness-* |
 | (none) | `stop()`, `log(msg)`, `saveConfig(json)` |
 
 What no plugin can do, whatever it is granted, because `PluginContext` has no call for it: install or

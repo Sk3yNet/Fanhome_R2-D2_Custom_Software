@@ -22,6 +22,10 @@ at any time; the agent stays installed.
 - [ ] **Motion watchdog in the agent.** If the robot is moving and no new command arrives within a few
       seconds, the agent sends stop. This lives in the agent so it still works when the main app is hung. *Built, not yet tested on the robot.*
 - [ ] **Low-battery stop:** stop movement and routines below a battery threshold reported by `gin`. *Built, not yet tested on the robot.*
+- [ ] **Drive lock ("arm before driving"):** optionally, the wheels stay locked until driving is enabled
+      (web page, `tools\r2.ps1 drive-enable`, Home Assistant), and lock again after 10 idle minutes, on the
+      emergency stop, on low battery and after a restart. Enforced in the agent for every sender; routines and
+      driving actions refuse cleanly. See [docs/drive-lock.md](docs/drive-lock.md). *Built, not yet tested on the robot.*
 - [ ] **Event log that survives reboots,** so you can see what happened before a crash or power loss. *Built, not yet tested on the robot.*
 
 ## 2. Feature parity with the factory software

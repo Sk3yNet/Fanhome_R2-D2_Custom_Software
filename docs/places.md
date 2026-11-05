@@ -10,6 +10,8 @@ hard floors and short routes, and the routes drift a little each time, so plan f
 ## Safety first
 - **R2 can't see stairs or obstacles.** Teach routes well away from stairs and drops, and keep them clear.
   Block stairs physically if a route comes close.
+- With the drive lock on ([drive-lock.md](drive-lock.md)), trips and tours only start while driving is
+  enabled, and teaching a route needs it enabled too.
 - Every trip starts with a chirp and a 1.5 s pause, so people and pets get a moment.
 - A trip is a routine underneath, so all the routine safety rules apply: it stops on "stop" (voice, web
   page, Home Assistant, the robot's buttons, `POST /stop`), on a controller error, on the charger, below

@@ -222,6 +222,17 @@ final class HomeAssistantPlugin implements Plugin {
         }
 
         @Override
+        public void enableDriving(boolean on) {
+            PluginContext c = ctx;
+            if (c == null) return;
+            try {
+                c.enableDriving(on);
+            } catch (PluginContext.Denied d) {
+                c.log(d.getMessage());
+            }
+        }
+
+        @Override
         public Set<String> triggerTopics() {
             PluginContext c = ctx;
             return c == null ? Collections.<String>emptySet() : c.triggerTopics();
@@ -233,6 +244,17 @@ final class HomeAssistantPlugin implements Plugin {
             if (c == null) return;
             try {
                 c.triggerMessage(topic, payload, retained);
+            } catch (PluginContext.Denied d) {
+                c.log(d.getMessage());
+            }
+        }
+
+        @Override
+        public void setDriveLock(boolean on) {
+            PluginContext c = ctx;
+            if (c == null) return;
+            try {
+                c.setDriveLock(on);
             } catch (PluginContext.Denied d) {
                 c.log(d.getMessage());
             }

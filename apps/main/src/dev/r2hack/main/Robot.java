@@ -33,6 +33,14 @@ final class Robot {
     volatile boolean listening, faceSeen;   // voice awake / a face is being tracked (status lights)
     volatile int assistState;               // Home Assistant voice: Assist.IDLE, LISTENING, THINKING, SPEAKING
     volatile String ssid = "", ip = "";
+    /** The agent's drive lock (docs/drive-lock.md): lock on, and driving enabled for now. Unknown = open. */
+    volatile boolean driveLock, driveEnabled;
+    volatile long driveSecondsLeft;
+
+    /** May R2's wheels move now? The agent enforces this anyway; R2 Main checks it to react sensibly. */
+    boolean driveAllowed() {
+        return !driveLock || driveEnabled;
+    }
     volatile Sounds sounds;           // for the mute state the phone app shows
     private volatile long chargingChangedAt;
 

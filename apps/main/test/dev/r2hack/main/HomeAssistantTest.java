@@ -33,6 +33,9 @@ public final class HomeAssistantTest {
         public void setVolume(int percent) { }
         public void watchUpdate(JSONObject msg) { }
         public void setWatch(boolean on) { }
+        final List<String> drive = new ArrayList<>();
+        public void enableDriving(boolean on) { drive.add("enable " + on); }
+        public void setDriveLock(boolean on) { drive.add("lock " + on); }
         public void log(String msg) { }
         public void haStatus(String state) { }
         final List<String> events = new ArrayList<>();
@@ -80,6 +83,20 @@ public final class HomeAssistantTest {
         ha.onCommand(b + "/liveliness/set", "patrol");
         ha.onCommand(b + "/liveliness/set", "off; reboot");
         check("unknown presets are ignored", h.actions.isEmpty());
+
+        // Drive lock switches (docs/drive-lock.md).
+        check("drive switch discovered", d.containsKey("homeassistant/switch/" + ha.nodeId() + "/drive/config"));
+        JSONObject lockCfg = d.get("homeassistant/switch/" + ha.nodeId() + "/drive_lock/config");
+        check("drive lock is a config entity", lockCfg != null && "config".equals(lockCfg.optString("entity_category")));
+        check("drive switch state off", "OFF".equals(ha.states(h.state).get(b + "/switch/drive")));
+        ha.onCommand(b + "/switch/drive/set", "ON");
+        ha.onCommand(b + "/switch/drive-lock/set", "ON");
+        check("drive switches reach the agent", h.drive.equals(java.util.Arrays.asList("enable true", "lock true")));
+        h.state.put("drive_lock", true).put("drive_enabled", true);
+        h.drive.clear();
+        ha.onCommand(b + "/switch/drive/set", "ON");
+        check("already enabled: nothing sent", h.drive.isEmpty());
+        check("drive switch state on", "ON".equals(ha.states(h.state).get(b + "/switch/drive")));
 
         System.out.println("home assistant: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);

@@ -12,9 +12,12 @@ Every command to the controller passes through the agent's motion guard, whoever
 - **Motion watchdog:** a `move` lasts 3 s unless repeated, the controller's turns/forward/circle 15 s, patrol 65 s.
   Then the agent sends stop itself, so a hung app or a lost Wi-Fi client can't leave R2 driving.
 - **Low battery:** below 10% (and not charging) drive commands are refused, and driving is stopped.
+- **Drive lock** (optional, off by default): drive commands are refused until driving is enabled, and
+  driving locks again after 10 idle minutes or on the emergency stop. See [drive-lock.md](drive-lock.md).
 - **Power button:** handled by the agent (stop, flush storage, tell the controller, shut Android down),
   so it works even if R2 Main is hung. `POST /shutdown` does the same.
 - **Emergency stop:** `POST /stop` (`tools\r2.ps1 stop`) stops the robot in the agent, then cancels R2 Main's action.
+  With the drive lock on, it also locks driving again.
 
 ## Failover layers
 1. **Main app dies or hangs** (no heartbeat for 10 s): agent sends stop and relaunches it.
@@ -192,7 +195,8 @@ The device (named after the robot) has:
   head, who are you, make some noise, flash front / back light, go home, tour the rooms, and one button per
   stored routine (`Routine <name>`). Rooms ([places.md](places.md)): a **Location** sensor and a **Go to** select. A routine that is saved or deleted shows up or disappears within a second or so.
 - **Switches:** lightsaber, arm, projector Princess Leia, projector Skywalker, short and long display,
-  mute, voice commands, face tracking, watch with me ([watch-with-me.md](watch-with-me.md)). A switch runs the matching action only if R2 isn't already in that
+  mute, voice commands, face tracking, watch with me ([watch-with-me.md](watch-with-me.md)), driving enabled,
+  and require enabling to drive (the drive lock, [drive-lock.md](drive-lock.md)). A switch runs the matching action only if R2 isn't already in that
   state. The lightsaber, arm, projector and display states come from the controller's status, which R2
   reads every 5 s, so a switch can take a few seconds to show its new state.
 - **Volume** (0–100 %), shared with the droid sounds and the media player.
@@ -206,7 +210,7 @@ Topics are under `r2d2/<robot id>/`: state in `battery`, `charging`, `mode`, `ac
 discovery and state again.
 
 **Safety and security:** MQTT commands run as ordinary actions, so the agent's motion watchdog,
-low-battery stop and emergency stop apply. Only the buttons, switches and select above can be used: no pairing,
+low-battery stop, drive lock and emergency stop apply. Only the buttons, switches and select above can be used: no pairing,
 no phone app switch, nothing that installs software or reboots. The broker must be on the robot's own
 subnet, or in a subnet allowed with `tools\r2.ps1 allow-subnets`, the same rule as for API clients; any
 other broker address is refused and shown in `tools\r2.ps1 mqtt`. Anyone who can publish to the broker

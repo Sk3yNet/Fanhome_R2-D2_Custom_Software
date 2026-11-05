@@ -105,6 +105,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private volatile boolean driveSounds;
     private volatile boolean faceActive;
     private volatile long lastManual;        // the last drive or head command from the phone app or web page
+    private volatile long lastDriveRefusedSound;
+    private static final long DRIVE_REFUSED_SOUND_MS = 2_000;
 
     Brain(BrainService io) {
         this.io = io;
@@ -238,6 +240,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 + "\nface: " + (face.tracking() ? "tracking a face" : faceActive ? "looking" : "off")
                 + "\nfollow me: " + follower.status() + "\nname: " + robot.name()
                 + "\nbattery: " + (robot.battery < 0 ? "?" : robot.battery + "%")
+                + "\ndriving: " + (!robot.driveLock ? "always allowed (drive lock off)"
+                        : robot.driveEnabled ? "enabled, " + robot.driveSecondsLeft + " s left if idle" : "locked")
                 + "\nroutines: " + routines.names().size() + (lastRoutine.isEmpty() ? "" : ", last: " + lastRoutine)
                 + "\nplaces: " + places.names().size() + ", R2 is at " + places.location()
                 + (teaching.isEmpty() ? "" : ", teaching " + teaching)
@@ -399,6 +403,12 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 chirp(msg.optString("mood", ""), msg.optString("text", ""),
                         msg.has("seed") ? Long.valueOf(msg.optLong("seed")) : null);
                 break;
+            case "drive": // the agent's drive lock state, on every change and every few seconds
+                onDriveState(msg.optBoolean("lock"), msg.optBoolean("enabled"), msg.optLong("seconds_left"));
+                break;
+            case "drive-refused": // the agent refused a drive command (e.g. from the phone app) while locked
+                driveRefused("a drive command");
+                break;
             case "wifi-list":
             case "wifi-join-result":
                 phone.onAgentMessage(msg);
@@ -555,7 +565,47 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             seq.start("not-recognized", job("not-recognized"));
             return;
         }
+        if (Routine.DRIVE_ACTIONS.contains(name) && !robot.driveAllowed()) {
+            driveRefused(name);
+            return;
+        }
         seq.start(name, job);
+    }
+
+    // ---- drive lock (docs/drive-lock.md; the agent enforces it, this is for sensible reactions) ----
+
+    private void onDriveState(boolean lock, boolean enabled, long secondsLeft) {
+        boolean wasAllowed = robot.driveAllowed(), changed = lock != robot.driveLock || enabled != robot.driveEnabled;
+        robot.driveLock = lock;
+        robot.driveEnabled = enabled;
+        robot.driveSecondsLeft = secondsLeft;
+        if (!changed) return;
+        Log.i(TAG, "drive lock: " + (!lock ? "off" : enabled ? "driving enabled" : "locked"));
+        // The agent has already stopped the wheels; end a built-in drive action so it doesn't run on as
+        // sounds and lights only. A routine ends itself at its next drive step.
+        String running = seq.running();
+        if (wasAllowed && !robot.driveAllowed() && Routine.DRIVE_ACTIONS.contains(running)) {
+            Log.i(TAG, "drive lock closed, cancelling " + running);
+            seq.cancel();
+        }
+        robot.changed();
+    }
+
+    /** A drive was refused because driving is locked: the "didn't understand" sound, not too often. */
+    private void driveRefused(String what) {
+        Log.i(TAG, "refused " + what + ": driving is locked");
+        long now = System.currentTimeMillis();
+        if (now - lastDriveRefusedSound < DRIVE_REFUSED_SOUND_MS) return;
+        lastDriveRefusedSound = now;
+        sounds.play(S_HUH, true);
+    }
+
+    /** Enables (minutes) or disables driving, or switches the lock, through the agent (Home Assistant). */
+    private void driveSet(String key, boolean on) {
+        try {
+            io.send(new JSONObject().put("agent", "drive-set").put(key, on));
+        } catch (Exception ignored) {
+        }
     }
 
     private Sequencer.Job job(String name) {
@@ -774,6 +824,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     lastRoutine = name + ": stopped, " + a.getMessage();
                     Log.w(TAG, "routine " + lastRoutine);
                     stopMotion();
+                    if (RoutineRunner.DRIVE_LOCKED.equals(a.getMessage())) driveRefused("routine " + name);
                 } catch (InterruptedException cancelled) {
                     lastRoutine = name + ": cancelled";
                     throw cancelled;
@@ -927,6 +978,11 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         public String error() {
             return robot.error;
         }
+
+        @Override
+        public boolean driveAllowed() {
+            return robot.driveAllowed();
+        }
     };
 
     /**
@@ -1061,6 +1117,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     String goTo(String to) {
         wake();
         if (!teaching.isEmpty()) return refuse(to, "I'm learning a route (" + teaching + "); save or cancel it first");
+        if (!robot.driveAllowed()) return refuse(to, RoutineRunner.DRIVE_LOCKED); // he stays where he is
         if (tripRunning()) seq.cancel(); // stopped part way: he no longer knows where he is
         Places.Trip t = Places.plan(places.location(), to, places.map(), places.turnAround());
         if (t.error != null) return refuse(to, t.error);
@@ -1078,6 +1135,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     String tour() {
         wake();
         if (!teaching.isEmpty()) return refuse("tour", "I'm learning a route; save or cancel it first");
+        if (!robot.driveAllowed()) return refuse("tour", RoutineRunner.DRIVE_LOCKED);
         if (tripRunning()) seq.cancel();
         Places.Trip t = Places.tour(places.location(), places.map(), places.turnAround());
         if (t.error != null) return refuse("tour", t.error);
@@ -1718,7 +1776,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                         .put("liveliness", liveliness())
                         .put("beeps", assist.beepReplies()).put("reply", subtitle)
                         .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION)
-                        .put("watch", watch.status(android.os.SystemClock.elapsedRealtime()));
+                        .put("watch", watch.status(android.os.SystemClock.elapsedRealtime()))
+                        .put("drive_lock", robot.driveLock).put("drive_enabled", robot.driveLock && robot.driveEnabled);
             } catch (Exception ignored) {
             }
             return s;
@@ -1802,6 +1861,16 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         @Override
         public String watchUpdate(JSONObject msg) {
             return watch.update(msg, true, android.os.SystemClock.elapsedRealtime());
+        }
+
+        @Override
+        public void enableDriving(boolean on) {
+            driveSet("enable", on);
+        }
+
+        @Override
+        public void setDriveLock(boolean on) {
+            driveSet("lock", on);
         }
 
         @Override
@@ -1989,6 +2058,10 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
 
     @Override
     public void drive(int power, int angle) {
+        if (power > 0 && !robot.driveAllowed()) {
+            driveRefused("phone app driving");
+            return;
+        }
         seq.cancel();
         moved(power, angle);
         lastManual = System.currentTimeMillis();

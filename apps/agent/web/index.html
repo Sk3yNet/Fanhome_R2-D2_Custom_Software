@@ -28,6 +28,8 @@
   details summary { cursor:pointer; color:var(--dim); }
   #cam { display:none; width:100%; border-radius:8px; background:#000; margin-top:8px; }
   #camBtn { width:100%; }
+  #pad.locked { opacity:.35; } #driveBtn { flex:1; }
+  .pill.warn { background:var(--warn); color:#fff; }
   select, input[type=text] { flex:1; padding:8px; border-radius:8px; border:1px solid var(--line); background:#0b0e12; color:var(--text); min-width:0; }
   .hint { color:var(--dim); font-size:13px; margin:6px 0; }
   #subtitle { margin:10px 0 0; padding:10px 12px; border-left:3px solid var(--accent); border-radius:6px; background:#0b0e12; font-size:16px; overflow-wrap:anywhere; }
@@ -96,6 +98,7 @@
 
   <section>
     <h2>Drive</h2>
+    <div class="row" id="driveRow" style="display:none;margin-bottom:8px"><span id="driveState" class="pill">locked</span><button class="act" id="driveBtn">Enable driving</button></div>
     <div id="pad"><div id="knob"></div></div>
     <div class="row"><label for="power">Max power</label><input id="power" type="range" min="10" max="100" value="40"><output id="powerOut">40</output></div>
     <div class="row"><label>Head</label><div id="headPad" aria-label="Head: hold left or right to turn"><div id="headKnob"></div></div><button class="act" id="headCenter">Center</button></div>
@@ -136,6 +139,7 @@
       <label class="sw"><input type="checkbox" id="swReact" data-on="reactions-on" data-off="reactions-off"><span></span>Sound reactions</label>
       <label class="sw"><input type="checkbox" id="swChirps" data-on="chirps-on" data-off="chirps-off"><span></span>New beeps each time</label>
       <label class="sw"><input type="checkbox" id="swBeeps" data-on="beeps-on" data-off="beeps-off"><span></span>Answer in beeps</label>
+      <label class="sw"><input type="checkbox" id="swDriveLock" disabled><span></span>Require enabling to drive</label>
     </div>
   </section>
 
@@ -351,6 +355,25 @@ for (const b of $("presets").children) {
   };
 }
 showLiveliness(null); // until R2 reports the setting
+
+// Drive lock (docs/drive-lock.md): with it on, the wheels only move after "Enable driving", which
+// lasts until R2 hasn't driven for 10 minutes, or until STOP.
+let drive = null;
+function showDrive(d) {
+  drive = d;
+  const locked = d.lock && !d.enabled;
+  $("driveRow").style.display = d.lock ? "" : "none";
+  $("driveState").textContent = !d.lock ? "" : d.enabled ? "enabled · " + Math.ceil(d.seconds_left / 60) + " min idle left" : "locked";
+  $("driveState").className = "pill " + (d.enabled ? "ok" : "warn");
+  $("driveBtn").textContent = d.enabled ? "Lock driving" : "Enable driving";
+  $("pad").classList.toggle("locked", locked);
+  $("swDriveLock").checked = d.lock; $("swDriveLock").disabled = false;
+}
+$("driveBtn").onclick = () => api("POST", "/drive?enable=" + (drive && drive.enabled ? 0 : 1))
+  .then(d => { showDrive(d); say(d.result); }, e => say(e.message));
+$("swDriveLock").onchange = e => api("POST", "/drive?lock=" + (e.target.checked ? 1 : 0))
+  .then(d => { showDrive(d); say(d.result); }, err => say(err.message));
+
 // Stored routines (docs/routines.md), one button each. Upload them with tools\r2.ps1 routine-put <file>.
 async function loadRoutines() {
   if (!token) return;
@@ -387,6 +410,7 @@ async function refresh() {
     $("battBar").setAttribute("aria-label", "battery " + (pct ?? "unknown") + "%" + (c === 1 ? ", charging" : ""));
     $("mov").classList.toggle("on", !!s.moving);
     $("mov").title = s.moving ? "moving" : "still";
+    if (s.drive) showDrive(s.drive);
     if (s.running != null && $("routines").children.length) {
       $("routineNow").textContent = (s.running === "idle" ? "idle" : "running: " + s.running)
         + (s.last_routine ? " · last: " + s.last_routine : "");

@@ -79,6 +79,10 @@ public final class RoutineTest {
 
         public String error() { return error; }
 
+        boolean driveAllowed = true;
+
+        public boolean driveAllowed() { return driveAllowed; }
+
         String run(Routine r) {
             try {
                 new RoutineRunner(this, this).run(r);
@@ -134,6 +138,7 @@ public final class RoutineTest {
         running();
         safety();
         waitUntil();
+        driveLock();
         nesting();
         store();
         triggers();
@@ -292,6 +297,56 @@ public final class RoutineTest {
         FakeHost h4 = new FakeHost();
         eq("battery lt", "finished", h4.run(parse("{\"name\":\"a\",\"steps\":[{\"wait_until\":{\"field\":\"battery\",\"lt\":90},\"timeout\":1}]}")));
         eq("lt holds at once", 0L, h4.now);
+    }
+
+    /** The agent's drive lock: routines that drive don't start while it's locked, and end when it locks. */
+    static void driveLock() throws Exception {
+        FakeHost h = new FakeHost();
+        h.driveAllowed = false;
+        eq("no drive steps: runs while locked", "finished",
+                h.run(parse("{\"name\":\"a\",\"steps\":[{\"sound\":8},{\"head\":20},{\"mode\":13},{\"action\":\"wake\"}]}")));
+        eq("all its steps ran", 4, h.log.size());
+
+        String[] driving = {
+                "{\"drive\":{\"power\":30,\"seconds\":1}}", "{\"mode\":3}", "{\"mode\":9}",
+                "{\"cmd\":{\"cmd\":\"move\",\"power\":20,\"angle\":0}}", "{\"action\":\"dance\"}",
+                "{\"repeat\":2,\"steps\":[{\"wait\":1},{\"mode\":5}]}",
+        };
+        for (String step : driving) {
+            h = new FakeHost();
+            h.driveAllowed = false;
+            eq("locked, refused before any step: " + step, "abort: " + RoutineRunner.DRIVE_LOCKED,
+                    h.run(parse("{\"name\":\"a\",\"steps\":[{\"sound\":8}," + step + "]}")));
+            eq("nothing ran: " + step, 0, h.log.size());
+            h = new FakeHost();
+            eq("unlocked, runs: " + step, "finished", h.run(parse("{\"name\":\"a\",\"steps\":[" + step + "]}")));
+        }
+
+        // A called routine that drives counts too.
+        h = new FakeHost();
+        h.driveAllowed = false;
+        h.stored.put("inner", parse("{\"name\":\"inner\",\"steps\":[{\"mode\":2}]}"));
+        eq("called routine drives", "abort: " + RoutineRunner.DRIVE_LOCKED,
+                h.run(parse("{\"name\":\"outer\",\"steps\":[{\"routine\":\"inner\"}]}")));
+        eq("power 0 is not driving", "finished",
+                new FakeHost().run(parse("{\"name\":\"a\",\"steps\":[{\"drive\":{\"power\":0,\"seconds\":0.2}}]}")));
+
+        // Locked while driving: the next repeat ends it, and stop still goes out.
+        final FakeHost lk = new FakeHost();
+        lk.onTick = new Runnable() {
+            public void run() {
+                if (lk.now >= 1000) lk.driveAllowed = false;
+            }
+        };
+        eq("locked mid-drive", "abort: " + RoutineRunner.DRIVE_LOCKED,
+                lk.run(parse("{\"name\":\"a\",\"steps\":[{\"drive\":{\"power\":30,\"seconds\":5}},{\"sound\":1}]}")));
+        eq("stop sent after the lock", "1000 move angle=0 power=0", lk.log.get(lk.log.size() - 1));
+        check("no drive after the lock", !lk.log.contains("1000 move angle=0 power=30"));
+
+        check("drives(): move", RoutineRunner.drives(new JSONObject("{\"cmd\":\"move\",\"power\":5}")));
+        check("drives(): stop is not", !RoutineRunner.drives(new JSONObject("{\"cmd\":\"move\",\"power\":0}")));
+        check("drives(): mode 0 is not", !RoutineRunner.drives(new JSONObject("{\"cmd\":\"mode\",\"mode\":0}")));
+        check("drives(): head is not", !RoutineRunner.drives(new JSONObject("{\"cmd\":\"head-angle\",\"angle\":40}")));
     }
 
     static void nesting() throws Exception {
