@@ -36,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 ```
 `tools\r2.ps1` finds the robot by its UDP announcement (port 7702), or use `-Robot <ip>`.
 
-## API (port 7700, header `X-R2-Token` from `secrets\agent-token.txt`)
+## API (port 7700, signed requests: [security.md](security.md))
 `GET /` (the web control page, no token; it asks for one) · `GET /ping` (no token) · `GET /status` · `GET /log` (`?previous=1`: previous boot) · `GET /logcat?lines=N&grep=text` · `GET /dmesg?lines=N&grep=text` ·
 `POST /main/install` (APK body) · `POST /main/rollback` ·
 `POST /main/restart` · `POST /agent/install` (APK body) · `POST /serial` (one JSON command) ·
@@ -54,19 +54,26 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `GET /places` · `GET /place?name=` · `POST /place` · `POST /place/delete?name=` · `POST /goto?place=` · `POST /tour` ·
 `POST /place/here?name=` · `POST /place/teach?name=&what=there|back|turn` · `POST /place/teach/save` · `POST /place/teach/cancel` ·
 `POST /places/settings` (rooms, see [places.md](places.md)) ·
-`GET /plugins` · `POST /plugin?name=&enabled=1|0&grant=<permissions>` · `POST /plugin/config?name=` (JSON body) (see [plugins.md](plugins.md))
+`GET /plugins` · `POST /plugin?name=&enabled=1|0&grant=<permissions>` · `POST /plugin/config?name=` (JSON body) (see [plugins.md](plugins.md)) ·
+`GET /whoami` · `GET /clients` · `POST /clients/pair?name=` · `POST /clients/add?name=&role=&plain=1` · `POST /clients/role?id=&role=` ·
+`POST /clients/revoke?id=` · `POST /clients/owner/rotate` · `GET /trust` · `POST /trust?add=|remove=<sha256>` ·
+`GET /update` · `POST /update/check` · `POST /update/install` · `POST /update/auto?on=1|0` · `POST /update/source?repo=owner/name`
+
+Each route needs a permission level (read, control or admin), and each client has its own key. Admin
+routes need a signed request; read and control routes also take a plain token from a client made for it
+(Home Assistant). Details, pairing and the way back in: [security.md](security.md).
 
 Only clients on the robot's own subnet (its Wi-Fi network or its hotspot), loopback, or IPv6 link-local are
 served. A client on another private network, such as a guest network, another VLAN or a VPN, is refused
 and logged. If Home Assistant or your PC sits on a different subnet, allow it:
 `tools\r2.ps1 allow-subnets 10.0.20.0/24` (comma-separated; a bare address means one host; `''` clears the
-list). The token travels in plain HTTP, so keep it to your home network.
+list). Requests are signed but not encrypted, so keep it to your home network.
 
-**Tokens:** each robot makes its own random token on first start (`files/api-token` in the agent's data).
+**Keys:** each robot makes its own random owner key on first start (`files/api-token` in the agent's data).
 `tools\r2.ps1 fetch-token` copies it to `secrets\robot-token.txt` (in the pairing button's setup window
-without any token, otherwise over root adb), and `r2.ps1` then
-uses it. Your own builds also accept the development token from `secrets\agent-token.txt`;
-`apps\build.ps1 -Release` builds without it.
+without any credentials, otherwise over root adb), or `tools\r2.ps1 pair` gives the PC its own key
+(`secrets\robot-client.txt`), and `r2.ps1` signs with it. Your own builds also accept the development key
+from `secrets\agent-token.txt`; `apps\build.ps1 -Release` builds without it.
 
 ## Boot hardening
 Off until switched on: `tools\r2.ps1 harden-on` sets up a firewall that lets the local network reach only
@@ -76,7 +83,8 @@ starts as a 5-minute trial and only stays if a request gets through it. `harden-
 USB adb and the serial console are never affected. Details and the robot test plan: [hardening.md](hardening.md).
 
 ## Web control page
-Open `http://<robot-ip>:7700/` on a phone or PC on the same network and enter the token once. It shows
+Open `http://<robot-ip>:7700/` on a phone or PC on the same network, press R2's pairing button and tap
+**Pair this device** (or paste a key under Connection). The page signs every request with its key. It shows
 battery, charging and movement; has a joystick (repeated `move` commands while held, so the motion
 watchdog stops R2 if the page or Wi-Fi goes away), a head slider, the actions, and a stop button.
 
@@ -213,14 +221,14 @@ conversation agents, answer through R2's microphone and speaker. Off by default.
 ## Camera
 R2 Main streams R2's camera as MJPEG (480×640 portrait, up to 10 frames a second). The camera is mounted on its side, so R2 turns each frame a quarter turn clockwise; the phone app's video stays as the camera delivers it, as in the factory software. It listens on
 localhost only; the agent serves it at `/camera.mjpg` (live) and `/camera.jpg` (one picture) after
-checking the token, so the camera has the same protection as everything else. The camera is switched on
+checking the credentials (read level), so the camera has the same protection as everything else. The camera is switched on
 only while someone is watching, and off again 3 s after the last viewer leaves.
 
-Clients that can't send the `X-R2-Token` header can give the token as the password of HTTP basic
-auth (any user name), or as `?token=`. The web page's camera view uses `?token=`.
+Clients that can't send headers can give a plain token (`client-add <name> -Plain`) as the password of
+HTTP basic auth (any user name), or as `?token=`. The web page's camera view uses a signed link instead.
 
 **Home Assistant:** add the *MJPEG IP Camera* integration with MJPEG URL `http://<robot-ip>:7700/camera.mjpg`,
-still image URL `http://<robot-ip>:7700/camera.jpg`, any user name, your token as the password, and basic
+still image URL `http://<robot-ip>:7700/camera.jpg`, any user name, a plain token as the password (`tools\r2.ps1 client-add home-assistant -Plain`), and basic
 authentication.
 
 ## Modes and status lights (R2 Main)
@@ -252,14 +260,14 @@ Bigger voice and vision features (free speech, knowing *who* a face is) are mean
 [docs/offload.md](docs/offload.md).
 
 ## Wi-Fi setup without a QR code
-1. Press R2's pairing button. For 2 minutes, Wi-Fi setup and pairing work without the token.
+1. Press R2's pairing button. For 2 minutes, Wi-Fi setup and pairing work without credentials.
 2. Join R2's hotspot with your phone (or use the home network if R2 is already on it), open
-   `http://192.168.43.1:7700/`, and tap **Pair this device** to save R2's token on it.
+   `http://192.168.43.1:7700/`, and tap **Pair this device**: the page gets its own key.
 3. Under **Wi-Fi**, scan, pick your network (or type its name), enter the password and tap **Join**.
    R2 saves it as its home network and joins it. If it can't, it forgets it again and its hotspot comes
    back within about a minute; `GET /wifi/last-join` (or the event log) says what happened.
 
-With the token, the same works at any time, also from the PC: `tools\r2.ps1 wifi-scan` and
+With an admin key, the same works at any time, also from the PC: `tools\r2.ps1 wifi-scan` and
 `tools\r2.ps1 wifi-join <ssid>` (it asks for the password). The official phone app's own Wi-Fi setup
 command is supported too.
 

@@ -95,6 +95,9 @@ function Build-App {
     Write-Host "   -> $final"
 }
 
+# The GitHub repository whose releases the agent updates from (docs/security.md); empty: the agent's default.
+$updateRepo = if ($env:R2_UPDATE_REPO -match '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { $env:R2_UPDATE_REPO } else { '' }
+
 if ($App -in 'agent', 'all') {
     # The UART library (libr2d2.so) is not bundled: the agent loads the robot's own copy at runtime.
     $agentDir = Join-Path $PSScriptRoot 'agent'
@@ -107,6 +110,7 @@ package dev.r2hack.agent;
 final class Secrets {
     static final String TOKEN = "$token";
     static final String VERSION = "$versionName";
+    static final String UPDATE_REPO = "$updateRepo";
     private Secrets() {}
 }
 "@

@@ -143,6 +143,6 @@ From then on the robot takes updates from the new signer only.
 
 ### Later
 
-When the agent updates itself from GitHub releases (roadmap section 5), it will store which repository it
-follows and the certificate it expects, and `switch-source` will set both. Until then the source is only
-recorded on the PC.
+The agent follows one repository's releases (`tools\r2.ps1 update-source`) and installs only APKs signed
+by a trusted certificate (its own, or one added with `trust-add`; the release notes publish the hash), see
+[security.md](security.md). `switch-source` sets both on the agent when it switches to a GitHub release.

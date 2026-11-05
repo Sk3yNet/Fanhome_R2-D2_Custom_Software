@@ -84,6 +84,23 @@
 #                            robot ("hey R2-D2", then the request goes to Home Assistant), or wake word in Home Assistant
 #   assist-only [ip]         accept the voice connection only from this address (Home Assistant); no ip: anyone on R2's subnet
 #   assist-reply <voice|beeps>  answer in the pipeline's voice, or in droid beeps with the text as subtitles
+#   pair                     give this PC its own admin key (press R2's pairing button first); saved to
+#                            secrets\robot-client.txt and used from then on (docs/security.md)
+#   whoami                   which key this PC uses and what it may do
+#   clients                  list API clients (paired devices, tokens), their level and when they were last seen
+#   client-add <name> [-Role read|control|admin] [-Plain]
+#                            make a key for another device; -Plain makes a token that can be sent as is
+#                            (Home Assistant), read or control only
+#   client-role <id> -Role <r>   change a client's level
+#   client-revoke <id>       revoke a client's key
+#   rotate-owner             replace the robot's owner key (secrets\robot-token.txt is updated)
+#   update                   self-update settings and the latest release seen
+#   update-check | update-install
+#                            look for a newer GitHub release / download, verify and install it (R2 reboots)
+#   update-auto <on|off>     check every 6 hours and install while R2 is idle (off by default)
+#   update-source <owner/repo>   follow another repository's releases (also add its certificate: trust-add)
+#   trust | trust-add <sha256> | trust-remove <sha256>
+#                            signing certificates whose APKs R2 installs (its own is always trusted)
 #   reboot | shutdown
 #   switch-source <owner/repo | folder> [-Tag v1.2.3] [-Yes]
 #                            move the robot to builds signed with another key (another fork's releases, or your
@@ -97,6 +114,8 @@ param(
     [Parameter(Position = 1)][string]$Arg,
     [string]$Robot,
     [string]$User,
+    [string]$Role,
+    [switch]$Plain,
     [int]$Lines = 500,
     [string]$At,
     [string]$Tag,
@@ -105,9 +124,18 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-# The robot's own token if fetched, otherwise the development token built into your agent.
-$tokenFile = @('secrets\robot-token.txt', 'secrets\agent-token.txt') | ForEach-Object { Join-Path $root $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
-$token = if ($tokenFile) { (Get-Content $tokenFile -Raw).Trim() } else { '' }
+# Requests are signed (docs/security.md) with, in this order: this PC's own key (pair), the robot's owner
+# key (fetch-token), or the development key built into your own agent builds.
+$cred = $null
+$clientFile = Join-Path $root 'secrets\robot-client.txt'
+$ownerFile = Join-Path $root 'secrets\robot-token.txt'
+$devFile = Join-Path $root 'secrets\agent-token.txt'
+if (Test-Path $clientFile) {
+    $id, $key = (Get-Content $clientFile -Raw).Trim() -split ':', 2
+    $cred = @{ Id = $id; Key = $key }
+} elseif (Test-Path $ownerFile) { $cred = @{ Id = 'owner'; Key = (Get-Content $ownerFile -Raw).Trim() } }
+elseif (Test-Path $devFile) { $cred = @{ Id = 'dev'; Key = (Get-Content $devFile -Raw).Trim() } }
+$script:clockOffset = $null
 $cache = Join-Path $root 'secrets\last-robot-ip.txt'
 
 function Find-Robot([int]$Seconds = 8) {
@@ -153,11 +181,58 @@ function Connect-Adb([int]$Minutes = 30) {
     return $target
 }
 
+function Hex([byte[]]$Bytes) { -join ($Bytes | ForEach-Object { $_.ToString('x2') }) }
+
+function Sha256Hex([byte[]]$Bytes) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { Hex $sha.ComputeHash($Bytes) } finally { $sha.Dispose() }
+}
+
+# Signed requests must carry the robot's time (within 5 minutes), so sign with its clock, not this PC's.
+function Get-RobotTime([string]$Ip) {
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    if ($null -eq $script:clockOffset) {
+        $script:clockOffset = 0
+        try { $script:clockOffset = [long](Invoke-RestMethod "http://${Ip}:7700/ping" -TimeoutSec 5).time - $now } catch { }
+    }
+    return $now + $script:clockOffset
+}
+
+# The X-R2-* headers for one request. $Path may carry a query string, encoded as it is sent.
+function Get-SignedHeaders([string]$Method, [string]$Path, [string]$BodyHash, [long]$Time) {
+    $q = $Path.IndexOf('?')
+    $p = if ($q -ge 0) { $Path.Substring(0, $q) } else { $Path }
+    $pairs = New-Object System.Collections.Generic.List[string]
+    if ($q -ge 0) {
+        foreach ($kv in $Path.Substring($q + 1) -split '&') {
+            $e = $kv.IndexOf('='); if ($e -le 0) { continue }
+            $k = [uri]::UnescapeDataString($kv.Substring(0, $e).Replace('+', ' '))
+            if ($k -match '^r2(client|time|nonce|sig)$') { continue }
+            $pairs.Add($k + '=' + [uri]::UnescapeDataString($kv.Substring($e + 1).Replace('+', ' ')))
+        }
+    }
+    $sorted = $pairs.ToArray(); [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    $nb = New-Object byte[] 12; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($nb)
+    $nonce = Hex $nb
+    $canon = "R2-HMAC-SHA256`n$Method`n$p`n$($sorted -join '&')`n$Time`n$nonce`n$BodyHash"
+    $hmac = New-Object Security.Cryptography.HMACSHA256 -ArgumentList (, [Text.Encoding]::UTF8.GetBytes($cred.Key))
+    try { $sig = Hex $hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($canon)) } finally { $hmac.Dispose() }
+    return @{ 'X-R2-Client' = $cred.Id; 'X-R2-Time' = "$Time"; 'X-R2-Nonce' = $nonce; 'X-R2-Body' = $BodyHash; 'X-R2-Signature' = $sig }
+}
+
 function Call([string]$Method, [string]$Path, $Body, [string]$InFile, [int]$Timeout = 30) {
     $ip = Get-Robot
-    $p = @{ Uri = "http://${ip}:7700$Path"; Method = $Method; Headers = @{ 'X-R2-Token' = $token }; TimeoutSec = $Timeout }
-    if ($InFile) { $p.InFile = $InFile; $p.ContentType = 'application/vnd.android.package-archive' }
-    elseif ($null -ne $Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes($Body); $p.ContentType = 'application/json' }
+    $p = @{ Uri = "http://${ip}:7700$Path"; Method = $Method; TimeoutSec = $Timeout }
+    $bodyHash = Sha256Hex ([byte[]]@())
+    if ($InFile) {
+        $p.InFile = $InFile; $p.ContentType = 'application/vnd.android.package-archive'
+        $bodyHash = (Get-FileHash -Algorithm SHA256 $InFile).Hash.ToLowerInvariant()
+    } elseif ($null -ne $Body) {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($Body)
+        $p.Body = $bytes; $p.ContentType = 'application/json'
+        $bodyHash = Sha256Hex $bytes
+    }
+    $p.Headers = if ($cred) { Get-SignedHeaders $Method $Path $bodyHash (Get-RobotTime $ip) } else { @{} }
     Invoke-RestMethod @p
 }
 
@@ -292,6 +367,11 @@ function Get-Source([string]$Spec, [string]$ReleaseTag) {
     return @{ dir = $dir; label = "$Spec $($rel.tag_name)"; repo = $Spec; tag = $rel.tag_name; noteCert = $noteCert }
 }
 
+function Save-Secret([string]$File, [string]$Text) {
+    New-Item -ItemType Directory -Force (Join-Path $root 'secrets') | Out-Null
+    Set-Content $File $Text -NoNewline -Encoding ascii
+}
+
 switch ($Command) {
     'find'         { $ip = Find-Robot 10; if ($ip) { "robot at $ip" } else { 'no announcement heard' } }
     'status'       { Call GET /status | ConvertTo-Json -Depth 5 }
@@ -413,10 +493,47 @@ switch ($Command) {
             $t = (& $adb -s $target shell cat /data/data/dev.r2hack.agent/files/api-token).Trim()
         }
         if ($t -notmatch '^[0-9a-f]{48}$') { throw "no token found (is the agent updated and running?)" }
-        New-Item -ItemType Directory -Force (Join-Path $root 'secrets') | Out-Null
-        Set-Content (Join-Path $root 'secrets\robot-token.txt') $t -NoNewline -Encoding ascii
-        'saved to secrets\robot-token.txt'
+        Save-Secret $ownerFile $t
+        'saved to secrets\robot-token.txt (the owner key: keep it private; it always works, so it is your way back in)'
     }
+    'pair'         {
+        # Works in the pairing button's 2-minute window, or with an admin key already in place.
+        $c = Call POST "/clients/pair?name=$([uri]::EscapeDataString("PC $env:COMPUTERNAME"))"
+        Save-Secret $clientFile "$($c.id):$($c.key)"
+        "paired as $($c.id) ($($c.role)); key saved to secrets\robot-client.txt"
+    }
+    'whoami'       { Call GET /whoami | ConvertTo-Json }
+    'clients'      {
+        (Call GET /clients).clients | ForEach-Object {
+            $seen = if ($_.last_seen) { [DateTimeOffset]::FromUnixTimeSeconds($_.last_seen).LocalDateTime } else { 'never' }
+            [pscustomobject]@{ id = $_.id; name = $_.name; role = $_.role; plain = $_.plain_token; last_seen = $seen; last = $_.last_request }
+        } | Format-Table -AutoSize
+    }
+    'client-add'   {
+        if (-not $Arg) { throw 'usage: r2.ps1 client-add <name> [-Role read|control|admin] [-Plain]' }
+        $r = if ($Role) { $Role } else { 'control' }
+        $q = "name=$([uri]::EscapeDataString($Arg))&role=$r" + $(if ($Plain) { '&plain=1' } else { '' })
+        $c = Call POST "/clients/add?$q"
+        "id:   $($c.id)   ($($c.role)$(if ($c.plain_token) { ', plain token' }))"
+        if ($c.plain_token) { "token: $($c.key)" } else { "key:  $($c.id):$($c.key)" }
+        'Shown only now. Revoke with: r2.ps1 client-revoke ' + $c.id
+    }
+    'client-role'  { if (-not $Arg -or -not $Role) { throw 'usage: r2.ps1 client-role <id> -Role read|control|admin' }; Call POST "/clients/role?id=$([uri]::EscapeDataString($Arg))&role=$Role" }
+    'client-revoke' { if (-not $Arg) { throw 'usage: r2.ps1 client-revoke <id>' }; Call POST "/clients/revoke?id=$([uri]::EscapeDataString($Arg))" }
+    'rotate-owner' {
+        if (-not $cred -or $cred.Id -ne 'owner') { throw 'sign with the owner key for this: remove secrets\robot-client.txt for a moment, or run fetch-token first' }
+        $c = Call POST /clients/owner/rotate
+        Save-Secret $ownerFile $c.key
+        'new owner key saved to secrets\robot-token.txt; the old one no longer works'
+    }
+    'update'       { Call GET /update | ConvertTo-Json -Depth 5 }
+    'update-check' { Call POST /update/check -Timeout 60 | ConvertTo-Json }
+    'update-install' { Call POST /update/install -Timeout 600 }
+    'update-auto'  { if ($Arg -notin 'on', 'off') { throw 'usage: r2.ps1 update-auto <on|off>' }; Call POST "/update/auto?on=$(if ($Arg -eq 'on') { 1 } else { 0 })" }
+    'update-source' { if ($Arg -notmatch '^[\w.-]+/[\w.-]+$') { throw 'usage: r2.ps1 update-source <owner/repo>' }; Call POST "/update/source?repo=$([uri]::EscapeDataString($Arg))" }
+    'trust'        { Call GET /trust | ConvertTo-Json }
+    'trust-add'    { if (-not $Arg) { throw 'usage: r2.ps1 trust-add <certificate sha256>' }; Call POST "/trust?add=$([uri]::EscapeDataString($Arg))" | ConvertTo-Json }
+    'trust-remove' { if (-not $Arg) { throw 'usage: r2.ps1 trust-remove <certificate sha256>' }; Call POST "/trust?remove=$([uri]::EscapeDataString($Arg))" | ConvertTo-Json }
     'adb'          { $m = if ($Arg) { [int]$Arg } else { 30 }; Connect-Adb $m | Out-Null }
     'adb-off'      { Call POST '/adb?on=0' }
     'adb-always'   { Call POST '/adb?always=1' }
@@ -473,7 +590,7 @@ switch ($Command) {
     'hotspot'      {
         # In the setup window this works without a token; otherwise with the token, or over root adb.
         $h = $null
-        try { $h = Invoke-RestMethod "http://$(Get-Robot):7700/hotspot" -Headers @{ 'X-R2-Token' = $token } -TimeoutSec 5 } catch { }
+        try { $h = Call GET /hotspot -Timeout 5 } catch { }
         if ($h) {
             "name:     $($h.ssid)"
             "password: $($h.password)"
@@ -644,6 +761,12 @@ switch ($Command) {
             'agent switched, settings kept'
         }
         Call POST '/safe-mode?on=0' | Out-Null
+        # The agent's own certificate is now the new one, so it trusts this source's updates; point its
+        # self-update at the same repository (docs/security.md). An agent without self-update answers 404.
+        if ($src.repo) {
+            try { (Call POST "/update/source?repo=$([uri]::EscapeDataString($src.repo))").result }
+            catch { Write-Warning "could not set the agent's update source ($($_.Exception.Message)); later: r2.ps1 update-source $($src.repo)" }
+        }
         @{ source = $src.label; repo = $src.repo; tag = $src.tag; cert = $new.main.cert; switched = (Get-Date -Format 's') } |
             ConvertTo-Json | Set-Content $sourceFile
         "Done: the robot now runs $($src.label). From now on update it with push-main and push-agent from this source."
