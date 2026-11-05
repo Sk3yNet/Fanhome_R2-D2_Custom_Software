@@ -23,11 +23,11 @@ final class Permissions {
         open("GET /", "GET /ping", "GET /setup");
         read("GET /status", "GET /log", "GET /camera.mjpg", "GET /camera.jpg", "GET /routines", "GET /routine",
                 "GET /wifi/last-join", "GET /mqtt", "GET /clients/allow", "GET /update", "GET /trust",
-                "GET /whoami",
+                "GET /whoami", "GET /cues", "GET /cue", "GET /watch",
                 // Anyone who may look at the robot may also stop it.
                 "POST /stop");
         control("POST /action", "POST /routine", "POST /routine/delete", "POST /routine/run", "POST /routine/stop",
-                "POST /volume", "POST /assist");
+                "POST /volume", "POST /assist", "POST /cue", "POST /cue/delete", "POST /watch");
         // Everything else (installs, reboot, shutdown, adb, Wi-Fi, stock app, serial, simulator, logcat,
         // dmesg, clients, trust, updates, MQTT and subnet settings) is admin.
     }

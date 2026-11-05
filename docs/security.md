@@ -16,8 +16,8 @@ The robot still only accepts clients on its own subnet (and the extra subnets yo
 
 | Level | What it may do |
 | --- | --- |
-| `read` | status, logs (`/log`), camera, routine list, update and trust status, and the emergency stop |
-| `control` | read, plus actions, routines (run, upload, delete, stop), volume, the voice-pipeline mode |
+| `read` | status, logs (`/log`), camera, routine and cue lists, watch-with-me state, update and trust status, and the emergency stop |
+| `control` | read, plus actions, routines (run, upload, delete, stop), watch-with-me cues and playback state, volume, the voice-pipeline mode |
 | `admin` | everything: installs, updates, reboot, shutdown, adb, Wi-Fi, hotspot, MQTT and subnet settings, raw controller commands (`/serial`, so the web page's joystick needs admin), clients, trust, logcat/dmesg |
 
 Any route not listed as read or control needs admin, so new routes start locked down
