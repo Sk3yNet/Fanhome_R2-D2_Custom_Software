@@ -132,6 +132,8 @@
       <div class="row"><select id="nets"><option value="">(scan first, or type a name)</option></select></div>
       <div class="row"><input id="ssid" type="text" placeholder="Network name" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
       <div class="row"><input id="wpw" type="password" placeholder="Wi-Fi password (empty for an open network)" autocomplete="off"><button class="act" id="join">Join</button></div>
+      <div class="row"><button class="act" id="hsShow">Show hotspot password</button><button class="act" id="hsNew">New hotspot password</button></div>
+      <div class="hint" id="hsNow"></div>
     </div>
   </section>
 
@@ -348,6 +350,20 @@ join.onclick = async () => {
     wpw.value = "";
     say(r.result + " Then find R2 again (tools\\r2.ps1 find, or your router's device list).");
   } catch (e) { say("join: " + e.message); }
+};
+
+// R2's own hotspot: its name and this robot's password. Without a token, only in the setup window
+// (the pairing button also runs the hotspot with its factory settings for those 2 minutes).
+function showHotspot(h) {
+  hsNow.textContent = "Hotspot " + h.ssid + ", password " + h.password
+    + (h.using === "factory" ? " (factory settings for " + h.factory_seconds_left + " s more)" : "");
+}
+hsShow.onclick = async () => {
+  try { showHotspot(await api("GET", "/hotspot")); } catch (e) { say("hotspot: " + e.message); }
+};
+hsNew.onclick = async () => {
+  if (!confirm("Give R2's hotspot a new random password? Phones on it now have to join again with the new one.")) return;
+  try { const h = await api("POST", "/hotspot", "{}"); showHotspot(h); say(h.result); } catch (e) { say("hotspot: " + e.message); }
 };
 
 let volTimer;

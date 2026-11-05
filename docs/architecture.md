@@ -24,7 +24,7 @@ Every command to the controller passes through the agent's motion guard, whoever
    An over-the-air agent update restarts itself (`MY_PACKAGE_REPLACED`); the very first one over the
    `/system` copy reboots the robot instead. **Bad agent update**: `adb shell pm uninstall dev.r2hack.agent`
    reverts to the `/system/priv-app` copy.
-5. **Wi-Fi**: joins the robot's saved home network (highest priority); if that fails (60 s) or drops (90 s), the robot's own hotspot comes back (`192.168.43.1`).
+5. **Wi-Fi**: joins the robot's saved home network (highest priority); if that fails (60 s) or drops (90 s), the robot's own hotspot comes back (`192.168.43.1`), with this robot's own password (see *Hotspot password*).
 6. **Back to factory software**: `tools\r2.ps1 stock-on` + `reboot` (agent goes passive), or `tools\install-on-robot.ps1 restore` over adb.
 7. **Always available**: root serial console on the debug UART, and your full eMMC backup in `backup\`.
 
@@ -42,7 +42,7 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `POST /main/restart` · `POST /agent/install` (APK body) · `POST /serial` (one JSON command) ·
 `GET /camera.mjpg` · `GET /camera.jpg` · `POST /action?name=<action>` (runs an R2 Main action) · `POST /stop` · `POST /safe-mode?on=1|0` ·
 `POST /wifi?mode=station|ap` · `POST /stock?enable=1|0` · `POST /reboot` · `POST /shutdown` · `GET /setup` · `POST /setup/open` ·
-`GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `POST /identity` ·
+`GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `GET /hotspot` · `POST /hotspot` (`{"password"}`; empty: a new random one) · `POST /identity` ·
 `POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2` ·
 `POST /adb?on=1&minutes=N` · `POST /adb?on=0` · `POST /adb?always=1` · `GET /clients/allow` · `POST /clients/allow?subnets=a.b.c.d/n,...` ·
 `POST /assist?mode=off|robot|ha&host=<ip>` (Home Assistant voice satellite, see [home-assistant-voice.md](home-assistant-voice.md)) ·
@@ -226,6 +226,31 @@ Bigger voice and vision features (free speech, knowing *who* a face is) are mean
 With the token, the same works at any time, also from the PC: `tools\r2.ps1 wifi-scan` and
 `tools\r2.ps1 wifi-join <ssid>` (it asks for the password). The official phone app's own Wi-Fi setup
 command is supported too.
+
+## Hotspot password
+The factory software gives every robot's hotspot the same password. R2 Agent keeps the factory hotspot
+name but gives the hotspot a password of its own, made on the robot the first time the agent starts, like
+`k7mq-x3fa-9tpe` (12 random characters without look-alikes). It's kept in the agent's data, and in
+`files/hotspot-password` for the serial console and root adb.
+
+- **See it:** `tools\r2.ps1 hotspot`, `GET /hotspot`, or **Show hotspot password** on the web page.
+- **Change it:** `tools\r2.ps1 hotspot-password` (asks for one, 8 to 63 characters; Enter or `new` for a
+  random one), or **New hotspot password** on the web page. A running hotspot restarts with it, so phones
+  on it have to join again.
+- **Forgot it:** press R2's pairing button. If R2 is on its hotspot, the hotspot restarts with its factory
+  settings for the 2-minute setup window. Join it with the factory password, open
+  `http://192.168.43.1:7700/` and tap **Show hotspot password** (or **Pair this device** first). After the
+  window the hotspot restarts with this robot's own password. If R2 is on your home network instead, the
+  token works there. If R2 is on neither, press its Wi-Fi button first to bring up the hotspot. Last
+  resort: `cat /data/data/dev.r2hack.agent/files/hotspot-password` on the serial console.
+- **Official phone app:** its setup flow joins the hotspot with the factory password, so use it within the
+  pairing button's window, or type R2's own password into the phone's Wi-Fi settings.
+- **Factory software:** `tools\r2.ps1 stock-on` puts the factory hotspot settings back, and a passive agent
+  leaves them alone.
+
+The factory settings are whatever Android's hotspot settings held the first time this agent started. If
+the agent's data is ever wiped, they can't be read again; the setup window then runs the hotspot without a
+password instead.
 
 ## Official phone app (R2 Main)
 R2 Main speaks the factory software's local protocol: discovery broadcasts on UDP 8090, JSON commands over
