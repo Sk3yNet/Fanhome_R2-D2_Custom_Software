@@ -75,8 +75,9 @@ R2 can answer in droid beeps instead of the pipeline's voice, with the "translat
 ## Letting voice and the AI run R2's actions
 Home Assistant needs a way to run R2's actions. These all go through R2's normal API (`POST /action?name=...`).
 Put this into a [package](https://www.home-assistant.io/docs/configuration/packages/), e.g.
-`packages/r2d2.yaml`, with R2's address, and put R2's token in `secrets.yaml` as `r2_token`. Get the token with
-`tools\r2.ps1 fetch-token`.
+`packages/r2d2.yaml`, with R2's address, and put a token for Home Assistant in `secrets.yaml` as `r2_token`. Make one with
+`tools\r2.ps1 client-add home-assistant -Plain` (control level: actions and routines, no installs or
+reboots; see [security.md](security.md)). The robot's own owner key no longer works here.
 
 ```yaml
 rest_command:
