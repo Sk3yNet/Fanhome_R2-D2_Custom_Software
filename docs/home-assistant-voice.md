@@ -53,6 +53,25 @@ R2 serves one Home Assistant connection at a time. Home Assistant reconnects by 
 If Home Assistant is on a different subnet or VLAN, use `assist-only <its address>`. The pinned address is
 accepted from anywhere.
 
+## Answering in beeps
+R2 can answer in droid beeps instead of the pipeline's voice, with the "translation" shown as subtitles:
+
+`tools\r2.ps1 assist-reply beeps` (or the **Answer in beeps** switch on R2's web page or in Home Assistant, or
+`action beeps-on`). `tools\r2.ps1 assist-reply voice` goes back to speaking. Kept across reboots.
+
+- Home Assistant sends the answer's text just before its audio. R2 beeps generated chirps shaped like the answer
+  ([chirps.md](chirps.md): about one tone per syllable, rising for a question, a trill for "!", at most 8 s) and
+  drops the spoken audio. With `chirps-off` he uses a few factory sounds instead (one for a short answer, up to
+  four for a long one).
+- The text shows as a subtitle on R2's web page (Status, for 30 s), in `tools\r2.ps1 status` (`subtitle`), and in
+  Home Assistant as the **Last reply** sensor, so an automation can show it on a screen or speak it somewhere else.
+  The subtitle is there in voice mode too.
+- Only answers to a request turn into beeps. Announcements (`assist_satellite.announce`), and any other audio Home
+  Assistant sends without a request before it, still play as sent.
+- The pipeline still needs text to speech: R2 uses the end of its audio to know the answer is over. Any voice works,
+  since you won't hear it.
+- Muted R2 shows the subtitle without beeping.
+
 ## Letting voice and the AI run R2's actions
 Home Assistant needs a way to run R2's actions. These all go through R2's normal API (`POST /action?name=...`).
 Put this into a [package](https://www.home-assistant.io/docs/configuration/packages/), e.g.
