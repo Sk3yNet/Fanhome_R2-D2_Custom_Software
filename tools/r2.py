@@ -1244,6 +1244,14 @@ def cmd_switch_source(robot, a):
             raise R2Error('the robot still runs the old agent (%s). Backup: %s' % (now and now['path'], backup))
         print('agent switched, settings kept')
     robot.call('POST', '/safe-mode?on=0')
+    # The agent's own certificate is now the new one, so it trusts this source's updates; point its
+    # self-update at the same repository (docs/security.md). An agent without self-update answers 404.
+    if src['repo']:
+        try:
+            show(robot.call('POST', '/update/source?repo=' + q(src['repo'])))
+        except R2Error as e:
+            print("WARNING: could not set the agent's update source (%s); later: r2.py update-source %s"
+                  % (e, src['repo']), file=sys.stderr)
     os.makedirs(SECRETS, exist_ok=True)
     with open(SOURCE_FILE, 'w', encoding='utf-8') as f:
         json.dump({'source': src['label'], 'repo': src['repo'], 'tag': src['tag'], 'cert': new['main']['cert'],
