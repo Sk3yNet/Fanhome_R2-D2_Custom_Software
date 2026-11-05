@@ -80,7 +80,9 @@ Everything lives under `tools\` and is ignored by git:
    ```
    This disables the factory app (nothing is deleted), puts R2 Agent in `/system/priv-app`, installs
    R2 Main, and reboots. adb over Wi-Fi is off from then on; `tools\r2.ps1 adb` switches it on for 30 minutes. The robot then joins its saved home Wi-Fi network,
-   or brings up its own hotspot if it can't.
+   or brings up its own hotspot if it can't. The hotspot keeps its name but gets a password of its own:
+   press R2's pairing button, join the hotspot with the factory password (back for 2 minutes), and open
+   `http://192.168.43.1:7700/` to see it (see *Hotspot password* in [docs/architecture.md](docs/architecture.md)).
 
 ## Everyday use
 ```
@@ -98,7 +100,7 @@ everything; options are spelled `--robot`, `--user` and `--lines`.
 
 Other `tools\r2.ps1` commands: `action <name>` (`actions` lists them), `stop`, `log`, `log-previous`,
 `logcat [text]`, `dmesg [text]`, `adb [minutes]`, `adb-off`, `allow-subnets <list>`, `serial '<json>'`, `rollback`, `restart`, `push-agent`,
-`safe-on`/`safe-off`, `wifi-station`/`wifi-ap`, `stock-on`/`stock-off`, `reboot`, `shutdown`, `fetch-token`, `mqtt`,
+`safe-on`/`safe-off`, `wifi-station`/`wifi-ap`, `hotspot`, `hotspot-password`, `stock-on`/`stock-off`, `reboot`, `shutdown`, `fetch-token`, `mqtt`,
 `assist off|robot|ha`, `assist-only <ip>`.
 
 R2 also shows up in Home Assistant as a media player (DLNA), for music and announcements, and its camera can be added as an MJPEG camera (see [docs/architecture.md](docs/architecture.md)). *Not yet tested on the robot.*
@@ -123,7 +125,8 @@ power-off permission the power button uses.
 Right now the API is protected only by a token over plain HTTP, and only accepts clients on the robot's own
 subnet (add others, such as a Home Assistant VLAN, with `tools\r2.ps1 allow-subnets`).
 Pressing the pairing button opens a 2-minute window in which anyone on the network can set up Wi-Fi and
-fetch the token. The official phone app's protocol has no real authentication; turn it off with
+fetch the token and the hotspot password; if R2 is on its hotspot, that hotspot also uses the factory password
+during the window. The official phone app's protocol has no real authentication; turn it off with
 `tools\r2.ps1 action phone-app-off` if you don't use the app. adb over Wi-Fi is off by default, but
 while it's on (`tools\r2.ps1 adb`, 30 minutes) it gives a root shell with **no authentication** to anyone on the
 same network. The Home Assistant voice satellite (port 10700, off by default) has no authentication

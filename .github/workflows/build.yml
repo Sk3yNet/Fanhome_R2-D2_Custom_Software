@@ -37,8 +37,8 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # Off-robot tests of the routine engine (downloads Android 4.4's org.json from Maven Central).
-      - name: Routine engine tests
+      # Off-robot tests of the routine engine and hotspot passwords (downloads Android 4.4's org.json from Maven Central).
+      - name: Off-robot tests
         run: apps/test.sh
 
       - name: Android SDK packages
