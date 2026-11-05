@@ -55,6 +55,10 @@
   #headPad::before, #headPad::after { position:absolute; top:50%; transform:translateY(-50%); color:var(--dim); font-size:13px; }
   #headPad::before { content:"◀"; left:12px; } #headPad::after { content:"▶"; right:12px; }
   #headCenter { padding:8px 10px; }
+  .presets { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:12px; }
+  .presets button { padding:10px 4px; }
+  .presets button[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .presets button:disabled { opacity:.5; }
 </style>
 </head>
 <body>
@@ -94,6 +98,13 @@
   <section>
     <h2>Settings</h2>
     <div class="row"><label for="vol">Volume</label><input id="vol" type="range" min="0" max="100" value="30"><output id="volOut">–</output></div>
+    <div class="row"><label>Activity</label><span class="hint" id="liveHint">–</span></div>
+    <div class="presets" id="presets" role="group" aria-label="Activity preset">
+      <button class="act" data-level="off">Off</button>
+      <button class="act" data-level="quiet">Quiet</button>
+      <button class="act" data-level="chatty">Chatty</button>
+      <button class="act" data-level="full">Full show</button>
+    </div>
     <div class="switches">
       <label class="sw"><input type="checkbox" id="swSound" data-on="unmute" data-off="mute"><span></span>Sound</label>
       <label class="sw"><input type="checkbox" id="swVoice" data-on="voice-on" data-off="voice-off"><span></span>Voice commands</label>
@@ -110,6 +121,19 @@
     <h2>Routines</h2>
     <div class="hint" id="routineNow">–</div>
     <div class="grid" id="routines"></div>
+  </section>
+
+  <section>
+    <h2>Rooms</h2>
+    <div class="hint" id="placeNow">–</div>
+    <div class="grid" id="places"></div>
+    <div class="stack" style="margin-top:8px">
+      <div class="row"><button class="act" id="hereHome">R2 is home now</button><button class="act" id="tourBtn">Tour the rooms</button></div>
+      <div class="row"><input id="teachName" type="text" placeholder="Room name, e.g. kitchen" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="row"><button class="act" id="teachThere">Teach the way there</button><button class="act" id="teachBack">Teach the way back</button><button class="act" id="teachTurn">Teach a turn-around</button></div>
+      <div class="row" id="teachRow" style="display:none"><button class="act" id="teachSave">Save route</button><button class="act" id="teachCancel">Cancel</button></div>
+      <div class="hint">R2 can't see obstacles or stairs. Teach routes well away from stairs, drive slowly (teaching caps the joystick at 40), and start every route from the same home spot.</div>
+    </div>
   </section>
 
   <section>
@@ -177,6 +201,29 @@ for (const id in SWITCHES) {
     api("POST", "/action?name=" + name).then(d => say(d.result), err => say(err.message));
   };
 }
+// Activity presets: one "liveliness" setting for R2's own sounds, head turns and reactions.
+const LIVE_HINT = {
+  off: "no sounds or moves of his own, only what you ask",
+  quiet: "a sound now and then, reacts only to very loud noises",
+  chatty: "chatters, looks around and reacts to sounds",
+  full: "the full show, and stays awake 10 minutes",
+};
+function showLiveliness(level) {
+  for (const b of $("presets").children) {
+    b.disabled = level == null;
+    b.setAttribute("aria-pressed", String(b.dataset.level === level));
+  }
+  $("liveHint").textContent = level == null ? "–" : LIVE_HINT[level] || level;
+}
+let liveTouched = 0;
+for (const b of $("presets").children) {
+  b.onclick = () => {
+    liveTouched = Date.now();
+    showLiveliness(b.dataset.level);
+    api("POST", "/action?name=liveliness-" + b.dataset.level).then(d => say(d.result), e => say(e.message));
+  };
+}
+showLiveliness(null); // until R2 reports the setting
 // Stored routines (docs/routines.md), one button each. Upload them with tools\r2.ps1 routine-put <file>.
 async function loadRoutines() {
   if (!token) return;
@@ -216,6 +263,7 @@ async function refresh() {
       $("routineNow").textContent = (s.running === "idle" ? "idle" : "running: " + s.running)
         + (s.last_routine ? " · last: " + s.last_routine : "");
     }
+    if (s.liveliness != null && Date.now() - liveTouched > 3000) showLiveliness(s.liveliness);
     if (s.volume != null && Date.now() - volTouched > 3000) {
       $("vol").value = s.volume;
       $("volOut").textContent = s.muted ? "muted" : s.volume + "%";
@@ -229,6 +277,36 @@ async function refresh() {
   }
 }
 setInterval(refresh, 2000); refresh(); loadRoutines();
+
+// Rooms (docs/places.md): taught routes R2 replays. While teaching, the joystick drives are recorded.
+let teachingNow = "";
+async function loadPlaces() {
+  try {
+    const d = await api("GET", "/places");
+    teachingNow = d.teaching || "";
+    $("teachRow").style.display = teachingNow ? "" : "none";
+    $("placeNow").textContent = "R2 is at: " + d.location + (teachingNow ? " · teaching: " + teachingNow : "")
+      + (d.last_trip ? " · last: " + d.last_trip : "");
+    const box = $("places"); box.textContent = "";
+    const add = (label, place) => {
+      const b = document.createElement("button"); b.className = "act"; b.textContent = label;
+      b.onclick = () => api("POST", "/goto?place=" + encodeURIComponent(place)).then(x => { say(x.result); loadPlaces(); }, e => say(e.message));
+      box.appendChild(b);
+    };
+    add("Home", "home");
+    for (const p of d.places || []) add(p.name.replace(/-/g, " ") + " (" + Math.round(p.there_seconds) + " s)", p.name);
+  } catch (e) { $("placeNow").textContent = "rooms: " + e.message; }
+}
+const teachName = () => $("teachName").value.trim().toLowerCase().replace(/\s+/g, "-");
+const placeCall = path => api("POST", path).then(x => { say(x.result); loadPlaces(); }, e => say(e.message));
+$("teachThere").onclick = () => placeCall("/place/teach?what=there&name=" + encodeURIComponent(teachName()));
+$("teachBack").onclick = () => placeCall("/place/teach?what=back&name=" + encodeURIComponent(teachName()));
+$("teachTurn").onclick = () => placeCall("/place/teach?what=turn");
+$("teachSave").onclick = () => placeCall("/place/teach/save");
+$("teachCancel").onclick = () => placeCall("/place/teach/cancel");
+$("hereHome").onclick = () => placeCall("/place/here?name=home");
+$("tourBtn").onclick = () => placeCall("/tour");
+loadPlaces(); setInterval(loadPlaces, 5000);
 
 // Joystick: angle 0 = forward, 90 = spin right, -90 = spin left, 180 = back (the controller's `move`).
 // While held, the command is repeated so the agent's motion watchdog (3 s) keeps it alive.
@@ -244,7 +322,8 @@ function setFromPointer(ev) {
   knob.style.left = (R + Math.sin(a) * d) / r.width * 100 + "%";
   knob.style.top = (R - Math.cos(a) * d) / r.width * 100 + "%";
   const mag = d / R;
-  want = mag < 0.15 ? { power: 0, angle: 0 } : { power: Math.round(mag * +$("power").value), angle: Math.round(a * 180 / Math.PI) };
+  const top = teachingNow ? Math.min(40, +$("power").value) : +$("power").value; // gentle while teaching a route
+  want = mag < 0.15 ? { power: 0, angle: 0 } : { power: Math.round(mag * top), angle: Math.round(a * 180 / Math.PI) };
 }
 async function driveLoop() {
   if (loopOn) return; loopOn = true;
