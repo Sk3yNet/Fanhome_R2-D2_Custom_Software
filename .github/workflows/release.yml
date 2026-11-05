@@ -50,6 +50,8 @@ jobs:
           R2_KEYSTORE_PASS=$(printf '%s' "$R2_KEYSTORE_PASS" | tr -d '\r\n')   # a pasted secret may end in a newline
           printf '%s' "$KS_B64" | tr -d ' \r\n' | base64 -d > "$R2_KEYSTORE"
           export R2_VERSION_NAME="${TAG#v}"
+          # The agent updates itself from this repository's releases, so a fork's robots follow the fork.
+          export R2_UPDATE_REPO="$GITHUB_REPOSITORY"
           # --release: no API token in the APKs; each robot uses its own.
           apps/build.sh all --release
           rm -f "$R2_KEYSTORE"
@@ -84,6 +86,7 @@ jobs:
           reinstall that keeps your settings: \`tools\\r2.ps1 switch-source ${GITHUB_REPOSITORY}\` (docs/releases.md).
 
           Install or update: \`tools\\r2.ps1 push-agent R2Agent.apk\` and \`tools\\r2.ps1 push-main R2Main.apk\`.
+          A robot that follows this repository can also update itself: \`tools\\r2.ps1 update-install\`.
           Check the download: \`sha256sum -c SHA256SUMS\`, or compare with \`Get-FileHash\` on Windows.
           EOF
           cat "$RUNNER_TEMP/notes.md"

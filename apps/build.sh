@@ -10,6 +10,7 @@
 #   R2_KEYSTORE_PASS   its password (store and key password are the same, like the generated keystore)
 #   R2_KEY_ALIAS       key alias in it, default r2hack
 #   R2_VERSION_NAME    versionName instead of the build date, e.g. a release tag
+#   R2_UPDATE_REPO     owner/name whose GitHub releases the agent updates from (default: the upstream repository)
 set -euo pipefail
 
 APP=all
@@ -75,6 +76,14 @@ case "$VERSION_NAME" in
     *[!A-Za-z0-9._+-]*|'') echo "bad version name '$VERSION_NAME' (letters, digits and . _ + - only)" >&2; exit 1 ;;
 esac
 
+UPDATE_REPO=${R2_UPDATE_REPO:-}
+case "$UPDATE_REPO" in
+    '') ;;
+    */*/*|*[!A-Za-z0-9._/-]*) echo "bad R2_UPDATE_REPO '$UPDATE_REPO' (owner/name)" >&2; exit 1 ;;
+    */*) ;;
+    *) echo "bad R2_UPDATE_REPO '$UPDATE_REPO' (owner/name)" >&2; exit 1 ;;
+esac
+
 # build_app <name> <dir> <apk name> <generate function>
 build_app() {
     local name=$1 dir=$2 apk=$3 generate=$4
@@ -121,6 +130,7 @@ package dev.r2hack.agent;
 final class Secrets {
     static final String TOKEN = "$TOKEN";
     static final String VERSION = "$VERSION_NAME";
+    static final String UPDATE_REPO = "$UPDATE_REPO";
     private Secrets() {}
 }
 EOF

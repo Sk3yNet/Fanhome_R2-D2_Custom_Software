@@ -71,7 +71,7 @@ without sharing any of the film.
 
 ### Using cue files
 
-| Do | PC tool | API (port 7700, token as usual) |
+| Do | PC tool | API (port 7700, signed, or a plain control token: docs/security.md) |
 |---|---|---|
 | List cue files and the session | `tools\r2.ps1 cues` | `GET /cues` |
 | Show one | `tools\r2.ps1 cue a-new-hope` | `GET /cue?name=a-new-hope` |

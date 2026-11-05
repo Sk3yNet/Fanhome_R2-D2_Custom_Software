@@ -102,7 +102,8 @@ The agent can install software and reboot the robot, and adb over Wi-Fi is a roo
 the local network should not be enough on its own.
 
 Today:
-- The HTTP API on port 7700 checks one shared token. The token is sent in plain text and built into the APK.
+- The HTTP API on port 7700 gives each client its own key and permission level and needs signed requests for
+  admin routes (phase 2, [docs/security.md](docs/security.md)). It is still plain HTTP, so requests are signed but not encrypted.
 - adb over Wi-Fi (port 5555) has no authentication: this build has no adb key check.
 
 ### Phase 1: before other people install this
@@ -116,16 +117,24 @@ Today:
 ### Phase 2
 - [ ] **Pairing with physical presence.** A new client is only accepted after a button press on the robot
       (`btn` event), on the serial console, or via the SD card config file (section 8). *Built, not yet tested on the robot.* (first step) The pairing button opens a 2-minute window in which the web page can set up Wi-Fi and fetch the token without one. Each client gets
-      its own key.
+      its own key. *Built, not yet tested on the robot.* In the window, `POST /clients/pair` (the web page's
+      **Pair this device**, `tools\r2.ps1 pair`) makes a new admin client with its own key.
 - [ ] **Signed requests.** HMAC or public-key signatures over method, path, body hash, timestamp and
       nonce, so captured requests can't be replayed or modified. Later, TLS with a pinned
-      per-robot certificate.
+      per-robot certificate. *Built, not yet tested on the robot.* HMAC-SHA256 per client, 5-minute window,
+      nonces remembered, and nothing signed before the agent started is accepted. The web page and `r2.ps1`
+      sign; Home Assistant gets a plain control-level token. TLS is not done.
 - [ ] **Signed updates.** Before installing, the agent checks that an uploaded APK is signed by a
-      trusted key, not just that the HTTP request was authorized.
+      trusted key, not just that the HTTP request was authorized. *Built, not yet tested on the robot.* The
+      APK's JAR signature must be by the agent's own certificate or one added with `trust-add`, and the
+      package name must match.
 - [ ] Look into enabling adb key authentication.
 - [ ] Per-client permission levels, e.g. read-only status vs. install/reboot. Revocation, and a log of
-      who did what.
+      who did what. *Built, not yet tested on the robot.* read, control and admin (`clients`, `client-add`,
+      `client-role`, `client-revoke`, `rotate-owner`); changes are logged with the client's name.
 - [ ] Phone app compatibility mode (section 2) limited to the permissions it needs: no installs, no reboots.
+      (R2 Main already refuses the phone app's software-update and controller-reset commands; the phone
+      app doesn't use the agent API.)
 
 ## 4. Platform security: Android 4.4.2
 The robot runs Android 4.4.2 (2013) on a 3.4 kernel, as an engineering build, with no security updates.
@@ -186,6 +195,9 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       logs, adb, install, restore) for Windows, macOS and Linux.
 - [ ] Setup script for the build toolchain (JDK, Android SDK, platform-tools).
 - [ ] Later: the agent updates itself from GitHub releases. This needs signed updates (section 3).
+      *Built, not yet tested on the robot.* `tools\r2.ps1 update-check`, `update-install`, `update-auto on`
+      (every 6 hours, only while idle; off by default), `update-source <owner/repo>`. Android 4.4's TLS may not
+      reach GitHub; then `push-main`/`push-agent` from a PC, which are checked the same way.
 
 ## 6. Scripted movement routines
 - [ ] Routine format (e.g. JSON): steps of `cmd` (any controller command), `wait`, `wait_until`
