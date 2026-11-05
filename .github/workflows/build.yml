@@ -37,9 +37,17 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # Off-robot tests of the routine engine and hotspot passwords (downloads Android 4.4's org.json from Maven Central).
+      # Off-robot tests of the routine engine, chirp generator and hotspot passwords (downloads Android 4.4's org.json from Maven Central).
       - name: Off-robot tests
         run: apps/test.sh
+
+      # The example chirps that the tests write (docs/chirps.md), to listen to without the robot.
+      - name: Upload example chirps
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-chirps
+          path: apps/out/chirps/*.wav
+          if-no-files-found: error
 
       - name: Android SDK packages
         run: |
@@ -59,6 +67,26 @@ jobs:
             "$BT/aapt2" dump badging "$apk" | head -1
           done
           unzip -l apps/out/R2Agent.apk | grep -q 'assets/web-index.html'
+
+      # switch-source reads certificates and versionCodes on the PC with tools/apk-info.ps1: check it gives
+      # the same answers as the SDK tools, and that the PowerShell scripts parse.
+      - name: PC tools read APKs like the SDK does
+        shell: pwsh
+        run: |
+          foreach ($f in Get-ChildItem tools -Filter *.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { $errors | Out-String | Write-Error; exit 1 }
+          }
+          . ./tools/apk-info.ps1
+          $bt = "$env:ANDROID_HOME/build-tools/35.0.1"
+          foreach ($apk in 'apps/out/R2Agent.apk', 'apps/out/R2Main.apk') {
+            $cert = (& "$bt/apksigner" verify --print-certs $apk | Select-String 'Signer #1 certificate SHA-256 digest: (\w+)').Matches[0].Groups[1].Value
+            $code = (& "$bt/aapt2" dump badging $apk | Select-String "versionCode='(\d+)'").Matches[0].Groups[1].Value
+            "$apk  cert $cert  versionCode $code"
+            if ((Get-ApkCert $apk) -ne $cert) { throw "Get-ApkCert $apk gave $(Get-ApkCert $apk)" }
+            if ((Get-ApkVersionCode $apk) -ne [int]$code) { throw "Get-ApkVersionCode $apk gave $(Get-ApkVersionCode $apk)" }
+          }
 
       # The release workflow's path: a keystore handed in through R2_KEYSTORE, and a version name from a tag.
       # Uses a throwaway key with a different alias, so it can't fall back to the one in secrets/ by accident.
