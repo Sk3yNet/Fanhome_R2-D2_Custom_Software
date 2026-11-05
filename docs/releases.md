@@ -102,7 +102,7 @@ What it does:
    notes name. It shows the robot's current certificate and the new one and asks you to type `yes`. Compare
    the new one with what the source publishes before you do (`-Yes` skips the question). If the robot
    already runs that signer, it stops and tells you to update with `push-main` and `push-agent` as usual.
-2. **Backs up** to `secrets\switch-backup-<date>\`: the agent's settings (API token, Wi-Fi, MQTT, allowed
+2. **Backs up** to `secrets\switch-backup-<date>\`: the agent's settings (API token, Wi-Fi, hotspot password, MQTT, allowed
    subnets), the main app's settings (robot name and paired phones, sounds, voice, Home Assistant, routines,
    your `voice/keywords.txt`) and the old APKs. The folder holds passwords, so keep it private.
 3. **Main app:** puts the agent in safe mode so the main app stays stopped, uninstalls it, installs the new
