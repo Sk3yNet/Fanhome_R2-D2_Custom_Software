@@ -53,6 +53,9 @@ public final class PluginTest {
         public void goTo(String place) { calls.add("go " + place); }
         public String watchUpdate(JSONObject msg) { calls.add("watch " + msg.optString("state")); return "ok"; }
         public void setWatch(boolean on) { calls.add("watch-switch " + on); }
+        public void routineEvent(String name, String from) { calls.add("event " + name + " from " + from); }
+        public java.util.Set<String> triggerTopics() { return java.util.Collections.singleton("z/door"); }
+        public void triggerMessage(String topic, String payload, boolean retained) { calls.add("mqtt " + topic); }
         public void log(String msg) { logs.add(msg); }
     }
 
@@ -164,6 +167,15 @@ public final class PluginTest {
         denied("watch update without actions", new Runnable() { public void run() { none.watchUpdate(new JSONObject()); } });
         denied("go to without actions", new Runnable() { public void run() { none.goTo("kitchen"); } });
         denied("watch switch without settings", new Runnable() { public void run() { none.setWatch(true); } });
+        denied("event without routines.run", new Runnable() { public void run() { none.routineEvent("doorbell"); } });
+        denied("mqtt trigger without routines.run", new Runnable() { public void run() { none.triggerMessage("z/door", "x", false); } });
+        check("no trigger topics without routines.run", none.triggerTopics().isEmpty());
+        final PluginContext run = new PluginContext("p", h, new TreeSet<>(Arrays.asList("routines.run")), noStore());
+        run.routineEvent("doorbell");
+        run.triggerMessage("z/door", "x", false);
+        eq("trigger topics with routines.run", Collections.singleton("z/door"), run.triggerTopics());
+        eq("events and mqtt reach the robot", Arrays.asList("event doorbell from p", "mqtt z/door"), new ArrayList<>(h.calls));
+        h.calls.clear();
         none.stop(); // always allowed
         none.action("stop");
         eq("stop needs no permission", Arrays.asList("stop", "stop"), new ArrayList<>(h.calls));

@@ -40,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `GET /` (the web control page, no token; it asks for one) · `GET /ping` (no token) · `GET /status` · `GET /log` (`?previous=1`: previous boot) · `GET /logcat?lines=N&grep=text` · `GET /dmesg?lines=N&grep=text` ·
 `POST /main/install` (APK body) · `POST /main/rollback` ·
 `POST /main/restart` · `POST /agent/install` (APK body) · `POST /serial` (one JSON command) ·
-`GET /camera.mjpg` · `GET /camera.jpg` · `POST /action?name=<action>` (runs an R2 Main action) · `POST /stop` · `POST /safe-mode?on=1|0` ·
+`GET /camera.mjpg` · `GET /camera.jpg` · `POST /action?name=<action>` (runs an R2 Main action) · `POST /event?name=<event>` (routine event triggers) · `POST /stop` · `POST /safe-mode?on=1|0` ·
 `POST /wifi?mode=station|ap` · `POST /stock?enable=1|0` · `POST /reboot` · `POST /shutdown` · `GET /setup` · `POST /setup/open` ·
 `GET /setup/token` · `GET /wifi/scan` · `POST /wifi/join` (`{"ssid","password"}`) · `GET /wifi/last-join` · `GET /hotspot` · `POST /hotspot` (`{"password"}`; empty: a new random one) · `POST /identity` ·
 `POST /sim?on=1|0` · `POST /sim/button?value=N` · `POST /sim/battery?percent=N&charging=0|1|2` ·

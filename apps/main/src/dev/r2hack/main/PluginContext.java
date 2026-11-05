@@ -65,6 +65,15 @@ final class PluginContext {
         /** The "Watch with me" switch. */
         void setWatch(boolean on);
 
+        /** A named event for routines' "event" triggers (docs/routines.md); from: who sent it, for the log. */
+        void routineEvent(String name, String from);
+
+        /** The MQTT topic filters routines' "mqtt" triggers listen to. */
+        java.util.Set<String> triggerTopics();
+
+        /** A message on one of triggerTopics(); retained: replayed by the broker, not new. */
+        void triggerMessage(String topic, String payload, boolean retained);
+
         void log(String msg);
     }
 
@@ -174,6 +183,24 @@ final class PluginContext {
         need(PluginPermissions.ROUTINES_RUN, "routine " + name);
         host.log("plugin " + plugin + ": routine " + name);
         return host.runRoutine(name);
+    }
+
+    /** Sends a named event to routines' "event" triggers. */
+    void routineEvent(String name) {
+        need(PluginPermissions.ROUTINES_RUN, "event " + name);
+        host.routineEvent(name, plugin);
+    }
+
+    /** The MQTT topics routines' "mqtt" triggers want; empty without "routines.run". */
+    java.util.Set<String> triggerTopics() {
+        if (!has(PluginPermissions.ROUTINES_RUN)) return java.util.Collections.emptySet();
+        return host.triggerTopics();
+    }
+
+    /** A message on one of triggerTopics(), for routines' "mqtt" triggers. */
+    void triggerMessage(String topic, String payload, boolean retained) {
+        need(PluginPermissions.ROUTINES_RUN, "mqtt trigger " + topic);
+        host.triggerMessage(topic, payload, retained);
     }
 
     String saveRoutine(JSONObject routine) throws Routine.Invalid {

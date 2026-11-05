@@ -260,7 +260,8 @@ async function loadRoutines() {
     for (const r of d.routines || []) {
       const b = document.createElement("button");
       b.className = "act"; b.textContent = r.name.replace(/-/g, " ");
-      b.title = r.error ? "broken: " + r.error : (r.description || "");
+      b.title = r.error ? "broken: " + r.error
+        : (r.description || "") + (r.triggers && r.triggers.length ? "\nstarts on: " + r.triggers.join("; ") : "");
       b.disabled = !!r.error;
       b.onclick = () => api("POST", "/routine/run?name=" + encodeURIComponent(r.name)).then(x => say(x.result), e => say(e.message));
       box.appendChild(b);
