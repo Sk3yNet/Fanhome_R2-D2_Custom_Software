@@ -21,6 +21,16 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   routine-run <name>       run a routine (also: action <name>)
   routine-stop             end the running routine or action
   routine-delete <name>    delete a routine (a replaced built-in action comes back)
+  places                   list the taught rooms (docs/places.md) and where R2 is
+  place <name> | place-put <file.json> | place-delete <name>
+                           show / upload / delete one room's route
+  goto <place>             drive R2 to a taught room, or home
+  tour                     visit every taught room in turn, then come home
+  here <home|place|unknown>  tell R2 where he is now (e.g. after carrying him home)
+  teach <place>            start teaching the way from home to a room: drive with the web page's joystick, then teach-save
+  teach-back <place>       teach the way back from a room to home
+  teach-turn               teach a half turn on the spot (lets R2 mirror routes that have no taught way back)
+  teach-save | teach-cancel  end teaching
   cues                     list the watch-with-me cue files (docs/watch-with-me.md)
   cue <name>               show one cue file's JSON
   cue-put <file.json>      upload a cue file (checked on the robot; replaces one with the same name)
@@ -403,6 +413,26 @@ def cmd_routine_put(robot, a):
         raise R2Error('usage: r2.py routine-put <file.json>  (examples: docs/routines/)')
     with open(a.arg, encoding='utf-8-sig') as f:
         show(robot.call('POST', '/routine', f.read()))
+
+
+def cmd_places(robot, a):
+    d = robot.call('GET', '/places')
+    line = 'R2 is at: %s' % d.get('location')
+    if d.get('teaching'):
+        line += '   teaching: %s' % d['teaching']
+    if d.get('last_trip'):
+        line += '   last: %s' % d['last_trip']
+    print(line)
+    print('turn-around taught: %s s   charger is home: %s   patrol tours: %s'
+          % (d.get('turn_around_seconds'), d.get('charger_is_home'), d.get('patrol_tour')))
+    print(table(d.get('places') or [], ['name', 'spoken', 'there_seconds', 'there_segments', 'way_back', 'area']))
+
+
+def put_file(robot, a, path, usage):
+    if not a.arg or not os.path.isfile(a.arg):
+        raise R2Error('usage: r2.py ' + usage)
+    with open(a.arg, encoding='utf-8-sig') as f:
+        show(robot.call('POST', path, f.read()))
 
 
 def cmd_cues(robot, a):
@@ -821,6 +851,18 @@ COMMANDS = {
     'routine-run': with_name('/routine/run?name=', 'routine-run <name>'),
     'routine-stop': simple('POST', '/routine/stop'),
     'routine-delete': with_name('/routine/delete?name=', 'routine-delete <name>'),
+    'places': cmd_places,
+    'place': lambda robot, a: show(robot.call('GET', '/place?name=' + q(need(a.arg, 'place <name>'))).get('place')),
+    'place-put': lambda robot, a: put_file(robot, a, '/place', 'place-put <file.json>'),
+    'place-delete': with_name('/place/delete?name=', 'place-delete <name>'),
+    'goto': with_name('/goto?place=', 'goto <place|home>'),
+    'tour': simple('POST', '/tour'),
+    'here': with_name('/place/here?name=', 'here <home|place|unknown>'),
+    'teach': with_name('/place/teach?what=there&name=', 'teach <place>'),
+    'teach-back': with_name('/place/teach?what=back&name=', 'teach-back <place>'),
+    'teach-turn': simple('POST', '/place/teach?what=turn'),
+    'teach-save': simple('POST', '/place/teach/save'),
+    'teach-cancel': simple('POST', '/place/teach/cancel'),
     'cues': cmd_cues,
     'cue': cmd_cue,
     'cue-put': cmd_cue_put,

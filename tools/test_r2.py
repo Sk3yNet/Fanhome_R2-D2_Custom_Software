@@ -236,6 +236,21 @@ class R2CliTest(unittest.TestCase):
             self.run_cli('pair')
         ws.assert_called_once_with('robot-client.txt', 'pc1:secret')
 
+    def test_places(self):
+        for args, path in ((['goto', 'kitchen'], '/goto?place=kitchen'), (['tour'], '/tour'),
+                           (['here', 'home'], '/place/here?name=home'),
+                           (['teach', 'living room'], '/place/teach?what=there&name=living%20room'),
+                           (['teach-back', 'x'], '/place/teach?what=back&name=x'), (['teach-turn'], '/place/teach?what=turn'),
+                           (['teach-save'], '/place/teach/save'), (['teach-cancel'], '/place/teach/cancel'),
+                           (['place-delete', 'x'], '/place/delete?name=x')):
+            with self.subTest(args):
+                self.assertEqual(self.run_cli(*args)[0], 0)
+                self.assertEqual(self.last()['path'], path)
+        FakeAgent.replies['/places'] = (200, 'application/json', {'location': 'home', 'places': [{'name': 'kitchen'}]})
+        _, out, _ = self.run_cli('places')
+        self.assertTrue(out.startswith('R2 is at: home\n'))
+        self.assertIn('kitchen', out)
+
     def test_liveliness(self):
         FakeAgent.replies['/status'] = (200, 'application/json', {'liveliness': 'chatty'})
         self.assertEqual(self.run_cli('liveliness')[1], 'chatty\n')
