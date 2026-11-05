@@ -80,7 +80,7 @@ final class Voice {
             {"shake your head", "shake-head", "1e-22"}, {"walk a circle", "circle", "1e-26"},
             {"dance please", "dance", "1e-18"}, {"make some noise", "noise", "1e-22"},
             {"who are you", "who-are-you", "1e-16"}, {"lightsaber", "lightsaber", "1e-22"},
-            {"move arms", "arm", "1e-16"}, {"patrol", "patrol", "1e-8"}, {"stop", "stop", "1e-10"},
+            {"move arms", "arm", "1e-16"}, {"patrol", "patrol", "1e-8"}, {"follow me", "follow", "1e-16"}, {"stop", "stop", "1e-10"},
             {"princess leia", "leia", "1e-20"}, {"skywalker", "luke", "1e-20"},
     };
 

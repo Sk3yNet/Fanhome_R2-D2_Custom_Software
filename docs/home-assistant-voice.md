@@ -99,7 +99,7 @@ script:
         required: true
         selector:
           select:
-            options: [dance, turn-left, turn-right, turn-around, forward, circle, patrol, shake-head,
+            options: [dance, turn-left, turn-right, turn-around, forward, circle, patrol, follow, shake-head,
                       who-are-you, noise, lightsaber, arm, leia, luke, flash-front, flash-back, stop]
     sequence:
       - action: rest_command.r2_action

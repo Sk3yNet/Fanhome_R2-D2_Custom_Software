@@ -28,7 +28,7 @@ web page under Settings, as a Home Assistant switch, or with `tools\r2.ps1 actio
 
 He doesn't react:
 - while he is asleep, except to a double clap, which wakes him;
-- while he is patrolling, pairing, under phone control, or running an action or routine;
+- while he is patrolling, following someone, pairing, under phone control, or running an action or routine;
 - while he is playing a sound or driving, and for 0.7 s after, so he doesn't react to himself;
 - while he is listening for a voice command or talking with Home Assistant;
 - during projector clips and music (the microphone is closed then anyway);
