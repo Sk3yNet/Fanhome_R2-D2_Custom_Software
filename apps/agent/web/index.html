@@ -55,6 +55,10 @@
   #headPad::before, #headPad::after { position:absolute; top:50%; transform:translateY(-50%); color:var(--dim); font-size:13px; }
   #headPad::before { content:"◀"; left:12px; } #headPad::after { content:"▶"; right:12px; }
   #headCenter { padding:8px 10px; }
+  .presets { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:12px; }
+  .presets button { padding:10px 4px; }
+  .presets button[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .presets button:disabled { opacity:.5; }
 </style>
 </head>
 <body>
@@ -94,6 +98,13 @@
   <section>
     <h2>Settings</h2>
     <div class="row"><label for="vol">Volume</label><input id="vol" type="range" min="0" max="100" value="30"><output id="volOut">–</output></div>
+    <div class="row"><label>Activity</label><span class="hint" id="liveHint">–</span></div>
+    <div class="presets" id="presets" role="group" aria-label="Activity preset">
+      <button class="act" data-level="off">Off</button>
+      <button class="act" data-level="quiet">Quiet</button>
+      <button class="act" data-level="chatty">Chatty</button>
+      <button class="act" data-level="full">Full show</button>
+    </div>
     <div class="switches">
       <label class="sw"><input type="checkbox" id="swSound" data-on="unmute" data-off="mute"><span></span>Sound</label>
       <label class="sw"><input type="checkbox" id="swVoice" data-on="voice-on" data-off="voice-off"><span></span>Voice commands</label>
@@ -177,6 +188,29 @@ for (const id in SWITCHES) {
     api("POST", "/action?name=" + name).then(d => say(d.result), err => say(err.message));
   };
 }
+// Activity presets: one "liveliness" setting for R2's own sounds, head turns and reactions.
+const LIVE_HINT = {
+  off: "no sounds or moves of his own, only what you ask",
+  quiet: "a sound now and then, reacts only to very loud noises",
+  chatty: "chatters, looks around and reacts to sounds",
+  full: "the full show, and stays awake 10 minutes",
+};
+function showLiveliness(level) {
+  for (const b of $("presets").children) {
+    b.disabled = level == null;
+    b.setAttribute("aria-pressed", String(b.dataset.level === level));
+  }
+  $("liveHint").textContent = level == null ? "–" : LIVE_HINT[level] || level;
+}
+let liveTouched = 0;
+for (const b of $("presets").children) {
+  b.onclick = () => {
+    liveTouched = Date.now();
+    showLiveliness(b.dataset.level);
+    api("POST", "/action?name=liveliness-" + b.dataset.level).then(d => say(d.result), e => say(e.message));
+  };
+}
+showLiveliness(null); // until R2 reports the setting
 // Stored routines (docs/routines.md), one button each. Upload them with tools\r2.ps1 routine-put <file>.
 async function loadRoutines() {
   if (!token) return;
@@ -216,6 +250,7 @@ async function refresh() {
       $("routineNow").textContent = (s.running === "idle" ? "idle" : "running: " + s.running)
         + (s.last_routine ? " · last: " + s.last_routine : "");
     }
+    if (s.liveliness != null && Date.now() - liveTouched > 3000) showLiveliness(s.liveliness);
     if (s.volume != null && Date.now() - volTouched > 3000) {
       $("vol").value = s.volume;
       $("volOut").textContent = s.muted ? "muted" : s.volume + "%";
