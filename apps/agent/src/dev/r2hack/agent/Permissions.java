@@ -23,7 +23,7 @@ final class Permissions {
         open("GET /", "GET /ping", "GET /setup");
         read("GET /status", "GET /log", "GET /camera.mjpg", "GET /camera.jpg", "GET /routines", "GET /routine",
                 "GET /wifi/last-join", "GET /mqtt", "GET /clients/allow", "GET /update", "GET /trust",
-                "GET /whoami", "GET /cues", "GET /cue", "GET /watch",
+                "GET /whoami", "GET /cues", "GET /cue", "GET /watch", "GET /plugins", "GET /hardening",
                 "GET /places", "GET /place",
                 // Anyone who may look at the robot may also stop it.
                 "POST /stop");

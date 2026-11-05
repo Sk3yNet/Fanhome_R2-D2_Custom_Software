@@ -16,9 +16,9 @@ The robot still only accepts clients on its own subnet (and the extra subnets yo
 
 | Level | What it may do |
 | --- | --- |
-| `read` | status, logs (`/log`), camera, routine, cue and room lists, watch-with-me state, update and trust status, and the emergency stop |
+| `read` | status, logs (`/log`), camera, routine, cue, room and plugin lists, watch-with-me state, boot-hardening status, update and trust status, and the emergency stop |
 | `control` | read, plus actions, routines (run, upload, delete, stop), watch-with-me cues and playback state, rooms (go to, tour, teach), volume, the voice-pipeline mode |
-| `admin` | everything: installs, updates, reboot, shutdown, adb, Wi-Fi, hotspot, MQTT and subnet settings, raw controller commands (`/serial`, so the web page's joystick needs admin), clients, trust, logcat/dmesg |
+| `admin` | everything: plugin grants and settings, boot hardening, installs, updates, reboot, shutdown, adb, Wi-Fi, hotspot, MQTT and subnet settings, raw controller commands (`/serial`, so the web page's joystick needs admin), clients, trust, logcat/dmesg |
 
 Any route not listed as read or control needs admin, so new routes start locked down
 (`apps/agent/src/dev/r2hack/agent/Permissions.java`). R2 Main's plugin scopes nest inside these:
