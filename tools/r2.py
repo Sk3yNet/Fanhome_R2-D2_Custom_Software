@@ -108,6 +108,7 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   update-source <owner/repo>   follow another repository's releases (also add its certificate: trust-add)
   trust | trust-add <sha256> | trust-remove <sha256>
                            signing certificates whose APKs R2 installs (its own is always trusted)
+  assist-reply <voice|beeps>  answer in the pipeline's voice, or in droid beeps with the text as subtitles
   reboot | shutdown
   switch-source <owner/repo | folder> [--tag v1.2.3] [--yes]
                            move the robot to builds signed with another key (another fork's releases, or your
@@ -157,7 +158,7 @@ ANNOUNCE_PORT = 7702
 ACTIONS = ('stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise '
            'not-recognized chirp lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair '
            'phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty '
-           'liveliness-full chirps-on chirps-off').split()
+           'liveliness-full chirps-on chirps-off beeps-on beeps-off').split()
 CHIRP_MOODS = ('random', 'ack', 'happy', 'excited', 'question', 'sad', 'worried', 'chatter')
 
 
@@ -599,6 +600,12 @@ def cmd_allow_subnets(robot, a):
         show(robot.call('POST', '/clients/allow?subnets=' + q(a.arg)))
     else:
         show(robot.call('GET', '/clients/allow').get('extra_subnets'))
+
+
+def cmd_assist_reply(robot, a):
+    if a.arg not in ('voice', 'beeps'):
+        raise R2Error('usage: r2.py assist-reply <voice|beeps>')
+    show(robot.call('POST', '/action?name=' + ('beeps-on' if a.arg == 'beeps' else 'beeps-off')))
 
 
 def cmd_harden_on(robot, a):
@@ -1404,6 +1411,7 @@ COMMANDS = {
     'trust': simple('GET', '/trust'),
     'trust-add': with_name('/trust?add=', 'trust-add <certificate sha256>'),
     'trust-remove': with_name('/trust?remove=', 'trust-remove <certificate sha256>'),
+    'assist-reply': cmd_assist_reply,
     'reboot': simple('POST', '/reboot'),
     'shutdown': simple('POST', '/shutdown'),
     'sim-on': simple('POST', '/sim?on=1'),

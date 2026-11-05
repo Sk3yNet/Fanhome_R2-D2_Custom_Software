@@ -280,6 +280,13 @@ class R2CliTest(unittest.TestCase):
         self.assertIn('status,sound', out)
         self.assertIn('  status: read the robot state', out)
 
+    def test_assist_reply(self):
+        self.run_cli('assist-reply', 'beeps')
+        self.assertEqual(self.last()['path'], '/action?name=beeps-on')
+        self.run_cli('assist-reply', 'voice')
+        self.assertEqual(self.last()['path'], '/action?name=beeps-off')
+        self.assertEqual(self.run_cli('assist-reply', 'loud')[0], 1)
+
     def test_chirp(self):
         self.run_cli('chirp')
         self.assertEqual(self.last()['path'], '/chirp?mood=random')
