@@ -146,7 +146,7 @@ function Call([string]$Method, [string]$Path, $Body, [string]$InFile, [int]$Time
 # ---- Switching signers (switch-source, save-settings, restore-settings). Plan: docs/releases.md ----
 $adbExe = Join-Path $PSScriptRoot 'platform-tools\adb.exe'
 $apps = @{
-    main  = @{ pkg = 'dev.r2hack.main'; apk = 'R2Main.apk'; dirs = @('shared_prefs', 'files/routines', 'files/cues'); files = @('files/voice/keywords.txt') }
+    main  = @{ pkg = 'dev.r2hack.main'; apk = 'R2Main.apk'; dirs = @('shared_prefs', 'files/routines', 'files/cues'); files = @('files/voice/keywords.txt', 'files/places.json') }
     agent = @{ pkg = 'dev.r2hack.agent'; apk = 'R2Agent.apk'; dirs = @('shared_prefs'); files = @() }
 }
 $sourceFile = Join-Path $root 'secrets\robot-source.json'

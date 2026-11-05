@@ -103,7 +103,7 @@ What it does:
    the new one with what the source publishes before you do (`-Yes` skips the question). If the robot
    already runs that signer, it stops and tells you to update with `push-main` and `push-agent` as usual.
 2. **Backs up** to `secrets\switch-backup-<date>\`: the agent's settings (API token, Wi-Fi, hotspot password, MQTT, allowed
-   subnets), the main app's settings (robot name and paired phones, sounds, voice, Home Assistant, routines, watch-with-me cues,
+   subnets), the main app's settings (robot name and paired phones, sounds, voice, Home Assistant, routines, watch-with-me cues, taught rooms,
    your `voice/keywords.txt`) and the old APKs. The folder holds passwords, so keep it private.
 3. **Main app:** puts the agent in safe mode so the main app stays stopped, uninstalls it, installs the new
    one and puts its settings back. The agent's stored "last good" copy is still signed with the old key, so
