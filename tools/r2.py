@@ -155,7 +155,7 @@ HOTSPOT_IP = '192.168.43.1'
 API_PORT = 7700
 ANNOUNCE_PORT = 7702
 
-ACTIONS = ('stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise '
+ACTIONS = ('stop wake turn-left turn-right turn-around forward circle patrol follow dance shake-head who-are-you noise '
            'not-recognized chirp lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair '
            'phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty '
            'liveliness-full chirps-on chirps-off beeps-on beeps-off').split()
