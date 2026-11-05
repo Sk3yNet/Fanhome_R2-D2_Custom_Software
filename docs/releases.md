@@ -85,30 +85,64 @@ from a different signer fail with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (or `INCO
 and nothing on the robot changes. That covers switching from your local builds to someone's releases,
 from upstream releases to a fork's, and back.
 
-The one-time switch, over adb (`tools\r2.ps1 adb` first), with the new `R2Agent.apk` and `R2Main.apk` in
-`apps\out\`. *Not yet tested on the robot.*
+`switch-source` does the one-time switch and keeps the settings. It works over root adb, which it switches on
+itself for an hour. *Built, not yet tested on the robot.*
 
-1. **Main app:** `adb shell pm uninstall dev.r2hack.main`, then `tools\r2.ps1 push-main`. This clears the
-   main app's own settings (sounds, voice keywords, the phone-app switch). The stored "last good" copy
-   for rollback is still signed with the old key, so a rollback fails until the new build has passed
-   probation once.
-2. **Agent:** `adb shell pm uninstall dev.r2hack.agent` removes an over-the-air agent update, if there is
-   one, and falls back to the `/system` copy. Then `tools\install-on-robot.ps1 refresh-agent` replaces the
-   `/system` copy and reboots. For apps in `/system`, Android 4.4 accepts a new certificate at boot and
-   keeps the app's data, so the agent should keep its API token and Wi-Fi settings. This is the part that
-   most needs checking on the robot.
+```
+tools\r2.ps1 switch-source                       # who signed the robot's apps, and which source it follows
+tools\r2.ps1 switch-source someone/R2-fork       # that repository's latest release
+tools\r2.ps1 switch-source someone/R2-fork -Tag v0.4.0
+tools\r2.ps1 switch-source apps\out              # your own builds (or any folder with R2Agent.apk and R2Main.apk)
+```
+
+What it does:
+
+1. **Checks the new APKs.** A release is downloaded to `apps\out\releases\` and checked against its
+   `SHA256SUMS`. Both APKs must be signed with the same key, and for a release that key must be the one its
+   notes name. It shows the robot's current certificate and the new one and asks you to type `yes`. Compare
+   the new one with what the source publishes before you do (`-Yes` skips the question). If the robot
+   already runs that signer, it stops and tells you to update with `push-main` and `push-agent` as usual.
+2. **Backs up** to `secrets\switch-backup-<date>\`: the agent's settings (API token, Wi-Fi, hotspot password, MQTT, allowed
+   subnets), the main app's settings (robot name and paired phones, sounds, voice, Home Assistant, routines, watch-with-me cues, taught rooms,
+   your `voice/keywords.txt`) and the old APKs. The folder holds passwords, so keep it private.
+3. **Main app:** puts the agent in safe mode so the main app stays stopped, uninstalls it, installs the new
+   one and puts its settings back. The agent's stored "last good" copy is still signed with the old key, so
+   it is deleted; the new build becomes the rollback copy after its first probation.
+4. **Agent:** replaces the `/system` copy and reboots. For apps in `/system`, Android 4.4 accepts a new
+   certificate at boot and keeps the app's data ("signature changed; retaining data"), and it drops an older
+   over-the-air update of the agent. So the agent keeps its token and settings. If the robot has such an
+   update (from `push-agent`), the new agent's versionCode must not be lower than the update's, or Android
+   would keep the update; the command checks this before it starts. This is the part that most needs
+   checking on the robot.
+5. Checks that the robot answers with the saved token and runs the new agent, ends safe mode, and records
+   the source in `secrets\robot-source.json`.
+
+If something goes wrong:
+
+- **The main app install fails:** the command puts the old main app and its settings back and stops before
+  touching the agent.
+- **The agent lost its data** (the saved token stops working after the reboot): press the pairing button
+  on R2, run `tools\r2.ps1 fetch-token`, then `tools\r2.ps1 restore-settings secrets\switch-backup-<date> -Agent`.
+- **Going back:** the backup folder has the old APKs, so `tools\r2.ps1 switch-source secrets\switch-backup-<date>`
+  switches back.
+
+`save-settings [folder]` and `restore-settings <folder> [-Agent]` also work on their own, e.g. for a backup
+before trying something.
+
+### By hand
+
+The same steps over adb (`tools\r2.ps1 adb` first), with the new `R2Agent.apk` and `R2Main.apk` in
+`apps\out\`. This loses the main app's settings.
+
+1. **Main app:** `adb shell pm uninstall dev.r2hack.main`, then `tools\r2.ps1 push-main`.
+2. **Agent:** `tools\install-on-robot.ps1 refresh-agent` replaces the `/system` copy and reboots. Don't
+   `pm uninstall dev.r2hack.agent` first: removing an over-the-air update that is newer than the `/system`
+   copy also deletes the agent's data.
 
 From then on the robot takes updates from the new signer only.
 
-### Later: switching without the manual steps
+### Later
 
-This is a plan, not built yet.
-
-- **Pin the source.** When the agent updates itself from GitHub releases (roadmap section 5), it stores
-  which repository it follows and the certificate SHA-256 it expects. The release notes already publish
-  that hash.
-- **A switch command.** `tools\r2.ps1 switch-source <owner/repo>` downloads that repository's latest
-  release, shows the certificate, and asks before it continues. It then runs the steps above over
-  adb and points the agent at the new repository. The agent sits in `/system`, so this step needs adb.
-- **Keep settings.** Before uninstalling main, the command saves main's settings through the agent and
-  restores them after the reinstall.
+When the agent updates itself from GitHub releases (roadmap section 5), it will store which repository it
+follows and the certificate it expects, and `switch-source` will set both. Until then the source is only
+recorded on the PC.

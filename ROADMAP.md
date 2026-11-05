@@ -166,7 +166,9 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       without a token, signs them with the key in the repository's secrets, and publishes them; forks
       release with their own key. Setup and switching between signers: [docs/releases.md](docs/releases.md).
 - [ ] **Switch between signers without manual steps** (e.g. upstream releases ↔ a fork's): a
-      `switch-source` command that keeps settings. Plan in [docs/releases.md](docs/releases.md).
+      `switch-source` command that keeps settings. *Built, not yet tested on the robot.*
+      `tools\r2.ps1 switch-source <owner/repo | folder>` checks the new certificate, backs up both apps'
+      settings, reinstalls with the new key and restores them. See [docs/releases.md](docs/releases.md).
 - [ ] **Cross-platform PC tool:** replace the PowerShell scripts with one small Python CLI (status, push,
       logs, adb, install, restore) for Windows, macOS and Linux.
 - [ ] Setup script for the build toolchain (JDK, Android SDK, platform-tools).
