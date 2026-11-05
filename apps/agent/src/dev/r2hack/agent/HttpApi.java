@@ -14,6 +14,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URLDecoder;
 import java.nio.charset.Charset;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -23,7 +24,8 @@ import java.util.Map;
 
 /**
  * Minimal HTTP/1.0 server (no dependencies) for updates and control.
- * Every route except GET /ping and the control page (GET /) needs the header  X-R2-Token: <token>.
+ * Each route needs a permission level (Permissions); a client proves who it is with a signed request
+ * (RequestAuth) or, for read and control routes only, a plain token (Clients). See docs/security.md.
  */
 final class HttpApi {
     interface Routes {
@@ -31,11 +33,21 @@ final class HttpApi {
 
         /** Routes that may be used without a token right now (e.g. Wi-Fi setup after the pairing button). */
         boolean openWithoutToken(Request req);
+
+        /** Wall-clock unix seconds when the agent started, for RequestAuth. */
+        long startedAtS();
     }
 
     static final class Request {
         String method;
         String path;
+        /** Who sent it (null: no credentials), the level they get, and whether the request was signed. */
+        Clients.Client client;
+        String role = "";
+        boolean signed;
+        /** Body hash the signature covers; the body read must match it. */
+        String claimedBodySha256;
+        String bodySha256;
         final Map<String, String> query = new HashMap<>();
         final Map<String, String> headers = new HashMap<>();
         File bodyFile;      // set for upload routes
@@ -82,10 +94,13 @@ final class HttpApi {
     private static final long MAX_UPLOAD = 300L * 1024 * 1024;
     private final Routes routes;
     private final File uploadDir;
+    private final Clients clients;
+    private final RequestAuth auth = new RequestAuth();
 
-    HttpApi(Routes routes, File uploadDir) {
+    HttpApi(Routes routes, File uploadDir, Clients clients) {
         this.routes = routes;
         this.uploadDir = uploadDir;
+        this.clients = clients;
     }
 
     void start() {
@@ -143,14 +158,25 @@ final class HttpApi {
             }
             InputStream in = new BufferedInputStream(s.getInputStream());
             req = parseHead(in);
-            // The page itself is public; everything it does goes through token-protected routes.
-            boolean open = ("GET".equals(req.method) && ("/ping".equals(req.path) || "/".equals(req.path)))
-                    || routes.openWithoutToken(req);
-            if (!open && !Credentials.accepts(presentedToken(req))) {
-                resp = Response.json(401, "{\"error\":\"missing or wrong X-R2-Token\"}");
+            // The page itself is public; everything it does goes through protected routes.
+            String need = Permissions.required(req.method, req.path);
+            boolean open = Permissions.OPEN.equals(need) || routes.openWithoutToken(req);
+            String authError = authenticate(req);
+            if (!open && req.client == null) {
+                resp = refused(401, authError != null ? authError
+                        : "this route needs credentials: a signed request or X-R2-Token (docs/security.md)", s);
+            } else if (!open && Clients.level(req.role) < Clients.level(need)) {
+                resp = refused(403, "this needs " + need + " permission; " + req.client.name + " has " + req.role
+                        + (req.signed || !Clients.ADMIN.equals(need) ? "" : " with a plain token (admin needs a signed request)"), s);
             } else {
                 readBody(in, req);
-                resp = routes.handle(req);
+                if (req.signed && !req.claimedBodySha256.equals(req.bodySha256)) {
+                    resp = refused(401, "the body does not match X-R2-Body", s);
+                } else {
+                    if (req.client != null) clients.touch(req.client.id, req.method + " " + req.path);
+                    resp = routes.handle(req);
+                    audit(req, resp.code);
+                }
             }
         } catch (Exception e) {
             EventLog.e("http request failed", e);
@@ -188,6 +214,80 @@ final class HttpApi {
             } catch (Exception ignored) {
             }
         }
+    }
+
+    /**
+     * Works out who sent the request. Sets req.client, req.role and req.signed, or returns why the
+     * credentials were refused; null with no client means none were presented.
+     */
+    private String authenticate(Request req) {
+        String id = req.headers.get("x-r2-client");
+        boolean inQuery = id == null && req.query.containsKey("r2client");
+        if (inQuery) id = req.query.get("r2client");
+        if (id != null) {
+            Clients.Client c = clients.byId(id.trim());
+            if (c == null) return "unknown client " + id.trim() + " (revoked?)";
+            String time = inQuery ? req.query.get("r2time") : req.headers.get("x-r2-time");
+            String nonce = inQuery ? req.query.get("r2nonce") : req.headers.get("x-r2-nonce");
+            String sig = inQuery ? req.query.get("r2sig") : req.headers.get("x-r2-signature");
+            // A signed link (an img tag) can't carry a body.
+            String body = inQuery ? RequestAuth.EMPTY_SHA256 : req.headers.get("x-r2-body");
+            long now = System.currentTimeMillis() / 1000;
+            String err = auth.check(c.key, c.id, req.method, req.path, req.query, time, nonce, body, sig, now,
+                    routes.startedAtS());
+            if (err != null) return err;
+            req.client = c;
+            req.role = c.role;
+            req.signed = true;
+            req.claimedBodySha256 = body;
+            return null;
+        }
+        String tok = presentedToken(req);
+        if (tok == null || tok.isEmpty()) return null;
+        Clients.Client c = clients.byPlainToken(tok);
+        if (c != null) {
+            req.client = c;
+            // Plain tokens can be read off the network, so they never get more than control.
+            req.role = Clients.level(c.role) > Clients.level(Clients.CONTROL) ? Clients.CONTROL : c.role;
+            return null;
+        }
+        if (clients.isSigningOnlyKey(tok)) {
+            return "this is the robot's owner key, which now has to sign requests instead of being sent as a token "
+                    + "(docs/security.md). Update tools\\r2.ps1 / the web page, or make a token for Home Assistant: "
+                    + "tools\\r2.ps1 client-add home-assistant -Plain";
+        }
+        return "wrong token";
+    }
+
+    private static Response refused(int code, String why, Socket s) {
+        logRefusal(s.getInetAddress().getHostAddress(), code + " " + why);
+        try {
+            return Response.json(code, new org.json.JSONObject().put("error", why)
+                    .put("time", System.currentTimeMillis() / 1000).toString());
+        } catch (Exception e) {
+            return Response.json(code, "{\"error\":\"refused\"}");
+        }
+    }
+
+    /** Who did what: every request that changes something, except the joystick's stream of drive commands. */
+    private static void audit(Request req, int code) {
+        if ("GET".equals(req.method) || "/serial".equals(req.path)) return;
+        String who = req.client == null ? "(no credentials)" : req.client.name + " [" + req.client.id + "]";
+        EventLog.i("api: " + who + " " + req.method + " " + req.path + " -> " + code);
+    }
+
+    private static final Map<String, Long> lastAuthLog = new HashMap<>();
+
+    /** At most one line a minute per address, so a polling page with a stale key can't flood the log. */
+    private static void logRefusal(String ip, String what) {
+        long now = System.currentTimeMillis();
+        synchronized (lastAuthLog) {
+            Long last = lastAuthLog.get(ip);
+            if (last != null && now - last < 60_000) return;
+            if (lastAuthLog.size() > 256) lastAuthLog.clear();
+            lastAuthLog.put(ip, now);
+        }
+        EventLog.i("api: refused " + ip + ": " + what);
     }
 
     /**
@@ -381,8 +481,10 @@ final class HttpApi {
     private void readBody(InputStream in, Request r) throws Exception {
         String cl = r.headers.get("content-length");
         long len = cl == null ? 0 : Long.parseLong(cl);
+        MessageDigest sha = MessageDigest.getInstance("SHA-256");
         if (len <= 0) {
             r.bodyText = "";
+            r.bodySha256 = RequestAuth.hex(sha.digest());
             return;
         }
         if (r.path.endsWith("/install")) {
@@ -396,12 +498,14 @@ final class HttpApi {
                     int n = in.read(buf, 0, (int) Math.min(buf.length, left));
                     if (n < 0) throw new Exception("upload truncated");
                     out.write(buf, 0, n);
+                    sha.update(buf, 0, n);
                     left -= n;
                 }
             } finally {
                 out.close();
             }
             r.bodyFile = f;
+            r.bodySha256 = RequestAuth.hex(sha.digest());
         } else {
             if (len > 65536) throw new Exception("body too large");
             ByteArrayOutputStream b = new ByteArrayOutputStream();
@@ -413,7 +517,9 @@ final class HttpApi {
                 b.write(buf, 0, n);
                 left -= n;
             }
-            r.bodyText = new String(b.toByteArray(), UTF8);
+            byte[] body = b.toByteArray();
+            r.bodySha256 = RequestAuth.hex(sha.digest(body));
+            r.bodyText = new String(body, UTF8);
         }
     }
 

@@ -90,13 +90,14 @@ powershell -ExecutionPolicy Bypass -File apps\build.ps1 -App main
 powershell -ExecutionPolicy Bypass -File tools\r2.ps1 push-main
 powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 ```
-Or drive it from a phone: open `http://<robot-ip>:7700/` and enter your API token. To move R2 from its
+Or drive it from a phone: press R2's pairing button, open `http://<robot-ip>:7700/` and tap **Pair this device**. To move R2 from its
 hotspot to your Wi-Fi, see *Wi-Fi setup without a QR code* in [docs/architecture.md](docs/architecture.md).
 
 Other `tools\r2.ps1` commands: `action <name>` (`actions` lists them), `stop`, `log`, `log-previous`,
 `logcat [text]`, `dmesg [text]`, `adb [minutes]`, `adb-off`, `allow-subnets <list>`, `serial '<json>'`, `rollback`, `restart`, `push-agent`,
 `safe-on`/`safe-off`, `wifi-station`/`wifi-ap`, `hotspot`, `hotspot-password`, `stock-on`/`stock-off`, `reboot`, `shutdown`, `fetch-token`, `mqtt`,
-`assist off|robot|ha`, `assist-only <ip>`.
+`assist off|robot|ha`, `assist-only <ip>`, and for keys and updates `pair`, `clients`, `client-add`, `client-revoke`,
+`rotate-owner`, `update`, `update-install`, `trust` ([docs/security.md](docs/security.md)).
 
 R2 also shows up in Home Assistant as a media player (DLNA), for music and announcements, and its camera can be added as an MJPEG camera (see [docs/architecture.md](docs/architecture.md)). *Not yet tested on the robot.*
 He can also be a voice assistant for Home Assistant's Assist, including AI conversation agents: say "hey R2-D2" and a question, and R2 speaks the answer
@@ -124,16 +125,19 @@ power-off permission the power button uses.
 - Last resort: the serial console and your eMMC backup.
 
 ## Security warning
-Right now the API is protected only by a token over plain HTTP, and only accepts clients on the robot's own
-subnet (add others, such as a Home Assistant VLAN, with `tools\r2.ps1 allow-subnets`).
-Pressing the pairing button opens a 2-minute window in which anyone on the network can set up Wi-Fi and
-fetch the token and the hotspot password; if R2 is on its hotspot, that hotspot also uses the factory password
+The API gives each device its own key and permission level, and needs signed requests for anything that
+installs, reboots or changes settings ([docs/security.md](docs/security.md)). Requests are signed but not
+encrypted (plain HTTP), and only clients on the robot's own subnet are accepted (add others, such as a Home
+Assistant VLAN, with `tools\r2.ps1 allow-subnets`). Plain tokens for Home Assistant are limited to actions,
+routines and the camera. Installs and updates must be signed by a trusted certificate.
+Pressing the pairing button opens a 2-minute window in which anyone on the network can set up Wi-Fi,
+pair a device as admin, and fetch the owner key and the hotspot password; if R2 is on its hotspot, that hotspot also uses the factory password
 during the window. The official phone app's protocol has no real authentication; turn it off with
 `tools\r2.ps1 action phone-app-off` if you don't use the app. adb over Wi-Fi is off by default, but
 while it's on (`tools\r2.ps1 adb`, 30 minutes) it gives a root shell with **no authentication** to anyone on the
 same network. The Home Assistant voice satellite (port 10700, off by default) has no authentication
-either, as Wyoming has none; pin it to Home Assistant's address with `tools\r2.ps1 assist-only <ip>`. Only use this on a network you trust. Better
-authentication is the first item on the [roadmap](ROADMAP.md).
+either, as Wyoming has none; pin it to Home Assistant's address with `tools\r2.ps1 assist-only <ip>`. Only use this on a network you trust. TLS is still on the
+[roadmap](ROADMAP.md).
 
 ## License
 [MIT](LICENSE). This covers the code in this repository only. The robot's factory software is not

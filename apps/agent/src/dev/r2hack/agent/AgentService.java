@@ -30,6 +30,11 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     private WifiFailover wifi;
     private AdbControl adb;
     private Hardening hardening;
+    private Clients clients;
+    private ApkTrust trust;
+    private Updater updater;
+    /** Wall clock minus uptime at start, so a later clock correction doesn't move it. */
+    private final long startElapsed = SystemClock.elapsedRealtime();
     private boolean passive;
     private boolean sim;
     /** Setup window: opened by the pairing button; Wi-Fi setup and the token work without a token meanwhile. */
@@ -79,9 +84,25 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         hardening = new Hardening(this, getSharedPreferences("agent", MODE_PRIVATE));
         hardening.start(passive, subnetStrings());
         supervisor = new Supervisor(this, this);
+        clients = new Clients(new File(getFilesDir(), "clients.json"), Credentials.robotToken(), Secrets.TOKEN);
+        trust = new ApkTrust(ownCerts(), storedTrust());
+        updater = new Updater(this, supervisor, trust, new Updater.Host() {
+            @Override
+            public boolean idle() {
+                JSONObject run = running;
+                boolean routineIdle = run == null || "idle".equals(run.optString("name", "idle"));
+                return (guard == null || !guard.moving()) && routineIdle;
+            }
+
+            @Override
+            public String installAgentLater(File apk) {
+                return AgentService.this.installAgentLater(apk);
+            }
+        });
         wifi = new WifiFailover(this, passive);
         wifi.start();
-        new HttpApi(this, supervisor.uploadDir()).start();
+        new HttpApi(this, supervisor.uploadDir(), clients).start();
+        updater.start();
         startAnnouncer();
         if (passive) return;
 
@@ -220,11 +241,86 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     @Override
     public boolean openWithoutToken(HttpApi.Request req) {
         String route = req.method + " " + req.path;
-        if ("GET /setup".equals(route)) return true; // only says whether the window is open
-        boolean setupRoute = "GET /setup/token".equals(route) || "GET /wifi/scan".equals(route)
-                || "POST /wifi/join".equals(route) || "GET /wifi/last-join".equals(route)
+        // Physical presence: someone pressed the pairing button in the last 2 minutes.
+        boolean setupRoute = "GET /setup/token".equals(route) || "POST /clients/pair".equals(route)
+                || "GET /wifi/scan".equals(route) || "POST /wifi/join".equals(route) || "GET /wifi/last-join".equals(route)
                 || "GET /hotspot".equals(route);
         return setupRoute && setupSecondsLeft() > 0;
+    }
+
+    @Override
+    public long startedAtS() {
+        return (System.currentTimeMillis() - (SystemClock.elapsedRealtime() - startElapsed)) / 1000;
+    }
+
+    /** SHA-256 of the certificate this agent is signed with: updates signed by it are trusted. */
+    private java.util.Set<String> ownCerts() {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        try {
+            android.content.pm.Signature[] sigs = getPackageManager()
+                    .getPackageInfo(getPackageName(), PackageManager.GET_SIGNATURES).signatures;
+            for (android.content.pm.Signature sig : sigs) out.add(RequestAuth.sha256Hex(sig.toByteArray()));
+        } catch (Exception e) {
+            EventLog.e("could not read the agent's own signing certificate", e);
+        }
+        return out;
+    }
+
+    private java.util.List<String> storedTrust() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String c : getSharedPreferences("agent", MODE_PRIVATE).getString("trusted-certs", "").split(",")) {
+            if (c.trim().isEmpty()) continue;
+            try {
+                out.add(ApkTrust.normalize(c));
+            } catch (Exception ignored) {
+            }
+        }
+        return out;
+    }
+
+    private void saveTrust(java.util.List<String> certs) {
+        StringBuilder sb = new StringBuilder();
+        for (String c : certs) sb.append(sb.length() == 0 ? "" : ",").append(c);
+        getSharedPreferences("agent", MODE_PRIVATE).edit().putString("trusted-certs", sb.toString()).commit();
+        trust.setExtra(certs);
+    }
+
+    private JSONObject trustJson() throws Exception {
+        org.json.JSONArray own = new org.json.JSONArray(), extra = new org.json.JSONArray();
+        for (String c : trust.own()) own.put(c);
+        for (String c : trust.extra()) extra.put(c);
+        return new JSONObject().put("own", own).put("added", extra);
+    }
+
+    /** Installs a verified agent APK after the HTTP reply has gone out; the robot reboots to load it. */
+    private String installAgentLater(File apk) {
+        final File pending = new File(supervisor.uploadDir(), "agent-pending.apk");
+        if (!apk.equals(pending)) {
+            pending.delete();
+            if (!apk.renameTo(pending)) return "could not stage the APK";
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignored) {
+                }
+                String r = supervisor.installAgent(pending);
+                if (!r.contains("Success")) {
+                    EventLog.i("agent install failed: " + r);
+                    return;
+                }
+                // Updating over an earlier update kills this process, and MY_PACKAGE_REPLACED
+                // (BootReceiver) starts the new code. The first update over the /system copy
+                // leaves this process running on the old code path, so reboot to load it.
+                EventLog.i("agent install: Success, rebooting to load it");
+                stopRobot();
+                ((PowerManager) getSystemService(POWER_SERVICE)).reboot(null);
+            }
+        }, "agent-install").start();
+        return "installing; the agent restarts in a few seconds (or the robot reboots, ~60 s). "
+                + "If it never comes back: adb shell pm uninstall dev.r2hack.agent (reverts to the /system copy)";
     }
 
     /** Joins a network chosen on the web page; the reply goes out before the hotspot goes away. */
@@ -352,8 +448,9 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             case "GET /camera.mjpg":
             case "GET /camera.jpg":
                 return HttpApi.Response.raw(proxyFromMain(req.path));
-            case "GET /ping":
-                return HttpApi.Response.json(200, "{\"r2agent\":\"" + Secrets.VERSION + "\"}");
+            case "GET /ping": // time: the robot's clock, which signed requests must be within 5 minutes of
+                return HttpApi.Response.json(200, new JSONObject().put("r2agent", Secrets.VERSION)
+                        .put("time", System.currentTimeMillis() / 1000).put("signing", RequestAuth.SCHEME).toString());
             case "GET /status":
                 return HttpApi.Response.json(200, status().toString(2));
             case "GET /log":
@@ -362,10 +459,13 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 return HttpApi.Response.text(tail(Supervisor.run("logcat", "-d", "-v", "time"), req));
             case "GET /dmesg":
                 return HttpApi.Response.text(tail(Supervisor.run("dmesg"), req));
-            case "POST /main/install":
+            case "POST /main/install": {
                 if (passive) return passiveError();
                 if (req.bodyFile == null) return bad("send the APK as the request body");
+                String why = updater.verify(req.bodyFile, Config.MAIN_PACKAGE, false);
+                if (why != null) return refusedApk("R2 Main", why);
                 return result(supervisor.installMain(req.bodyFile));
+            }
             case "POST /main/rollback":
                 if (passive) return passiveError();
                 return result(supervisor.rollback());
@@ -376,31 +476,105 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 return result("restarted");
             case "POST /agent/install": {
                 if (req.bodyFile == null) return bad("send the APK as the request body");
-                final File pending = new File(supervisor.uploadDir(), "agent-pending.apk");
-                pending.delete();
-                if (!req.bodyFile.renameTo(pending)) return bad("could not stage upload");
-                new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            Thread.sleep(1000);
-                        } catch (InterruptedException ignored) {
-                        }
-                        String r = supervisor.installAgent(pending);
-                        if (!r.contains("Success")) {
-                            EventLog.i("agent install failed: " + r);
-                            return;
-                        }
-                        // Updating over an earlier update kills this process, and MY_PACKAGE_REPLACED
-                        // (BootReceiver) starts the new code. The first update over the /system copy
-                        // leaves this process running on the old code path, so reboot to load it.
-                        EventLog.i("agent install: Success, rebooting to load it");
-                        stopRobot();
-                        ((PowerManager) getSystemService(POWER_SERVICE)).reboot(null);
+                String why = updater.verify(req.bodyFile, getPackageName(), false);
+                if (why != null) return refusedApk("R2 Agent", why);
+                return result(installAgentLater(req.bodyFile));
+            }
+            case "GET /whoami":
+                return HttpApi.Response.json(200, new JSONObject().put("id", req.client.id).put("name", req.client.name)
+                        .put("role", req.role).put("signed", req.signed).toString());
+            case "GET /clients":
+                return HttpApi.Response.json(200, new JSONObject().put("clients", clients.list()).toString(2));
+            case "POST /clients/pair": // in the setup window (pairing button) or by an admin: a new client with its own key
+            case "POST /clients/add": { // ?name=&role=read|control|admin[&plain=1]
+                boolean pairing = "/clients/pair".equals(req.path);
+                String role = Clients.roleOf(req.query.containsKey("role") ? req.query.get("role")
+                        : pairing ? Clients.ADMIN : Clients.CONTROL);
+                boolean plain = "1".equals(req.query.get("plain"));
+                Clients.Client c;
+                try {
+                    c = clients.add(req.query.get("name"), role, plain);
+                } catch (IllegalArgumentException e) {
+                    return bad(e.getMessage());
+                }
+                EventLog.i("clients: added " + c.name + " [" + c.id + "] as " + c.role + (plain ? " (plain token)" : "")
+                        + (pairing && req.client == null ? " via the pairing button" : ""));
+                return HttpApi.Response.json(200, new JSONObject().put("id", c.id).put("key", c.key).put("name", c.name)
+                        .put("role", c.role).put("plain_token", c.plain)
+                        .put("note", "the key is shown only now; keep it private").toString(2));
+            }
+            case "POST /clients/revoke": {
+                String id = String.valueOf(req.query.get("id"));
+                if (Clients.builtIn(id)) {
+                    return bad(id + " is built in and can't be revoked (it's the way back in); rotate the owner key "
+                            + "with POST /clients/owner/rotate instead");
+                }
+                if (!clients.revoke(id)) return bad("no client " + id);
+                EventLog.i("clients: revoked " + id);
+                return result("revoked " + id);
+            }
+            case "POST /clients/role": {
+                try {
+                    clients.setRole(String.valueOf(req.query.get("id")), Clients.roleOf(req.query.get("role")));
+                } catch (IllegalArgumentException e) {
+                    return bad(e.getMessage());
+                }
+                EventLog.i("clients: " + req.query.get("id") + " is now " + Clients.roleOf(req.query.get("role")));
+                return result(req.query.get("id") + " is now " + Clients.roleOf(req.query.get("role")));
+            }
+            case "POST /clients/owner/rotate": {
+                // Only the owner itself, so a paired client can't take the recovery key away.
+                if (!Clients.OWNER.equals(req.client.id)) return bad("only the owner (signed with the current owner key) can rotate it");
+                String t = Credentials.rotate();
+                clients.setOwnerKey(t);
+                return HttpApi.Response.json(200, new JSONObject().put("id", Clients.OWNER).put("key", t)
+                        .put("note", "the old owner key no longer works; keep this one private").toString(2));
+            }
+            case "GET /trust":
+                return HttpApi.Response.json(200, trustJson().toString(2));
+            case "POST /trust": { // ?add=<sha256> or ?remove=<sha256>: extra certificates whose APKs may be installed
+                java.util.List<String> list = new java.util.ArrayList<>(trust.extra());
+                try {
+                    if (req.query.containsKey("add")) {
+                        String c = ApkTrust.normalize(req.query.get("add"));
+                        if (!list.contains(c) && !trust.own().contains(c)) list.add(c);
+                        if (list.size() > 8) return bad("at most 8 added certificates");
+                    } else if (req.query.containsKey("remove")) {
+                        list.remove(ApkTrust.normalize(req.query.get("remove")));
+                    } else {
+                        return bad("add=<sha256> or remove=<sha256>");
                     }
-                }).start();
-                return result("installing; the agent restarts in a few seconds (or the robot reboots, ~60 s). "
-                        + "If it never comes back: adb shell pm uninstall dev.r2hack.agent (reverts to the /system copy)");
+                } catch (IllegalArgumentException e) {
+                    return bad(e.getMessage());
+                }
+                saveTrust(list);
+                EventLog.i("trust: added certificates now " + list);
+                return HttpApi.Response.json(200, trustJson().toString(2));
+            }
+            case "GET /update":
+                return HttpApi.Response.json(200, updater.status().toString(2));
+            case "POST /update/check":
+                try {
+                    return HttpApi.Response.json(200, updater.check().toString(2));
+                } catch (Exception e) {
+                    return updateFailed(e);
+                }
+            case "POST /update/install":
+                if (passive) return passiveError();
+                try {
+                    return result(updater.install());
+                } catch (Exception e) {
+                    return updateFailed(e);
+                }
+            case "POST /update/auto":
+                updater.setAuto("1".equals(req.query.get("on")));
+                return result("automatic updates " + (updater.auto() ? "on: checked every 6 hours, installed while R2 is idle" : "off"));
+            case "POST /update/source": { // ?repo=owner/name: follow this repository's releases
+                String repo = String.valueOf(req.query.get("repo")).trim();
+                if (!Updater.validRepo(repo)) return bad("repo must look like owner/name");
+                updater.setRepo(repo);
+                return result("following releases of " + repo + ". Only APKs signed by a trusted certificate are "
+                        + "installed (GET /trust); add a fork's with POST /trust?add=<sha256>");
             }
             case "POST /serial":
                 if (passive) return passiveError();
@@ -997,6 +1171,20 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
 
     private static HttpApi.Response bad(String msg) {
         return HttpApi.Response.json(400, "{\"error\":" + JSONObject.quote(msg) + "}");
+    }
+
+    private static HttpApi.Response refusedApk(String app, String why) {
+        EventLog.i("refused an uploaded " + app + " APK: " + why);
+        return bad("refused: " + why);
+    }
+
+    private static HttpApi.Response updateFailed(Exception e) {
+        String m = String.valueOf(e.getMessage());
+        boolean tls = e instanceof javax.net.ssl.SSLException || m.contains("SSL") || m.contains("Trust anchor");
+        String why = "update failed: " + m + (tls ? ". The robot's old TLS stack may not reach GitHub; download the "
+                + "release on a PC and use tools\\r2.ps1 push-main / push-agent (checked the same way)" : "");
+        EventLog.i(why);
+        return HttpApi.Response.json(502, "{\"error\":" + JSONObject.quote(why) + "}");
     }
 
     private static HttpApi.Response passiveError() {
