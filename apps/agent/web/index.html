@@ -109,6 +109,7 @@
       <label class="sw"><input type="checkbox" id="swSound" data-on="unmute" data-off="mute"><span></span>Sound</label>
       <label class="sw"><input type="checkbox" id="swVoice" data-on="voice-on" data-off="voice-off"><span></span>Voice commands</label>
       <label class="sw"><input type="checkbox" id="swFace" data-on="face-on" data-off="face-off"><span></span>Face tracking</label>
+      <label class="sw"><input type="checkbox" id="swChirps" data-on="chirps-on" data-off="chirps-off"><span></span>New beeps each time</label>
     </div>
   </section>
 
@@ -159,7 +160,7 @@
   </section>
 </main>
 <script>
-const ACTIONS = ["wake","dance","shake-head","who-are-you","noise","turn-left","turn-right","turn-around","forward","circle","patrol","lightsaber","arm","short-lcd","long-lcd","flash-front","flash-back","leia","luke"];
+const ACTIONS = ["wake","dance","shake-head","who-are-you","noise","chirp","turn-left","turn-right","turn-around","forward","circle","patrol","lightsaber","arm","short-lcd","long-lcd","flash-front","flash-back","leia","luke"];
 const $ = id => document.getElementById(id);
 let token = "";
 try { token = localStorage.getItem("r2token") || ""; } catch (e) {}
@@ -192,7 +193,7 @@ for (const a of ACTIONS) {
 }
 
 let volTouched = 0; // the controls follow /status, except right after you change them
-const SWITCHES = { swSound: s => s.muted == null ? null : !s.muted, swVoice: s => s.voice, swFace: s => s.face_tracking };
+const SWITCHES = { swSound: s => s.muted == null ? null : !s.muted, swVoice: s => s.voice, swFace: s => s.face_tracking, swChirps: s => s.chirps };
 for (const id in SWITCHES) {
   $(id).disabled = true; // until R2 reports the setting
   $(id).onchange = e => {

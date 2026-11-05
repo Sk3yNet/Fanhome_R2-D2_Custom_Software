@@ -4,6 +4,8 @@
 #   status | log             agent state / agent event log
 #   log-previous             agent event log from the previous boot (e.g. after a crash or power loss)
 #   action <name>            run a robot action, e.g. dance, wake, lightsaber, leia (list: actions)
+#   chirp [mood|'text']      a newly generated droid chirp: a mood (ack happy excited question sad worried
+#                            chatter; default random), or droid sounds shaped like a sentence (docs/chirps.md)
 #   stop                     emergency stop (the agent stops the robot itself, then cancels the action)
 #   routines                 list the stored routines (docs/routines.md) and what's running
 #   routine <name>           show one routine's JSON
@@ -138,8 +140,14 @@ switch ($Command) {
     'status'       { Call GET /status | ConvertTo-Json -Depth 5 }
     'log'          { Call GET /log }
     'log-previous' { Call GET '/log?previous=1' }
-    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty liveliness-full' -split ' ' }
+    'actions'      { 'stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise not-recognized chirp lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty liveliness-full chirps-on chirps-off' -split ' ' }
     'action'       { if (-not $Arg) { throw 'usage: r2.ps1 action <name>  (see: r2.ps1 actions)' }; Call POST "/action?name=$([uri]::EscapeDataString("$Arg"))" }
+    'chirp'        {
+        $moods = 'random', 'ack', 'happy', 'excited', 'question', 'sad', 'worried', 'chatter'
+        if (-not $Arg) { Call POST '/chirp?mood=random' }
+        elseif ($Arg -in $moods) { Call POST "/chirp?mood=$Arg" }
+        else { Call POST /chirp $Arg }   # text: the body, so long sentences fit
+    }
     'stop'         { Call POST /stop }
     'routines'     {
         $d = Call GET /routines

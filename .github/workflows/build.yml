@@ -18,9 +18,17 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # Off-robot tests of the routine engine and hotspot passwords (downloads Android 4.4's org.json from Maven Central).
+      # Off-robot tests of the routine engine, chirp generator and hotspot passwords (downloads Android 4.4's org.json from Maven Central).
       - name: Off-robot tests
         run: apps/test.sh
+
+      # The example chirps that the tests write (docs/chirps.md), to listen to without the robot.
+      - name: Upload example chirps
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-chirps
+          path: apps/out/chirps/*.wav
+          if-no-files-found: error
 
       - name: Android SDK packages
         run: |

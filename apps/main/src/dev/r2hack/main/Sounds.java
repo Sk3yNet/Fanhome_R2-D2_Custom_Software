@@ -5,7 +5,9 @@ import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.res.AssetFileDescriptor;
 import android.content.res.Resources;
+import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioTrack;
 import android.media.MediaPlayer;
 import android.util.Log;
 import java.io.ByteArrayOutputStream;
@@ -15,6 +17,7 @@ import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Random;
 import org.json.JSONObject;
 
 /**
@@ -22,6 +25,8 @@ import org.json.JSONObject;
  * the factory app already installed on the robot, the same way the agent loads the serial library.
  * The number -> sound mapping comes from assets/sounds.json ({"7": "<resource name>", ...}),
  * which is not part of the repository.
+ * Also plays chirps made on the fly (Chirp): the confirmation beep is a new one each time unless the
+ * "generated beeps" setting is off, and the API, routines and the beeps-only reply can ask for more.
  */
 final class Sounds {
     private static final String TAG = "R2Sounds";
@@ -33,6 +38,9 @@ final class Sounds {
     private Resources stock;
     private String problem = "not loaded";
     private MediaPlayer player;
+    private AudioTrack track;          // the chirp playing, if any
+    private int trackFrames;
+    private final Random seeds = new Random();
     /** Called after the volume or mute changes, from wherever (web page, phone app, Home Assistant). */
     volatile Runnable onChange;
 
@@ -44,8 +52,63 @@ final class Sounds {
     }
 
     String status() {
-        return problem != null ? "sounds unavailable: " + problem
-                : ids.size() + " sounds, " + (muted() ? "muted" : "volume " + volume() + "%");
+        return (problem != null ? "sounds unavailable: " + problem
+                : ids.size() + " sounds, " + (muted() ? "muted" : "volume " + volume() + "%"))
+                + ", generated beeps " + (chirps() ? "on" : "off");
+    }
+
+    /** Whether the confirmation beep is a newly generated chirp (true) or the factory sound 7. */
+    boolean chirps() {
+        return prefs.getBoolean("chirps", true);
+    }
+
+    void setChirps(boolean on) {
+        prefs.edit().putBoolean("chirps", on).apply();
+        changed();
+    }
+
+    /** The confirmation beep: a fresh chirp, or factory sound ackSound if generated beeps are off (or fail). */
+    boolean ack(int ackSound) {
+        if (chirps() && chirp("ack", seeds.nextLong(), true)) return true;
+        return play(ackSound, true);
+    }
+
+    /** Plays a new chirp in this mood (Chirp.MOODS, or "random"). */
+    boolean chirp(String mood, long seed, boolean interrupt) {
+        return playPcm(Chirp.render(mood, seed), interrupt);
+    }
+
+    boolean chirp(String mood) {
+        return chirp(mood, seeds.nextLong(), true);
+    }
+
+    /** Droid sounds shaped like this text (the beeps-only reply). mood may be null. */
+    boolean speak(String text, String mood) {
+        return playPcm(Chirp.speak(text, mood, seeds.nextLong()), true);
+    }
+
+    /** Plays generated 16-bit mono PCM at Chirp.RATE. interrupt=false leaves a playing sound alone. */
+    synchronized boolean playPcm(short[] pcm, boolean interrupt) {
+        if (muted() || pcm.length == 0) return false;
+        if (!interrupt && isPlaying()) return false;
+        stop();
+        try {
+            AudioTrack t = new AudioTrack(AudioManager.STREAM_MUSIC, Chirp.RATE, AudioFormat.CHANNEL_OUT_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT, pcm.length * 2, AudioTrack.MODE_STATIC);
+            // A static track becomes STATE_INITIALIZED once its data is written.
+            if (t.write(pcm, 0, pcm.length) != pcm.length || t.getState() != AudioTrack.STATE_INITIALIZED) {
+                t.release();
+                Log.w(TAG, "could not set up a chirp");
+                return false;
+            }
+            t.play();
+            track = t;
+            trackFrames = pcm.length;
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "could not play a chirp", e);
+            return false;
+        }
     }
 
     boolean muted() {
@@ -118,6 +181,13 @@ final class Sounds {
 
     synchronized boolean isPlaying() {
         try {
+            if (track != null && track.getPlayState() == AudioTrack.PLAYSTATE_PLAYING
+                    && track.getPlaybackHeadPosition() < trackFrames) {
+                return true;
+            }
+        } catch (IllegalStateException ignored) {
+        }
+        try {
             return player != null && player.isPlaying();
         } catch (IllegalStateException e) {
             return false;
@@ -125,6 +195,14 @@ final class Sounds {
     }
 
     synchronized void stop() {
+        if (track != null) {
+            try {
+                track.stop();
+            } catch (Exception ignored) {
+            }
+            track.release();
+            track = null;
+        }
         if (player == null) return;
         try {
             player.stop();

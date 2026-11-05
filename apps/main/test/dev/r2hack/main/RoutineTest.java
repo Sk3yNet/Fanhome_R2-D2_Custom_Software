@@ -59,6 +59,11 @@ public final class RoutineTest {
             soundUntil = now + 1000;
         }
 
+        public void playChirp(String mood) {
+            log.add(now + " chirp " + mood);
+            soundUntil = now + 500;
+        }
+
         public boolean soundPlaying() { return now < soundUntil; }
 
         public void stopSound() { log.add(now + " sound stop"); }
@@ -193,6 +198,12 @@ public final class RoutineTest {
                 "600 head-angle angle=5",
                 "1600 head-angle angle=5"), h.log);
         eq("plain run time", 2600L, h.now);
+
+        h = new FakeHost();
+        eq("chirp wait", "finished", h.run(parse("{\"name\":\"a\",\"steps\":[{\"chirp\":\"happy\",\"until_done\":true},{\"chirp\":\"random\"},{\"head\":0}]}")));
+        eq("chirp wait log", Arrays.asList("0 chirp happy", "500 chirp random", "500 head-angle angle=0"), h.log);
+        contains("chirp mood", invalid("{\"name\":\"a\",\"steps\":[{\"chirp\":\"grumpy\"}]}"), "steps[0].chirp: one of random, ack");
+        contains("chirp key", invalid("{\"name\":\"a\",\"steps\":[{\"chirp\":\"sad\",\"seed\":1}]}"), "unknown key \"seed\"");
 
         h = new FakeHost();
         eq("sound wait", "finished", h.run(parse("{\"name\":\"a\",\"steps\":[{\"sound\":1,\"until_done\":true},{\"head\":0}]}")));
