@@ -71,6 +71,14 @@ Open `http://<robot-ip>:7700/` on a phone or PC on the same network and enter th
 battery, charging and movement; has a joystick (repeated `move` commands while held, so the motion
 watchdog stops R2 if the page or Wi-Fi goes away), a head slider, the actions, and a stop button.
 
+A gamepad works too (browser Gamepad API, standard layout: Xbox, PlayStation and most USB or Bluetooth
+pads). The left stick drives through the same repeated `move` commands, the right trigger raises the power
+cap from the Max power slider up to 100, the right stick turns the head (click it to center), START
+enables driving when the drive lock is on (docs/drive-lock.md), B/Circle or Back is STOP, and A, X, Y and the D-pad run actions (listed under **Gamepad** on the page). A stick has to
+return to the center before it drives: after connecting, after STOP and after the page was hidden, so a
+drifting stick can't start R2. Driving stops when the pad disconnects or the page is hidden or loses focus.
+Chrome and Edge allow gamepads on R2's plain-http page; Firefox only allows them on https or localhost.
+
 ## Simulator
 `tools\r2.ps1 sim-on` then `reboot` makes the agent use a
 pretend controller instead of `/dev/ttyS2`. It answers `gin` with a status that follows your commands,
