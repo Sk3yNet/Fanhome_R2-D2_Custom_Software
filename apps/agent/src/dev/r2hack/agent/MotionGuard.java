@@ -250,7 +250,7 @@ final class MotionGuard {
             String v = String.valueOf(g.opt(k));
             String was = ginSeen.put(k, v);
             if (was == null ? !"0".equals(v) && !"".equals(v) : !was.equals(v)) {
-                EventLog.i("gin " + k + ": " + (was == null ? "" : was + " -> ") + v + (motionUntil != 0 ? " (while driving)" : ""));
+                out.log("gin " + k + ": " + (was == null ? "" : was + " -> ") + v + (motionUntil != 0 ? " (while driving)" : ""));
             }
         }
     }
