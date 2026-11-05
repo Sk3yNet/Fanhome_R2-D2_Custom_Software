@@ -15,6 +15,7 @@
 
 /tools/*
 !/tools/*.ps1
+!/tools/*.py
 !/tools/serial-commands/
 
 *.log

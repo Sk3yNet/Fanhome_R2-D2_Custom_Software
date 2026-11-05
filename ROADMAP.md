@@ -192,7 +192,11 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       `tools\r2.ps1 switch-source <owner/repo | folder>` checks the new certificate, backs up both apps'
       settings, reinstalls with the new key and restores them. See [docs/releases.md](docs/releases.md).
 - [ ] **Cross-platform PC tool:** replace the PowerShell scripts with one small Python CLI (status, push,
-      logs, adb, install, restore) for Windows, macOS and Linux.
+      logs, adb, install, restore) for Windows, macOS and Linux. *Built, not yet tested on the robot.*
+      `tools/r2.py` has every `tools\r2.ps1` command plus `install`/`refresh-agent`/`restore` and the serial
+      console tools, using only Python's standard library (pyserial for serial). CI tests it on all three
+      systems against a pretend agent and fails if `r2.ps1` gains a command `r2.py` lacks. `r2.ps1` stays
+      for now.
 - [ ] Setup script for the build toolchain (JDK, Android SDK, platform-tools).
 - [ ] Later: the agent updates itself from GitHub releases. This needs signed updates (section 3).
       *Built, not yet tested on the robot.* `tools\r2.ps1 update-check`, `update-install`, `update-auto on`
