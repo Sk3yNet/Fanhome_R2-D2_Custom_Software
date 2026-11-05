@@ -234,7 +234,7 @@ Wi-Fi, no Wi-Fi, hotspot) or sleep. Charging switching off is debounced for 3 s.
 and English speech model are copied once from the factory app on the robot; nothing is bundled. Say
 "hey R2-D2" (the back light shows R2 is listening), then a command within 15 s: turn left / right /
 around, go forward, shake your head, walk a circle, dance please, make some noise, who are you,
-lightsaber, move arms, patrol, stop, Princess Leia, Skywalker. Each command keeps it listening for another
+lightsaber, move arms, patrol, follow me, stop, Princess Leia, Skywalker. Each command keeps it listening for another
 15 s. It doesn't listen while asleep, patrolling, pairing, or playing a projector clip or music. To tune
 the phrases or their sensitivity, put a PocketSphinx keyword file at `files/voice/keywords.txt` in R2
 Main's data (phrases must use words from the model's dictionary).
@@ -244,6 +244,9 @@ ready (not asleep, patrolling, pairing or under phone control). After a face has
 R2 makes a sound, shows the face light and turns its head toward it in small steps. The camera may be
 mounted sideways, so both orientations are tried until faces turn up in one. The phone app's face
 detection switch turns it off.
+
+**Follow me:** the `follow` action locks onto the clothes under a face and drives after that person with
+the camera alone, slowly and never in reverse: [docs/follow-me.md](follow-me.md).
 
 Bigger voice and vision features (free speech, knowing *who* a face is) are meant to run in a container:
 [docs/offload.md](docs/offload.md).

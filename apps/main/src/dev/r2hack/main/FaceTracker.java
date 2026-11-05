@@ -20,6 +20,12 @@ final class FaceTracker implements CameraStream.RawListener {
 
         /** Turns the head by a small relative angle (the controller's head-shift). */
         void shiftHead(int degrees);
+
+        /**
+         * Every confident face, confirmed or not (for "follow me"): rot is the quarter turn the picture was
+         * given, x and y the face's middle and width its width, as fractions of the turned picture's size.
+         */
+        void onFaceSeen(int rot, double x, double y, double width);
     }
 
     private static final String TAG = "R2Face";
@@ -115,6 +121,9 @@ final class FaceTracker implements CameraStream.RawListener {
             return;
         }
         lastSeen = now;
+        PointF mid = new PointF();
+        best.getMidPoint(mid);
+        host.onFaceSeen(rot, mid.x / bw, mid.y / bh, 2.0 * best.eyesDistance() / bw);
         if (firstSeen == 0) {
             firstSeen = now;
             if (!tracking) Log.i(TAG, "face in view (turned " + rot + "), confirming");

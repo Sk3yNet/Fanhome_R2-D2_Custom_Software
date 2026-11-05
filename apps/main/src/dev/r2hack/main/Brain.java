@@ -24,7 +24,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private static final String TAG = "R2Brain";
 
     static final String[] ACTIONS = {
-            "stop", "wake", "turn-left", "turn-right", "turn-around", "forward", "circle", "patrol",
+            "stop", "wake", "turn-left", "turn-right", "turn-around", "forward", "circle", "patrol", "follow",
             "dance", "shake-head", "who-are-you", "noise", "not-recognized", "chirp",
             "lightsaber", "arm", "short-lcd", "long-lcd", "flash-front", "flash-back", "leia", "luke",
             "mute", "unmute", "pair", "phone-app-on", "phone-app-off", "voice-on", "voice-off", "face-on", "face-off",
@@ -74,6 +74,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private final Voice voice;
     private final Assist assist;
     private final FaceTracker face;
+    private final Follower follower = new Follower();
     private final HomeAssistantPlugin ha;
     private final PluginManager plugins;
     private final RoutineStore routines;
@@ -190,7 +191,13 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             }
         };
         voice.setExtraPhrases(voicePhrases());
-        camera.setRawListener(face);
+        camera.setRawListener(new CameraStream.RawListener() {
+            @Override
+            public void onFrame(byte[] nv21, int width, int height) {
+                face.onFrame(nv21, width, height);
+                follower.onFrame(nv21, width, height);
+            }
+        });
         dlna.start();
         camera.start();
         phone.start();
@@ -205,7 +212,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         return "mode: " + modes[robot.mode] + ", action: " + seq.running() + "\n" + sounds.status() + "\n"
                 + dlna.status() + "\n" + camera.status() + "\n" + phone.status() + "\n" + voice.status()
                 + "\n" + assist.status()
-                + "\nface: " + (face.tracking() ? "tracking a face" : faceActive ? "looking" : "off") + "\nname: " + robot.name()
+                + "\nface: " + (face.tracking() ? "tracking a face" : faceActive ? "looking" : "off")
+                + "\nfollow me: " + follower.status() + "\nname: " + robot.name()
                 + "\nbattery: " + (robot.battery < 0 ? "?" : robot.battery + "%")
                 + "\nroutines: " + routines.names().size() + (lastRoutine.isEmpty() ? "" : ", last: " + lastRoutine)
                 + "\nplaces: " + places.names().size() + ", R2 is at " + places.location()
@@ -497,6 +505,12 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     return;
                 }
                 break;
+            case "follow":
+                if (seq.isRunning("follow")) { // a second press ends it
+                    action("stop");
+                    return;
+                }
+                break;
             default:
                 break;
         }
@@ -561,6 +575,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                         }
                     }
                 };
+            case "follow": return followJob();
             case "dance":
                 return new Sequencer.Job() {
                     public void run() throws Exception {
@@ -604,6 +619,74 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             case "luke": return hologram(2, S_LUKE);
             default: return null;
         }
+    }
+
+    // ---- follow me -----------------------------------------------------------------------
+
+    private static final long FOLLOW_FIND_MS = 10_000;   // how long to wait for a face before giving up
+    private static final long FOLLOW_TICK_MS = 200;
+
+    /**
+     * "Follow me" (docs/follow-me.md): wait for a face, lock onto the clothes under it, then drive after the
+     * person with FollowControl until they're lost for a while, "stop" is said or pressed, another action
+     * starts, or the battery runs low. The head stays facing forward, so the picture shows where R2 drives.
+     */
+    private Sequencer.Job followJob() {
+        return new Sequencer.Job() {
+            public void run() throws Exception {
+                projectorOff();
+                send("head-angle", "angle", 0);
+                follower.start();
+                try {
+                    // The camera and face detection run while following, even if face tracking is switched off.
+                    face.setEnabled(true);
+                    camera.setDetecting(true);
+                    faceActive = true;
+                    sounds.play(S_ACK, true);
+                    long giveUp = System.currentTimeMillis() + FOLLOW_FIND_MS;
+                    while (!follower.locked()) {
+                        if (System.currentTimeMillis() > giveUp) {
+                            Log.i(TAG, "follow me: " + (follower.lockFailures() > 0 ? follower.status() : "no face in view"));
+                            sounds.play(S_HUH, true);
+                            return;
+                        }
+                        Sequencer.sleep(100);
+                    }
+                    Log.i(TAG, "follow me: locked on");
+                    sounds.play(S_REPLY, true);
+                    FollowControl ctl = new FollowControl(System.currentTimeMillis());
+                    boolean wasMoving = false, wasLost = false;
+                    String last = "";
+                    while (true) {
+                        Sequencer.sleep(FOLLOW_TICK_MS);
+                        long now = System.currentTimeMillis();
+                        lastActivity = now;
+                        if (robot.battery >= 0 && robot.battery < Robot.LOW_BATTERY_PCT && robot.charging == 0) {
+                            Log.i(TAG, "follow me: battery low, stopping");
+                            break;
+                        }
+                        FollowControl.Command c = ctl.update(follower.latest(), now);
+                        if (!c.why.equals(last) && !c.why.startsWith("following") && !c.why.startsWith("turning")) {
+                            Log.i(TAG, "follow me: " + c);
+                        }
+                        last = c.why;
+                        if (c.done) break;
+                        if (ctl.lost() && !wasLost) sounds.play(S_HUH, true);   // "where did you go?"
+                        wasLost = ctl.lost();
+                        // Moving commands are repeated every tick, which also keeps the agent's watchdog fed.
+                        if (c.moving() && !wasMoving) lost("follow me");  // off any taught route now
+                        if (c.moving() || wasMoving) {
+                            io.send(new JSONObject().put("cmd", "move").put("power", c.power).put("angle", c.angle));
+                        }
+                        wasMoving = c.moving();
+                    }
+                    stopMotion();
+                    sounds.play(S_PAIR_FAIL, true);
+                } finally {
+                    follower.stop();
+                }
+            }
+        };
     }
 
     // ---- routines ----------------------------------------------------------------------
@@ -1277,7 +1360,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                         lights.refresh();
                     }
                     // Face detection runs while ready (not sleeping, patrolling, pairing or under phone control).
-                    boolean wantFace = robot.faceDetection() && robot.mode == Robot.READY;
+                    boolean wantFace = robot.faceDetection() && robot.mode == Robot.READY || follower.active();
                     if (wantFace != faceActive) {
                         faceActive = wantFace;
                         face.setEnabled(wantFace);
@@ -1760,9 +1843,14 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         robot.faceSeen = tracking;
         if (tracking) {
             wake();
-            sounds.play(S_FACE, false);
+            if (!follower.active()) sounds.play(S_FACE, false); // "follow me" makes its own sounds
         }
         lights.refresh();
+    }
+
+    @Override
+    public void onFaceSeen(int rot, double x, double y, double width) {
+        follower.onFace(rot, x, y, width);
     }
 
     @Override
