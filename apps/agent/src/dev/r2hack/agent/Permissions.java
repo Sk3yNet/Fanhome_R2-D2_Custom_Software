@@ -28,7 +28,7 @@ final class Permissions {
                 // Anyone who may look at the robot may also stop it.
                 "POST /stop");
         control("POST /action", "POST /routine", "POST /routine/delete", "POST /routine/run", "POST /routine/stop",
-                "POST /volume", "POST /assist", "POST /cue", "POST /cue/delete", "POST /watch",
+                "POST /volume", "POST /assist", "POST /chirp", "POST /cue", "POST /cue/delete", "POST /watch",
                 // Rooms (docs/places.md): driving to a taught room, and teaching rooms.
                 "POST /goto", "POST /tour", "POST /place", "POST /place/delete", "POST /place/here", "POST /place/teach",
                 "POST /place/teach/save", "POST /place/teach/cancel", "POST /places/settings");
