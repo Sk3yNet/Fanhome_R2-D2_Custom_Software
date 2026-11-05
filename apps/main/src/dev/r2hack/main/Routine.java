@@ -71,6 +71,11 @@ final class Routine {
         this.source = source;
     }
 
+    /** A routine built in code (e.g. a trip to a place, Places.trip), not parsed from JSON. */
+    static Routine built(String name, String description, long timeoutMs, List<Step> steps, JSONObject source) {
+        return new Routine(name, description, timeoutMs, false, new ArrayList<>(steps), source);
+    }
+
     static final class Invalid extends Exception {
         Invalid(String message) {
             super(message);
@@ -151,10 +156,11 @@ final class Routine {
             case DRIVE: {
                 allowOnly(o, at, "drive");
                 JSONObject d = o.optJSONObject("drive");
-                if (d == null) throw new Invalid(at + ".drive: {\"power\": 0-100, \"angle\": 0-359, \"seconds\": n}");
+                if (d == null) throw new Invalid(at + ".drive: {\"power\": 0-100, \"angle\": -180 to 359, \"seconds\": n}");
                 allowOnly(d, at + ".drive", "power", "angle", "seconds");
                 s.power = integer(d, "power", 0, 100, at + ".drive.power");
-                s.angle = d.has("angle") ? integer(d, "angle", 0, 359, at + ".drive.angle") : 0;
+                // -90 is the left spin; 270 is not (the controller backs up instead), so negative angles are allowed.
+                s.angle = d.has("angle") ? integer(d, "angle", -180, 359, at + ".drive.angle") : 0;
                 s.ms = ms(number(d, "seconds", -1, 0.1, 60, at + ".drive.seconds"));
                 break;
             }

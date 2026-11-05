@@ -183,8 +183,18 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
 - [ ] Upload, list, run and stop routines through the agent API and the PC tool. *Built, not yet tested on the robot.*
       `GET /routines`, `POST /routine`, `POST /routine/run`, `tools\r2.ps1 routines`, and buttons on the web page.
 - [ ] Triggers: robot buttons, voice commands, a schedule, or external events (see section 9).
+- [ ] **Rooms: "go to the kitchen".** Routes taught by driving R2 from a home spot with the joystick, replayed
+      as routines (the way back taught too, or mirrored after a taught turn-around), with R2 tracking where he
+      is. Voice ("go to the kitchen", "go home"), Home Assistant (Go to select, Location sensor), API
+      (`POST /goto`) and the web page. *Built, not yet tested on the robot.* See [docs/places.md](docs/places.md).
+- [ ] **Smarter patrol:** a tour of the taught rooms instead of the factory's wander (`tour`, or the patrol
+      button with `patrol_tour` on). *Built, not yet tested on the robot.* Obstacle avoidance depends on the
+      sensor test: the robot has IR, ultrasonic and foot-drop sensors, and the agent now logs unknown `gin`
+      fields to find out whether the main board can see them.
+- [ ] Later: printed markers (AprilTags) in each room, found by a container on the camera stream, to correct
+      the drift of replayed routes.
 - [ ] Test routines against the controller simulator (section 1).
-- [ ] Later: record a routine by driving the robot, then play it back.
+- [ ] Later: record a routine by driving the robot, then play it back. (Rooms record routes this way already.)
 
 ## 7. Web control page
 - [ ] A phone-friendly page served by the robot: live status (battery, charging, arm/head/lightsaber),

@@ -3,6 +3,7 @@ package dev.r2hack.main;
 import android.util.Log;
 import java.io.File;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -15,6 +16,7 @@ import org.json.JSONObject;
  * Run an action with  tools\r2.ps1 action <name>  (names in ACTIONS below).
  * Routines (docs/routines.md) are stored JSON step lists run by RoutineRunner on the same sequencer.
  * A routine named like one of ROUTINE_ACTIONS replaces that action everywhere (voice, buttons, phone app).
+ * Places (docs/places.md): routes taught with the joystick, replayed as trips; "goto:<place>" runs one.
  * Liveliness (docs/liveliness.md) is one setting, off / quiet / chatty / full, for how much R2 does on his own:
  * read it with liveliness(). IdlePersonality uses it for idle chatter; other features read the same getter.
  */
@@ -26,6 +28,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             "dance", "shake-head", "who-are-you", "noise", "not-recognized",
             "lightsaber", "arm", "short-lcd", "long-lcd", "flash-front", "flash-back", "leia", "luke",
             "mute", "unmute", "pair", "phone-app-on", "phone-app-off", "voice-on", "voice-off", "face-on", "face-off",
+            "go-home", "tour",
             "liveliness-off", "liveliness-quiet", "liveliness-chatty", "liveliness-full",
             "react-clap", "react-double-clap", "react-loud", "reactions-on", "reactions-off",
     };
@@ -76,6 +79,11 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private final SoundReactions ears;
     private volatile long lastReaction, ownNoiseUntil;
     private volatile String lastRoutine = "";   // how the last routine ended, for listings and /status
+    private final Places.Store places;
+    /** While a route is being taught: the recording, and what it is for ("kitchen", "kitchen back", "turn-around"). */
+    private volatile Places.Recorder recorder;
+    private volatile String teaching = "";
+    private volatile JSONObject teachExtra = new JSONObject(); // spoken names and area for a new place
     private final CueStore cues;
     private final WatchWithMe watch;
 
@@ -125,6 +133,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             }
         });
         this.routines = new RoutineStore(new File(io.getFilesDir(), "routines"), ROUTINE_ACTIONS);
+        this.places = new Places.Store(new File(io.getFilesDir(), "places.json"));
+        if (places.loadProblem() != null) Log.w(TAG, places.loadProblem());
         this.cues = new CueStore(new File(io.getFilesDir(), "cues"), ROUTINE_ACTIONS);
         this.watch = new WatchWithMe(watchHost);
         this.dlna = new DlnaRenderer(io, sounds);
@@ -145,6 +155,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             }
         });
         this.voice = new Voice(io, this);
+        voice.setExtraPhrases(Places.phrases(places.list()));
         this.assist = new Assist(io, this);
         voice.setStream(assist);
         this.ears = new SoundReactions(new SoundReactions.Listener() {
@@ -191,6 +202,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 + "\nface: " + (face.tracking() ? "tracking a face" : faceActive ? "looking" : "off") + "\nname: " + robot.name()
                 + "\nbattery: " + (robot.battery < 0 ? "?" : robot.battery + "%")
                 + "\nroutines: " + routines.names().size() + (lastRoutine.isEmpty() ? "" : ", last: " + lastRoutine)
+                + "\nplaces: " + places.names().size() + ", R2 is at " + places.location()
+                + (teaching.isEmpty() ? "" : ", teaching " + teaching)
                 + "\nwatch-with-me: " + watchLine()
                 + "\n" + idle.status()
                 + "\n" + ha.status();
@@ -255,7 +268,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     /** Tells the agent what's running (an action or routine, or idle), for its /status and Home Assistant. */
     private void reportRunning() {
         try {
-            io.send(new JSONObject().put("agent", "running").put("name", seq.running()).put("last_routine", lastRoutine));
+            io.send(new JSONObject().put("agent", "running").put("name", seq.running()).put("last_routine", lastRoutine)
+                    .put("location", places.location()).put("teaching", teaching));
         } catch (Exception ignored) {
         }
     }
@@ -327,6 +341,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 if (msg.optString("op").startsWith("cue") || "watch".equals(msg.optString("op"))) onWatchRequest(msg);
                 else onRoutinesRequest(msg);
                 break;
+            case "drove": // a command someone sent through the agent's /serial, e.g. the web page's joystick
+                onDrove(msg.optJSONObject("cmd"));
+                break;
             case "wifi-list":
             case "wifi-join-result":
                 phone.onAgentMessage(msg);
@@ -356,7 +373,17 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     void action(String name) {
         Log.i(TAG, "action " + name);
         wake();
+        if (name.startsWith("goto:")) {
+            goTo(name.substring(5));
+            return;
+        }
         switch (name) {
+            case "go-home":
+                goTo(Places.HOME);
+                return;
+            case "tour":
+                tour();
+                return;
             case "stop":
                 watch.stop();
                 seq.cancel();
@@ -406,14 +433,20 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 return;
             }
             case "patrol":
-                if (seq.isRunning("patrol")) { // a second press ends it
+                if (seq.isRunning("patrol") || seq.isRunning("tour")) { // a second press ends it
                     action("stop");
+                    return;
+                }
+                // Smarter patrol: tour the taught places instead of wandering, if switched on.
+                if (patrolTours() && !places.names().isEmpty() && !Places.UNKNOWN.equals(places.location())) {
+                    tour();
                     return;
                 }
                 break;
             default:
                 break;
         }
+        if (Places.movingAction(name)) lost("action " + name);
         // A stored routine replaces a built-in action of the same name, and adds new names.
         if ((ROUTINE_ACTIONS.contains(name) || job(name) == null) && routines.exists(name)) {
             runRoutine(name);
@@ -556,6 +589,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         }
         if (r == null) return "no routine named " + name;
         wake();
+        if (Places.moves(r)) lost("routine " + name);
         Log.i(TAG, "routine " + name);
         final RoutineRunner runner = new RoutineRunner(routineHost, RoutineRunner.REAL_CLOCK);
         seq.start(name, new Sequencer.Job() {
@@ -709,7 +743,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     break;
                 }
                 default:
-                    reply.put("ok", false).put("error", "unknown op " + op);
+                    if (!placesRequest(op, name, msg, reply)) reply.put("ok", false).put("error", "unknown op " + op);
             }
         } catch (Routine.Invalid e) {
             try {
@@ -724,6 +758,271 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             }
         }
         io.send(reply);
+    }
+
+    // ---- places (docs/places.md) ------------------------------------------------------------
+
+    private boolean patrolTours() {
+        return io.getSharedPreferences("settings", 0).getBoolean("patrol_tour", false);
+    }
+
+    /** R2 moved in a way no route accounts for, so he no longer knows where he is. */
+    private void lost(String why) {
+        if (!teaching.isEmpty()) return; // the recording accounts for it
+        if (places.setLocation(Places.UNKNOWN)) {
+            Log.i(TAG, "location unknown after " + why);
+            placesChanged();
+        }
+    }
+
+    /** A drive command from the phone app or the web page's joystick: recorded while teaching. */
+    private void moved(int power, int angle) {
+        Places.Recorder r = recorder;
+        if (r != null) r.move(System.currentTimeMillis(), power, angle);
+        else if (power > 0) lost("driving by hand");
+    }
+
+    /** A command sent through the agent's /serial (the web page): driving there counts like the phone app's. */
+    private void onDrove(JSONObject cmd) {
+        if (cmd == null) return;
+        String c = cmd.optString("cmd");
+        if ("move".equals(c)) {
+            if (!"idle".equals(seq.running()) && cmd.optInt("power") > 0) seq.cancel(); // the joystick takes over
+            moved(cmd.optInt("power"), cmd.optInt("angle"));
+        } else if ("mode".equals(c) && Places.movingMode(cmd.optInt("mode"))) {
+            lost("controller mode " + cmd.optInt("mode"));
+        }
+    }
+
+    /** Voice phrases, Home Assistant's place list and the agent's /status follow the places. */
+    private void placesChanged() {
+        voice.setExtraPhrases(Places.phrases(places.list()));
+        ha.stateChanged();
+        reportRunning();
+    }
+
+    private boolean tripRunning() {
+        String r = seq.running();
+        return r.startsWith("go-to-") || "tour".equals(r);
+    }
+
+    /** Sends R2 to a place (or home). Returns an error, or null if he's on his way (or already there). */
+    String goTo(String to) {
+        wake();
+        if (!teaching.isEmpty()) return refuse(to, "I'm learning a route (" + teaching + "); save or cancel it first");
+        if (tripRunning()) seq.cancel(); // stopped part way: he no longer knows where he is
+        Places.Trip t = Places.plan(places.location(), to, places.map(), places.turnAround());
+        if (t.error != null) return refuse(to, t.error);
+        if (t.segments.isEmpty()) {
+            sounds.play(S_ACK, true);
+            lastRoutine = "go-to-" + to + ": already there";
+            reportRunning();
+            return null;
+        }
+        runTrip("go-to-" + to, Places.trip(to, t), t.end);
+        return null;
+    }
+
+    /** Smarter patrol: visit each taught place in turn, then come home. */
+    String tour() {
+        wake();
+        if (!teaching.isEmpty()) return refuse("tour", "I'm learning a route; save or cancel it first");
+        if (tripRunning()) seq.cancel();
+        Places.Trip t = Places.tour(places.location(), places.map(), places.turnAround());
+        if (t.error != null) return refuse("tour", t.error);
+        runTrip("tour", Places.trip("tour", t), t.end);
+        return null;
+    }
+
+    private String refuse(String to, String why) {
+        Log.i(TAG, "go to " + to + ": " + why);
+        lastRoutine = "go-to-" + to + ": not started, " + why;
+        reportRunning();
+        sounds.play(S_HUH, true);
+        return why;
+    }
+
+    private void runTrip(final String name, final Routine r, final String end) {
+        Log.i(TAG, "trip " + name + ": " + r.description);
+        lost("leaving on " + name); // until he arrives
+        final RoutineRunner runner = new RoutineRunner(routineHost, RoutineRunner.REAL_CLOCK);
+        seq.start(name, new Sequencer.Job() {
+            public void run() throws Exception {
+                try {
+                    runner.run(r);
+                    places.setLocation(end);
+                    lastRoutine = name + ": arrived at " + end;
+                    placesChanged();
+                } catch (RoutineRunner.Abort a) {
+                    lastRoutine = name + ": stopped, " + a.getMessage();
+                    Log.w(TAG, "trip " + lastRoutine);
+                    stopMotion();
+                } catch (InterruptedException cancelled) {
+                    lastRoutine = name + ": cancelled";
+                    throw cancelled;
+                }
+            }
+        });
+    }
+
+    /**
+     * Starts teaching: what = "there" (drive from home to the place), "back" (from the place home) or
+     * "turn" (spin R2 around once on the spot, for mirrored ways back). Driving by hand is recorded until
+     * teachSave or teachCancel.
+     */
+    private String teach(String name, String what, JSONObject extra) throws Routine.Invalid {
+        if ("turn".equals(what)) {
+            name = "turn-around";
+        } else {
+            if (!Places.validName(name)) throw new Routine.Invalid("place name must be 1-32 characters: a-z, 0-9 and -, and not home or unknown");
+            if ("back".equals(what) && places.get(name) == null) throw new Routine.Invalid("no place named " + name + "; teach the way there first");
+            if (!"there".equals(what) && !"back".equals(what)) throw new Routine.Invalid("what= must be there, back or turn");
+            if ("there".equals(what) && places.get(name) == null && places.names().size() >= Places.MAX_PLACES) {
+                throw new Routine.Invalid("already " + Places.MAX_PLACES + " places; delete some first");
+            }
+        }
+        seq.cancel();
+        stopMotion();
+        teachExtra = extra;
+        recorder = new Places.Recorder();
+        teaching = "there".equals(what) ? name : "back".equals(what) ? name + " back" : name;
+        Log.i(TAG, "teaching " + teaching);
+        sounds.play(S_ACK, true);
+        reportRunning();
+        return "there".equals(what) ? "R2 is at home now. Drive him to " + name + ", then save."
+                : "back".equals(what) ? "R2 is at " + name + " now. Drive him home, then save."
+                : "Spin R2 around once on the spot (half a turn), then save.";
+    }
+
+    private String teachSave() throws Exception {
+        Places.Recorder r = recorder;
+        String what = teaching;
+        if (r == null) throw new Routine.Invalid("not teaching anything");
+        List<Places.Segment> segs = r.finish(System.currentTimeMillis());
+        if (r.problem() != null) throw new Routine.Invalid(r.problem());
+        if (segs.isEmpty()) throw new Routine.Invalid("nothing was recorded: drive R2 with the joystick first");
+        String result;
+        if ("turn-around".equals(what)) {
+            places.setTurnAround(segs);
+            result = "saved the turn-around (" + Places.seconds(segs) + " s)";
+        } else if (what.endsWith(" back")) {
+            String name = what.substring(0, what.length() - 5);
+            Places.Place p = places.get(name);
+            if (p == null) throw new Routine.Invalid("place " + name + " was deleted");
+            places.put(p.withBack(Places.parseSegments(Places.segmentsJson(segs), "back", true)));
+            places.setLocation(Places.HOME);
+            result = "saved the way back from " + name + " (" + Places.seconds(segs) + " s); R2 is home";
+        } else {
+            Places.Place old = places.get(what);
+            JSONObject j = new JSONObject().put("name", what).put("there", Places.segmentsJson(segs));
+            JSONObject x = teachExtra;
+            if (x.has("spoken")) j.put("spoken", x.get("spoken"));
+            else if (old != null) j.put("spoken", new JSONArray(old.spoken));
+            if (x.has("area")) j.put("area", x.get("area"));
+            else if (old != null && !old.area.isEmpty()) j.put("area", old.area);
+            if (old != null && old.marker >= 0) j.put("marker", old.marker);
+            // A new way there makes a taught way back wrong, so it is dropped (mirroring follows the new route).
+            places.put(Places.parsePlace(j));
+            places.setLocation(what);
+            result = "saved " + what + " (" + segs.size() + " moves, " + Places.seconds(segs) + " s); R2 is at " + what
+                    + (old != null && !old.back.isEmpty() ? ". Its taught way back was dropped; teach it again" : "");
+        }
+        recorder = null;
+        teaching = "";
+        sounds.play(S_REPLY, true);
+        placesChanged();
+        return result;
+    }
+
+    private String teachCancel() {
+        if (recorder == null) return "not teaching anything";
+        String was = teaching;
+        recorder = null;
+        teaching = "";
+        stopMotion();
+        lost("cancelled teaching");
+        reportRunning();
+        return "cancelled teaching " + was + "; R2 doesn't know where he is now";
+    }
+
+    /** The places part of the agent's routine API (ops place-*, goto, tour, here, teach-*). False: not a places op. */
+    private boolean placesRequest(String op, String name, JSONObject msg, JSONObject reply) throws Exception {
+        switch (op) {
+            case "places": {
+                JSONArray list = new JSONArray();
+                for (Places.Place p : places.list()) list.put(p.summary());
+                reply.put("ok", true).put("places", list).put("location", places.location()).put("teaching", teaching)
+                        .put("turn_around_seconds", Places.seconds(places.turnAround()))
+                        .put("charger_is_home", places.chargerIsHome()).put("patrol_tour", patrolTours())
+                        .put("running", seq.running()).put("last_trip", lastRoutine);
+                if (places.loadProblem() != null) reply.put("problem", places.loadProblem());
+                return true;
+            }
+            case "place-get": {
+                Places.Place p = places.get(name);
+                if (p == null) reply.put("ok", false).put("error", "no place named " + name);
+                else reply.put("ok", true).put("place", p.json());
+                return true;
+            }
+            case "place-put": {
+                JSONObject j = msg.optJSONObject("place");
+                if (j == null) throw new Routine.Invalid("send the place as a JSON object");
+                Places.Place p = Places.parsePlace(j);
+                boolean existed = places.get(p.name) != null;
+                places.put(p);
+                placesChanged();
+                reply.put("ok", true).put("result", (existed ? "replaced " : "saved ") + p.name);
+                return true;
+            }
+            case "place-delete":
+                if (places.delete(name)) {
+                    placesChanged();
+                    reply.put("ok", true).put("result", "deleted " + name);
+                } else {
+                    reply.put("ok", false).put("error", "no place named " + name);
+                }
+                return true;
+            case "goto": {
+                String err = goTo(name);
+                if (err == null) reply.put("ok", true).put("result", "going to " + name);
+                else reply.put("ok", false).put("error", err);
+                return true;
+            }
+            case "tour": {
+                String err = tour();
+                if (err == null) reply.put("ok", true).put("result", "touring the places");
+                else reply.put("ok", false).put("error", err);
+                return true;
+            }
+            case "here": // "you're home": tells R2 where he is now (home, a place, or unknown)
+                if (!Places.HOME.equals(name) && !Places.UNKNOWN.equals(name) && places.get(name) == null) {
+                    reply.put("ok", false).put("error", "no place named " + name);
+                    return true;
+                }
+                if (tripRunning()) seq.cancel();
+                places.setLocation(name);
+                placesChanged();
+                reply.put("ok", true).put("result", "R2 is at " + places.location());
+                return true;
+            case "teach":
+                reply.put("ok", true).put("result", teach(name, msg.optString("what", "there"), msg.optJSONObject("extra") == null
+                        ? new JSONObject() : msg.optJSONObject("extra")));
+                return true;
+            case "teach-save":
+                reply.put("ok", true).put("result", teachSave());
+                return true;
+            case "teach-cancel":
+                reply.put("ok", true).put("result", teachCancel());
+                return true;
+            case "place-settings": {
+                if (msg.has("charger_is_home")) places.setChargerIsHome(msg.optBoolean("charger_is_home"));
+                if (msg.has("patrol_tour")) io.getSharedPreferences("settings", 0).edit().putBoolean("patrol_tour", msg.optBoolean("patrol_tour")).apply();
+                reply.put("ok", true).put("result", "charger_is_home " + places.chargerIsHome() + ", patrol_tour " + patrolTours());
+                return true;
+            }
+            default:
+                return false;
+        }
     }
 
     /** The factory turns: an acknowledgement, then the controller's own movement. */
@@ -923,6 +1222,10 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                         camera.setDetecting(wantFace);
                     }
                     if (face.tracking()) lastActivity = now; // someone is there: stay awake
+                    if (robot.charging > 0 && places.chargerIsHome() && teaching.isEmpty() && places.setLocation(Places.HOME)) {
+                        Log.i(TAG, "on the charger: R2 is home");
+                        placesChanged();
+                    }
                     watch.tick(android.os.SystemClock.elapsedRealtime());
                     if (watch.active()) lastActivity = now; // watching a film together: stay awake
                     voice.setEnabled(robot.voiceRecognition());
@@ -1143,7 +1446,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                             .put("lightsaber", robot.lightsaber != 0).put("arm", robot.arm != 0)
                             .put("projector", robot.projector).put("lcd_s", robot.lcdS >= 2).put("lcd_l", robot.lcdL >= 2)
                             .put("mode", m >= 1 && m <= HomeAssistant.MODES.length ? HomeAssistant.MODES[m - 1] : "ready")
-                            .put("action", seq.running()).put("error", robot.error)
+                            .put("action", seq.running()).put("error", robot.error).put("location", places.location())
                             .put("muted", sounds.muted()).put("volume", sounds.volume())
                             .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
                             .put("reactions", reactionsOn())
@@ -1168,6 +1471,16 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             @Override
             public void runRoutine(String name) {
                 Brain.this.runRoutine(name);
+            }
+
+            @Override
+            public java.util.List<String> placeNames() {
+                return places.names();
+            }
+
+            @Override
+            public void goTo(String place) {
+                Brain.this.goTo(place);
             }
 
             @Override
@@ -1303,6 +1616,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     @Override
     public void drive(int power, int angle) {
         seq.cancel();
+        moved(power, angle);
         lastManual = System.currentTimeMillis();
         try {
             io.send(new JSONObject().put("cmd", "move").put("power", power).put("angle", angle));

@@ -52,6 +52,12 @@ and sounds. Recreating them is on the [roadmap](../ROADMAP.md).
 | `ready` | — | controller is ready |
 | `btn` | `value` | 1 power off · 2 toggle Wi-Fi hotspot · 3 toggle pairing · 4 lightsaber · 5 arm · 6 patrol |
 
+## Sensors
+The robot has IR, ultrasonic and foot-drop (leg) sensors, but nothing above reports them, so the controller
+probably handles them itself. The meaning of `gin`'s `status` and `error` is unknown; the agent logs every
+change of them (and of any field not listed above), marked "(while driving)" when R2 was moving, so a test
+drive toward a wall or lifting a foot shows whether they carry sensor readings. See [places.md](places.md#sensors).
+
 ## Open questions
 - Units for the head `angle` and `dir`. The `led` values above come from the factory software and aren't confirmed on the robot yet.
 - Whether the controller needs regular `gin` or `reset-wdt` traffic to keep running. R2 Agent keeps polling `gin`
