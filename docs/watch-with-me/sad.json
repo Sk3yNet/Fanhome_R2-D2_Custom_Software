@@ -1,0 +1,12 @@
+{
+  "name": "sad",
+  "description": "Watch-with-me: a low sound and a slow look down to one side",
+  "timeout": 15,
+  "while_charging": true,
+  "steps": [
+    {"sound": 3},
+    {"head": 60},
+    {"wait": 3},
+    {"head": 0}
+  ]
+}

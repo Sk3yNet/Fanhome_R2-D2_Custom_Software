@@ -56,6 +56,8 @@ routine engine in section 6.
 - [ ] **LED patterns:** ready, charging, charged, low battery (below 20%), patrol, sleep, pairing,
       pairing failed, connecting to Wi-Fi, face detected, power off. *Built, not yet tested on the robot.* Face detected waits for face detection.
 - [ ] **Sleep after 3 minutes idle** (sleep lights, voice and camera paused); any action wakes the robot. *Built, not yet tested on the robot.*
+- [ ] **Idle personality:** while awake and idle, random sounds from mood banks and an occasional look around, set by
+      one liveliness switch (off, quiet, chatty, full) that other features share ([liveliness.md](docs/liveliness.md)). *Built, not yet tested on the robot.*
 
 ### Voice commands
 - [x] Offline voice commands for the actions and toggles above, including "Princess Leia" and
@@ -214,6 +216,11 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       Also mode, current action and error sensors, display, mute, voice and face switches, and volume.
       Set the broker with `tools\r2.ps1 mqtt`; it must be on the robot's subnet or an allowed one.
       Each stored routine gets a button too.
+- [ ] **Watch with me:** R2 reacts during a film (sounds, head turns, lights) from a cue file of times,
+      following a Home Assistant media player's position over MQTT, or started by hand
+      (`tools\r2.ps1 watch-start`). Reactions never drive. See [docs/watch-with-me.md](docs/watch-with-me.md).
+      *Built, not yet tested on the robot.* Still to do: cue files for real films (the hard part), and
+      sounds tagged by mood so reactions fit better.
 - [ ] Alternatively, a Home Assistant integration over a local REST/WebSocket API, using the security
       work in section 3.
 - [ ] **R2 as a Home Assistant media destination** (a `media_player` entity):
