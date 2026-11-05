@@ -46,7 +46,7 @@ routine engine in section 6.
       projector clips 100 and 101, and two hidden extras). *Built, not yet tested on the robot.* The two hidden extras aren't mapped yet.
 - [ ] Load the sounds at runtime from the factory files on the robot, the same way as the serial library,
       so nothing gets redistributed. *Built, not yet tested on the robot.* Later, optional user sound packs.
-- [ ] Mute and volume, kept across reboots. *Built, not yet tested on the robot.* Mute is reachable as an action; volume has no control yet.
+- [ ] Mute and volume, kept across reboots. *Built, not yet tested on the robot.* Mute is reachable as an action; volume is set with `POST /volume`, the DLNA renderer and Home Assistant.
 
 ### Buttons, status and lights
 - [ ] **Robot buttons:** power off (a clean shutdown of both the controller and Android), hotspot/Wi-Fi
@@ -80,7 +80,7 @@ routine engine in section 6.
 
 ### Identity and network
 - [ ] Keep the robot's name and ID, so the phone app and Bluetooth still recognize it. *Built, not yet tested on the robot.* `tools\r2.ps1 import-identity` copies the name, ID and paired phones from the factory app.
-- [ ] Hotspot named like the factory one, but with a per-robot password instead of a fixed default.
+- [ ] Hotspot named like the factory one, but with a per-robot password instead of a fixed default. *Built, not yet tested on the robot.* The agent makes the password on first start (`tools\r2.ps1 hotspot` shows it). The pairing button brings the factory settings back for its 2-minute window, as the way back in when it's forgotten.
 
 ## 3. Security: authenticated communication
 The agent can install software and reboot the robot, and adb over Wi-Fi is a root shell, so being on

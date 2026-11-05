@@ -43,6 +43,9 @@
 #   wifi-station | wifi-ap   switch network mode
 #   wifi-scan                networks R2 can see
 #   wifi-join <ssid>         join a network (asks for its password; R2 falls back to its hotspot if it fails)
+#   hotspot                  R2's hotspot name and this robot's own password (in the pairing button's setup
+#                            window without a token, otherwise over the API or root adb)
+#   hotspot-password [new]   set R2's hotspot password (asks for it; 'new' makes a random one)
 #   import-identity          copy the factory app's robot name, ID and paired phones to R2 Main (over root adb),
 #                            so the official phone app still recognizes the robot
 #   stock-on | stock-off     re-enable / disable the original Fanhome app (takes effect after reboot)
@@ -225,6 +228,31 @@ switch ($Command) {
         $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
         Call POST /wifi/join (@{ ssid = $Arg; password = $plain } | ConvertTo-Json -Compress)
         $plain = $null
+    }
+    'hotspot'      {
+        # In the setup window this works without a token; otherwise with the token, or over root adb.
+        $h = $null
+        try { $h = Invoke-RestMethod "http://$(Get-Robot):7700/hotspot" -Headers @{ 'X-R2-Token' = $token } -TimeoutSec 5 } catch { }
+        if ($h) {
+            "name:     $($h.ssid)"
+            "password: $($h.password)"
+            if ($h.using -eq 'factory') { "(running with the factory settings right now: $($h.factory_seconds_left) s left)" }
+        } else {
+            $adb = Join-Path $PSScriptRoot 'platform-tools\adb.exe'; $target = Connect-Adb
+            "password: " + (& $adb -s $target shell cat /data/data/dev.r2hack.agent/files/hotspot-password).Trim()
+        }
+    }
+    'hotspot-password' {
+        $plain = ''
+        if ($Arg -ne 'new') {
+            $secure = Read-Host 'New hotspot password (8-63 characters; Enter for a random one)' -AsSecureString
+            $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+        }
+        $h = Call POST /hotspot (@{ password = $plain } | ConvertTo-Json -Compress)
+        $plain = $null
+        "name:     $($h.ssid)"
+        "password: $($h.password)"
+        $h.result
     }
     'import-identity' {
         $adb = Join-Path $PSScriptRoot 'platform-tools\adb.exe'; $target = Connect-Adb
