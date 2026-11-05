@@ -147,6 +147,24 @@ final class HomeAssistantPlugin implements Plugin {
         }
 
         @Override
+        public List<String> placeNames() {
+            PluginContext c = ctx;
+            if (c == null || !c.has(PluginPermissions.ACTIONS)) return Collections.emptyList();
+            return c.placeNames();
+        }
+
+        @Override
+        public void goTo(String place) {
+            PluginContext c = ctx;
+            if (c == null) return;
+            try {
+                c.goTo(place);
+            } catch (PluginContext.Denied d) {
+                c.log(d.getMessage());
+            }
+        }
+
+        @Override
         public void projector(int mode) {
             PluginContext c = ctx;
             if (c == null) return;

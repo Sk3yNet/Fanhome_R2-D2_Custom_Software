@@ -38,7 +38,7 @@ is enabled again or R2 Main restarts. After `stop`, its context refuses every ca
 
 The state object: `battery` (-1 unknown), `charging` (0/1/2), `lightsaber`, `arm`, `lcd_s`, `lcd_l`
 (booleans), `projector` (0/1/2), `mode` (ready, sleeping, pairing, patrol, phone control), `action`,
-`error`, `muted`, `voice`, `face`, `volume`, `name`, `uuid`, `version`, `watch` (watch-with-me's status).
+`error`, `location`, `muted`, `voice`, `face`, `volume`, `liveliness`, `name`, `uuid`, `version`, `watch` (watch-with-me's status).
 
 `BatteryAlertPlugin.java` is a short worked example (off by default).
 Plugins avoid Android classes so they can be tested on a plain JVM; see `apps/main/test/dev/r2hack/main/PluginTest.java`, run by `apps/test.sh`.
@@ -47,13 +47,13 @@ Plugins avoid Android classes so they can be tested on a plain JVM; see `apps/ma
 | Permission | `PluginContext` calls |
 |---|---|
 | `status` | `state()`, and every event |
-| `actions` | `action(name)` for the built-in actions (dance, lightsaber, leia...), `projector(mode)`, `watchUpdate(json)` (a film's state for [watch-with-me](watch-with-me.md)) |
+| `actions` | `action(name)` for the built-in actions (dance, lightsaber, leia...), `projector(mode)`, `placeNames()` and `goTo(place)` ([rooms](places.md)), `watchUpdate(json)` (a film's state for [watch-with-me](watch-with-me.md)) |
 | `drive` | `drive(power, angle)`, `head(angle)`, `controller(cmd)` for `move`, `head-angle`, `head-shift`, `head-dir`, `mode`, `projector`, `arm`, `lightsaber`, `lcd` |
 | `routines.run` | `routineNames()`, `runRoutine(name)` |
 | `routines.edit` | `saveRoutine(json)`, `deleteRoutine(name)` |
 | `sound` | `playSound(number)` |
 | `lights` | `led(r, b, y, g)` |
-| `settings` | `setVolume(percent)`, `setWatch(on)` (the watch-with-me switch), and the actions mute, unmute, voice-on/off, face-on/off |
+| `settings` | `setVolume(percent)`, `setWatch(on)` (the watch-with-me switch), and the actions mute, unmute, voice-on/off, face-on/off, liveliness-* |
 | (none) | `stop()`, `log(msg)`, `saveConfig(json)` |
 
 What no plugin can do, whatever it is granted, because `PluginContext` has no call for it: install or
@@ -82,7 +82,7 @@ Settings live in R2 Main's `files/plugins.json`, so they survive R2 Main updates
 Assistant over MQTT discovery, see [architecture.md](architecture.md#home-assistant-over-mqtt-r2-main).
 The broker is still set with `POST /mqtt`; disabling the plugin disconnects it, and `GET /mqtt` says so.
 Taking permissions away removes what needs them: without `routines.run` there are no routine buttons,
-without `settings` the volume and the mute, voice, face and watch-with-me switches are ignored, and without `status` it
+without `settings` the volume, the activity select and the mute, voice, face and watch-with-me switches are ignored, and without `status` it
 doesn't start. It never asks for `drive` or `routines.edit`.
 
 **`battery-alert`** (off by default; asks for `status`, `sound`): plays a sound once when the battery

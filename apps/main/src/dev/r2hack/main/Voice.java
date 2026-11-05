@@ -12,6 +12,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -74,7 +75,12 @@ final class Voice {
 
     private final Context ctx;
     private final Host host;
-    private final Map<String, String> actions = new LinkedHashMap<>();
+    private final Map<String, String> actions = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Phrases added at runtime (places: "go to the kitchen" -> "goto:kitchen"), and whether the recognizer must reload them. */
+    private volatile Map<String, String> extra = new LinkedHashMap<>();
+    private volatile boolean reload;
+    private static final String EXTRA_THRESHOLD = "1e-20"; // moves R2, so as strict as the other drive commands
+    private volatile File modelDir;
     private volatile boolean enabled = true;
     private volatile String problem = "starting";
     private volatile long awakeUntil;
@@ -84,6 +90,13 @@ final class Voice {
         this.ctx = ctx;
         this.host = host;
         for (Object[] p : PHRASES) actions.put((String) p[0], (String) p[1]);
+    }
+
+    /** Replaces the runtime phrases; the recognizer picks them up between utterances. */
+    void setExtraPhrases(Map<String, String> phrases) {
+        if (phrases.equals(extra)) return;
+        extra = new LinkedHashMap<>(phrases);
+        reload = true;
     }
 
     void setStream(Stream s) {
@@ -120,6 +133,7 @@ final class Voice {
 
     private void loop() throws Exception {
         File dir = prepareModel();
+        modelDir = dir;
         long config = PocketSphinxJNI.Decoder_defaultConfig();
         SphinxBaseJNI.Config_setString(config, null, "-hmm", new File(dir, "ptm").getPath());
         SphinxBaseJNI.Config_setString(config, null, "-dict", new File(dir, "cmudict.dict").getPath());
@@ -127,6 +141,7 @@ final class Voice {
         SphinxBaseJNI.Config_setString(config, null, "-logfn", "/dev/null");
         long decoder = PocketSphinxJNI.new_Decoder__SWIG_1(config, null);
         if (decoder == 0) throw new Exception("recognizer would not start");
+        reload = false;
         PocketSphinxJNI.Decoder_setKws(decoder, null, "command", keywordsFile().getPath());
         PocketSphinxJNI.Decoder_setSearch(decoder, null, "command");
 
@@ -168,6 +183,13 @@ final class Voice {
                         PocketSphinxJNI.Decoder_endUtt(decoder, null);
                         PocketSphinxJNI.Decoder_startUtt(decoder, null);
                     }
+                    if (reload) { // new place phrases: swap the keyword list between utterances
+                        reload = false;
+                        PocketSphinxJNI.Decoder_endUtt(decoder, null);
+                        PocketSphinxJNI.Decoder_setKws(decoder, null, "command", keywordsFile().getPath());
+                        PocketSphinxJNI.Decoder_setSearch(decoder, null, "command");
+                        PocketSphinxJNI.Decoder_startUtt(decoder, null);
+                    }
                     PocketSphinxJNI.Decoder_processRaw(decoder, null, buf, n, false, false);
                     String heard = hypothesis(decoder);
                     if (heard != null) {
@@ -201,11 +223,11 @@ final class Voice {
     }
 
     private void onHeard(String text) {
-        String action = null;
-        for (Map.Entry<String, String> e : actions.entrySet()) {
-            if (text.startsWith(e.getKey())) {
+        String action = null, best = "";
+        for (Map.Entry<String, String> e : actions.entrySet()) { // the longest phrase wins ("go to the living room")
+            if (text.startsWith(e.getKey()) && e.getKey().length() > best.length()) {
+                best = e.getKey();
                 action = e.getValue();
-                break;
             }
         }
         Log.i(TAG, "heard \"" + text + "\" -> " + action);
@@ -241,10 +263,52 @@ final class Voice {
         File f = new File(ctx.getFilesDir(), "voice/r2-keywords");
         StringBuilder sb = new StringBuilder();
         for (Object[] p : PHRASES) sb.append(p[0]).append(" /").append(p[2]).append("/\n");
+        // Runtime phrases, if every word is in the speech model's dictionary (an unknown word breaks the list).
+        Map<String, String> ex = extra;
+        java.util.Set<String> known = knownWords(ex.keySet());
+        for (String k : new java.util.ArrayList<>(actions.keySet())) {
+            boolean builtIn = false;
+            for (Object[] p : PHRASES) if (p[0].equals(k)) builtIn = true;
+            if (!builtIn) actions.remove(k);
+        }
+        for (Map.Entry<String, String> e : ex.entrySet()) {
+            boolean ok = true;
+            for (String w : e.getKey().split(" ")) if (!known.contains(w)) ok = false;
+            if (!ok) {
+                Log.w(TAG, "can't listen for \"" + e.getKey() + "\": a word isn't in the speech model's dictionary");
+                continue;
+            }
+            sb.append(e.getKey()).append(" /").append(EXTRA_THRESHOLD).append("/\n");
+            actions.put(e.getKey(), e.getValue());
+        }
         OutputStream out = new FileOutputStream(f);
         out.write(sb.toString().getBytes("UTF-8"));
         out.close();
         return f;
+    }
+
+    /** Which of the phrases' words the dictionary (cmudict.dict: "word phones", variants as "word(2)") has. */
+    private java.util.Set<String> knownWords(java.util.Collection<String> phrases) {
+        java.util.Set<String> want = new java.util.HashSet<>(), found = new java.util.HashSet<>();
+        for (String p : phrases) want.addAll(Arrays.asList(p.split(" ")));
+        File dir = modelDir;
+        if (want.isEmpty() || dir == null) return found;
+        try {
+            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(
+                    new java.io.FileInputStream(new File(dir, "cmudict.dict")), "UTF-8"));
+            try {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    int sp = line.indexOf(' ');
+                    if (sp > 0 && want.contains(line.substring(0, sp))) found.add(line.substring(0, sp));
+                }
+            } finally {
+                r.close();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "can't read the dictionary", e);
+        }
+        return found;
     }
 
     /**

@@ -35,7 +35,7 @@ public final class PluginTest {
 
         public boolean isAction(String name) {
             return Arrays.asList("stop", "dance", "lightsaber", "leia", "mute", "unmute", "voice-on", "voice-off",
-                    "face-on", "face-off", "pair", "phone-app-on", "phone-app-off").contains(name);
+                    "face-on", "face-off", "liveliness-full", "go-home", "pair", "phone-app-on", "phone-app-off").contains(name);
         }
 
         public void action(String name) { calls.add("action " + name); }
@@ -49,6 +49,8 @@ public final class PluginTest {
         public void playSound(int n) { calls.add("sound " + n); }
         public void setVolume(int p) { calls.add("volume " + p); }
         public void led(int r, int b, int y, int g) { calls.add("led"); }
+        public List<String> placeNames() { return Arrays.asList("kitchen"); }
+        public void goTo(String place) { calls.add("go " + place); }
         public String watchUpdate(JSONObject msg) { calls.add("watch " + msg.optString("state")); return "ok"; }
         public void setWatch(boolean on) { calls.add("watch-switch " + on); }
         public void log(String msg) { logs.add(msg); }
@@ -160,6 +162,7 @@ public final class PluginTest {
         denied("volume without settings", new Runnable() { public void run() { none.setVolume(50); } });
         denied("lights without lights", new Runnable() { public void run() { none.led(2, 2, 1, 1); } });
         denied("watch update without actions", new Runnable() { public void run() { none.watchUpdate(new JSONObject()); } });
+        denied("go to without actions", new Runnable() { public void run() { none.goTo("kitchen"); } });
         denied("watch switch without settings", new Runnable() { public void run() { none.setWatch(true); } });
         none.stop(); // always allowed
         none.action("stop");
@@ -179,8 +182,9 @@ public final class PluginTest {
         all.led(2, 2, 1, 1);
         all.watchUpdate(new JSONObject().put("state", "playing"));
         all.setWatch(false);
+        all.goTo("kitchen");
         eq("granted calls pass", Arrays.asList("action dance", "cmd move", "cmd head-angle", "sound 7", "volume 50",
-                "routine greet", "save x", "delete x", "projector 0", "led", "watch playing", "watch-switch false"), new ArrayList<>(h.calls));
+                "routine greet", "save x", "delete x", "projector 0", "led", "watch playing", "watch-switch false", "go kitchen"), new ArrayList<>(h.calls));
         // Never available, whatever was granted.
         denied("pairing", new Runnable() { public void run() { all.action("pair"); } });
         denied("phone app switch", new Runnable() { public void run() { all.action("phone-app-on"); } });
@@ -203,6 +207,7 @@ public final class PluginTest {
         final PluginContext actions = new PluginContext("p", h, new TreeSet<>(Arrays.asList("actions")), noStore());
         denied("mute with only actions", new Runnable() { public void run() { actions.action("mute"); } });
         denied("voice-off with only actions", new Runnable() { public void run() { actions.action("voice-off"); } });
+        denied("liveliness with only actions", new Runnable() { public void run() { actions.action("liveliness-full"); } });
         final PluginContext settings = new PluginContext("p", h, new TreeSet<>(Arrays.asList("settings")), noStore());
         settings.action("mute");
         denied("dance with only settings", new Runnable() { public void run() { settings.action("dance"); } });

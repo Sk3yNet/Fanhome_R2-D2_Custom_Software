@@ -18,7 +18,8 @@ final class PluginContext {
         /**
          * The robot's state: battery (int, -1 unknown), charging (0/1/2), lightsaber, arm, lcd_s, lcd_l
          * (booleans), projector (0/1/2), mode (string), action (string), error (string), muted, voice,
-         * face (booleans), volume (0-100), name, uuid, version (strings), watch (WatchWithMe.status()).
+         * face (booleans), volume (0-100), liveliness, name, uuid, version, location (strings),
+         * watch (WatchWithMe.status()).
          */
         JSONObject state();
 
@@ -51,6 +52,12 @@ final class PluginContext {
         void setVolume(int percent);
 
         void led(int r, int b, int y, int g);
+
+        /** Taught places (docs: rooms), besides home. */
+        List<String> placeNames();
+
+        /** Sends R2 to a place, or "home". */
+        void goTo(String place);
 
         /** A media player update for watch-with-me; returns what happened, or throws IllegalArgumentException. */
         String watchUpdate(JSONObject msg);
@@ -139,6 +146,20 @@ final class PluginContext {
         need(PluginPermissions.ACTIONS, "projector");
         if (mode < 0 || mode > 2) throw new Denied(plugin + ": projector mode must be 0, 1 or 2");
         host.projector(mode);
+    }
+
+    // ---- places ----
+
+    List<String> placeNames() {
+        need(PluginPermissions.ACTIONS, "listing places");
+        return host.placeNames();
+    }
+
+    /** Sends R2 to a taught place, or "home", like the go-home and tour actions. */
+    void goTo(String place) {
+        need(PluginPermissions.ACTIONS, "go to " + place);
+        host.log("plugin " + plugin + ": go to " + place);
+        host.goTo(place);
     }
 
     // ---- routines ----

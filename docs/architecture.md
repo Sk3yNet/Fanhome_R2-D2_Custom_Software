@@ -49,6 +49,9 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `GET /routines` · `GET /routine?name=` · `POST /routine` (JSON body) · `POST /routine/run?name=` · `POST /routine/stop` · `POST /routine/delete?name=` (see [routines.md](routines.md)) ·
 `GET /cues` · `GET /cue?name=` · `POST /cue` (JSON body) · `POST /cue/delete?name=` · `GET /watch` · `POST /watch` (`{"state","position","title","cue","enabled"}`; see [watch-with-me.md](watch-with-me.md)) ·
 `GET /mqtt` · `POST /mqtt` (`{"host","port","username","password","prefix","enabled"}`) ·
+`GET /places` · `GET /place?name=` · `POST /place` · `POST /place/delete?name=` · `POST /goto?place=` · `POST /tour` ·
+`POST /place/here?name=` · `POST /place/teach?name=&what=there|back|turn` · `POST /place/teach/save` · `POST /place/teach/cancel` ·
+`POST /places/settings` (rooms, see [places.md](places.md)) ·
 `GET /plugins` · `POST /plugin?name=&enabled=1|0&grant=<permissions>` · `POST /plugin/config?name=` (JSON body) (see [plugins.md](plugins.md))
 
 Only clients on the robot's own subnet (its Wi-Fi network or its hotspot), loopback, or IPv6 link-local are
@@ -102,6 +105,10 @@ Sounds are played from the factory app already installed on the robot; nothing i
 sound-number map lives in `apps\main\assets\sounds.json` (`{"7": "<resource name>", ...}`), which is
 not part of this repository. Without it R2 Main still runs every action, just silently.
 
+While R2 is awake and idle he chatters and looks around now and then, as much as the **liveliness**
+setting (off, quiet, chatty, full) allows: [liveliness.md](liveliness.md). The web page and Home
+Assistant show it as the **Activity** presets.
+
 ## Routines (R2 Main)
 Routines are JSON step lists (sounds, head moves, modes, driving, lights, built-in actions, waits on
 the robot's state, repeats) that R2 Main stores and runs on the same sequencer as the actions, with
@@ -109,6 +116,13 @@ safety checks (timeout, controller error, charger, low battery). A routine named
 replaces it. Format, API and examples: [routines.md](routines.md). The agent passes the routine API to
 R2 Main over the bridge (`{"agent":"routines","seq":N,...}`, answered by `routines-reply`), and R2 Main
 reports what's running (`{"agent":"running",...}`) for `/status`.
+
+## Rooms (R2 Main)
+R2 drives to rooms along routes you taught by driving him there from a home spot with the joystick, and keeps
+track of where he is. Trips run as routines, so the same safety checks apply. Voice ("go to the kitchen"),
+Home Assistant, the API and the web page can send him. The agent forwards drives from `/serial` (the web
+page's joystick) to R2 Main as `{"agent":"drove","cmd":...}`, which records them while teaching. See
+[places.md](places.md).
 
 ## Media player for Home Assistant (R2 Main)
 R2 Main is a DLNA/UPnP media renderer on port 7710 (AVTransport, RenderingControl, ConnectionManager,
@@ -150,23 +164,24 @@ The device (named after the robot) has:
 - **Sensors:** battery (%), charging, mode (ready, sleeping, pairing, patrol, phone control), the action
   that is running, the controller's error (diagnostic), and the watch-with-me state.
 - **Buttons:** stop, wake up, turn left / right / around, go forward, walk a circle, patrol, dance, shake
-  head, who are you, make some noise, flash front / back light, and one button per stored routine
-  (`Routine <name>`). A routine that is saved or deleted shows up or disappears within a second or so.
+  head, who are you, make some noise, flash front / back light, go home, tour the rooms, and one button per
+  stored routine (`Routine <name>`). Rooms ([places.md](places.md)): a **Location** sensor and a **Go to** select. A routine that is saved or deleted shows up or disappears within a second or so.
 - **Switches:** lightsaber, arm, projector Princess Leia, projector Skywalker, short and long display,
   mute, voice commands, face tracking, watch with me ([watch-with-me.md](watch-with-me.md)). A switch runs the matching action only if R2 isn't already in that
   state. The lightsaber, arm, projector and display states come from the controller's status, which R2
   reads every 5 s, so a switch can take a few seconds to show its new state.
 - **Volume** (0–100 %), shared with the droid sounds and the media player.
+- **Activity** select: the liveliness preset (off, quiet, chatty, full), see [liveliness.md](liveliness.md).
 - **Availability:** R2 is shown as unavailable when R2 Main stops or loses the broker (MQTT last will).
 
 Topics are under `r2d2/<robot id>/`: state in `battery`, `charging`, `mode`, `action`, `error`,
-`volume`, `switch/<name>`, `watch/state`, `watch/attributes`; commands in `action/run` (payload: the action name), `routine/run` (payload: the routine name), `switch/<name>/set`
-(`ON`/`OFF`), `volume/set` and `watch/set` (a media player's state and position, see
+`volume`, `liveliness`, `switch/<name>`, `watch/state`, `watch/attributes`; commands in `action/run` (payload: the action name), `routine/run` (payload: the routine name), `switch/<name>/set`
+(`ON`/`OFF`), `volume/set`, `liveliness/set` (`off`, `quiet`, `chatty` or `full`) and `watch/set` (a media player's state and position, see
 [watch-with-me.md](watch-with-me.md)). When Home Assistant restarts (`homeassistant/status` = `online`), R2 sends
 discovery and state again.
 
 **Safety and security:** MQTT commands run as ordinary actions, so the agent's motion watchdog,
-low-battery stop and emergency stop apply. Only the buttons and switches above can be used: no pairing,
+low-battery stop and emergency stop apply. Only the buttons, switches and select above can be used: no pairing,
 no phone app switch, nothing that installs software or reboots. The broker must be on the robot's own
 subnet, or in a subnet allowed with `tools\r2.ps1 allow-subnets`, the same rule as for API clients; any
 other broker address is refused and shown in `tools\r2.ps1 mqtt`. Anyone who can publish to the broker

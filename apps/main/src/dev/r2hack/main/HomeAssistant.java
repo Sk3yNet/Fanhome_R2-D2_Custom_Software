@@ -19,8 +19,8 @@ import org.json.JSONObject;
  *
  * The broker is set with POST /mqtt on the agent, which passes the settings here. Like API clients,
  * the broker must be on the robot's own subnet or in an allowed extra subnet (POST /clients/allow).
- * Only the actions in BUTTONS and the switches below can be run from MQTT: no pairing, no phone-app
- * switch, nothing that installs or reboots.
+ * Only the actions in BUTTONS, the switches below and the activity select can be run from MQTT: no pairing,
+ * no phone-app switch, nothing that installs or reboots.
  *
  * No Android classes, so it can be tested on a plain JVM against a real broker.
  */
@@ -29,7 +29,8 @@ final class HomeAssistant {
         /**
          * The robot's state: battery (int, -1 unknown), charging (0/1/2), lightsaber, arm, lcd_s, lcd_l
          * (booleans), projector (0/1/2), mode (string), action (string), error (string), muted, voice,
-         * face (booleans), volume (0-100), name, uuid, version (strings), watch (WatchWithMe.status()).
+         * face (booleans), volume (0-100), liveliness (one of LIVELINESS, the activity preset), name, uuid,
+         * version, location (strings), watch (WatchWithMe.status()).
          */
         JSONObject haState();
 
@@ -39,6 +40,12 @@ final class HomeAssistant {
         List<String> routineNames();
 
         void runRoutine(String name);
+
+        /** Taught places (a-z, 0-9 and -), the options of the "Go to" select besides home. */
+        List<String> placeNames();
+
+        /** Sends R2 to a place, or "home". */
+        void goTo(String place);
 
         void projector(int mode);
 
@@ -63,6 +70,7 @@ final class HomeAssistant {
             {"patrol", "Patrol"}, {"dance", "Dance"}, {"shake-head", "Shake head"},
             {"who-are-you", "Who are you"}, {"noise", "Make some noise"},
             {"flash-front", "Flash front light"}, {"flash-back", "Flash back light"},
+            {"go-home", "Go home"}, {"tour", "Tour the rooms"},
     };
 
     /** Switches: id -> display name, icon. */
@@ -77,6 +85,12 @@ final class HomeAssistant {
     };
 
     static final String[] MODES = {"ready", "sleeping", "pairing", "patrol", "phone control"};
+
+    /**
+     * Activity presets (the "liveliness" setting), published as one select. Choosing one runs the
+     * action "liveliness-<level>", the same as the web page and POST /action.
+     */
+    static final String[] LIVELINESS = {"off", "quiet", "chatty", "full"};
 
     private static final Charset UTF8 = Charset.forName("UTF-8");
     private static final int KEEPALIVE_S = 60;
@@ -259,8 +273,8 @@ final class HomeAssistant {
                     published.clear();
                     discoveredFor = "";
                 }
-                c.subscribe(base() + "/action/run", base() + "/routine/run", base() + "/switch/+/set", base() + "/volume/set",
-                        watchTopic(), s.prefix + "/status");
+                c.subscribe(base() + "/action/run", base() + "/routine/run", base() + "/goto/set", base() + "/switch/+/set", base() + "/volume/set",
+                        base() + "/liveliness/set", watchTopic(), s.prefix + "/status");
                 client = c;
                 setStatus("connected to " + addr.getHostAddress() + ":" + s.port);
                 stateChanged(); // publish discovery and state now
@@ -343,11 +357,34 @@ final class HomeAssistant {
             }
             return;
         }
+        if (topic.equals(b + "/goto/set")) {
+            if ("home".equals(payload) || host.placeNames().contains(payload)) {
+                host.log("home assistant: go to " + payload);
+                host.goTo(payload);
+            } else {
+                host.log("home assistant: ignored unknown place " + clip(payload));
+            }
+            stateChanged(); // the select shows where R2 is, not what was picked
+            return;
+        }
         if (topic.equals(b + "/volume/set")) {
             try {
                 int v = (int) Math.round(Double.parseDouble(payload));
                 if (v >= 0 && v <= 100) host.setVolume(v);
             } catch (NumberFormatException ignored) {
+            }
+            stateChanged();
+            return;
+        }
+        if (topic.equals(b + "/liveliness/set")) {
+            String level = payload.toLowerCase(java.util.Locale.US);
+            if (java.util.Arrays.asList(LIVELINESS).contains(level)) {
+                if (!level.equals(host.haState().optString("liveliness"))) {
+                    host.log("home assistant: activity " + level);
+                    host.action("liveliness-" + level);
+                }
+            } else {
+                host.log("home assistant: ignored unknown activity " + clip(payload));
             }
             stateChanged();
             return;
@@ -464,11 +501,13 @@ final class HomeAssistant {
         republish = false;
         List<String> routineList = new ArrayList<>(host.routineNames());
         Collections.sort(routineList);
-        String discoveryKey = st.optString("name") + "|" + st.optString("version") + "|" + settings.prefix + "|" + routineList;
+        List<String> placeList = new ArrayList<>(host.placeNames());
+        String discoveryKey = st.optString("name") + "|" + st.optString("version") + "|" + settings.prefix + "|" + routineList
+                + "|" + placeList;
         synchronized (published) {
             if (again) published.clear();
             if (again || !discoveryKey.equals(discoveredFor)) {
-                Map<String, JSONObject> d = discovery(st, routineList);
+                Map<String, JSONObject> d = discovery(st, routineList, placeList);
                 for (Map.Entry<String, JSONObject> e : d.entrySet()) {
                     c.publish(e.getKey(), e.getValue().toString(), true);
                 }
@@ -499,6 +538,9 @@ final class HomeAssistant {
         String err = st.optString("error", "");
         m.put(b + "/error", err.isEmpty() ? "none" : err);
         m.put(b + "/volume", String.valueOf(st.optInt("volume")));
+        m.put(b + "/location", st.optString("location", "unknown"));
+        String live = st.optString("liveliness", "");
+        if (!live.isEmpty()) m.put(b + "/liveliness", live); // left out until R2 Main reports it
         for (String[] sw : SWITCHES) m.put(b + "/switch/" + sw[0], switchState(sw[0], st) ? "ON" : "OFF");
         JSONObject w = st.optJSONObject("watch");
         if (w != null) {
@@ -518,7 +560,7 @@ final class HomeAssistant {
     }
 
     /** Discovery topic -> config, one per entity (Home Assistant's per-component discovery). */
-    Map<String, JSONObject> discovery(JSONObject st, List<String> routineList) throws Exception {
+    Map<String, JSONObject> discovery(JSONObject st, List<String> routineList, List<String> placeList) throws Exception {
         String b = base(), node = nodeId(), p = settings.prefix;
         JSONObject device = new JSONObject()
                 .put("identifiers", new JSONArray().put("r2d2_" + node))
@@ -549,6 +591,11 @@ final class HomeAssistant {
                 .put("state_topic", b + "/volume").put("command_topic", b + "/volume/set")
                 .put("min", 0).put("max", 100).put("step", 5).put("unit_of_measurement", "%")
                 .put("icon", "mdi:volume-high"));
+        JSONArray levels = new JSONArray();
+        for (String l : LIVELINESS) levels.put(l);
+        m.put(p + "/select/" + node + "/liveliness/config", entity("Activity", node, "liveliness", device, origin)
+                .put("state_topic", b + "/liveliness").put("command_topic", b + "/liveliness/set")
+                .put("options", levels).put("icon", "mdi:emoticon-happy-outline"));
         m.put(p + "/sensor/" + node + "/watch_state/config", entity("Watch-with-me state", node, "watch_state", device, origin)
                 .put("state_topic", b + "/watch/state").put("json_attributes_topic", b + "/watch/attributes")
                 .put("icon", "mdi:movie-open-play"));
@@ -564,6 +611,16 @@ final class HomeAssistant {
             m.put(p + "/button/" + node + "/" + obj + "/config", entity("Routine " + r.replace('-', ' '), node, obj, device, origin)
                     .put("command_topic", b + "/routine/run").put("payload_press", r).put("icon", "mdi:script-text-play"));
         }
+        // Where R2 is, and a select that sends him somewhere (its state is where he is; "unknown" can't be picked).
+        JSONArray where = new JSONArray().put("home");
+        for (String pl : placeList) where.put(pl);
+        JSONArray sensorOptions = new JSONArray(where.toString()).put("unknown");
+        m.put(p + "/sensor/" + node + "/location/config", entity("Location", node, "location", device, origin)
+                .put("state_topic", b + "/location").put("device_class", "enum").put("options", sensorOptions)
+                .put("icon", "mdi:map-marker"));
+        m.put(p + "/select/" + node + "/goto/config", entity("Go to", node, "goto", device, origin)
+                .put("state_topic", b + "/location").put("command_topic", b + "/goto/set").put("options", sensorOptions)
+                .put("icon", "mdi:map-marker-path"));
         for (String[] sw : SWITCHES) {
             String obj = sw[0].replace('-', '_');
             m.put(p + "/switch/" + node + "/" + obj + "/config", entity(sw[1], node, obj, device, origin)

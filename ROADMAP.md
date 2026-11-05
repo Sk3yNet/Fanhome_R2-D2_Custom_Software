@@ -56,6 +56,8 @@ routine engine in section 6.
 - [ ] **LED patterns:** ready, charging, charged, low battery (below 20%), patrol, sleep, pairing,
       pairing failed, connecting to Wi-Fi, face detected, power off. *Built, not yet tested on the robot.* Face detected waits for face detection.
 - [ ] **Sleep after 3 minutes idle** (sleep lights, voice and camera paused); any action wakes the robot. *Built, not yet tested on the robot.*
+- [ ] **Idle personality:** while awake and idle, random sounds from mood banks and an occasional look around, set by
+      one liveliness switch (off, quiet, chatty, full) that other features share ([liveliness.md](docs/liveliness.md)). *Built, not yet tested on the robot.*
 
 ### Voice commands
 - [x] Offline voice commands for the actions and toggles above, including "Princess Leia" and
@@ -177,14 +179,28 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
 - [ ] Upload, list, run and stop routines through the agent API and the PC tool. *Built, not yet tested on the robot.*
       `GET /routines`, `POST /routine`, `POST /routine/run`, `tools\r2.ps1 routines`, and buttons on the web page.
 - [ ] Triggers: robot buttons, voice commands, a schedule, or external events (see section 9).
+- [ ] **Rooms: "go to the kitchen".** Routes taught by driving R2 from a home spot with the joystick, replayed
+      as routines (the way back taught too, or mirrored after a taught turn-around), with R2 tracking where he
+      is. Voice ("go to the kitchen", "go home"), Home Assistant (Go to select, Location sensor), API
+      (`POST /goto`) and the web page. *Built, not yet tested on the robot.* See [docs/places.md](docs/places.md).
+- [ ] **Smarter patrol:** a tour of the taught rooms instead of the factory's wander (`tour`, or the patrol
+      button with `patrol_tour` on). *Built, not yet tested on the robot.* Obstacle avoidance depends on the
+      sensor test: the robot has IR, ultrasonic and foot-drop sensors, and the agent now logs unknown `gin`
+      fields to find out whether the main board can see them.
+- [ ] Later: printed markers (AprilTags) in each room, found by a container on the camera stream, to correct
+      the drift of replayed routes.
 - [ ] Test routines against the controller simulator (section 1).
-- [ ] Later: record a routine by driving the robot, then play it back.
+- [ ] Later: record a routine by driving the robot, then play it back. (Rooms record routes this way already.)
 
 ## 7. Web control page
 - [ ] A phone-friendly page served by the robot: live status (battery, charging, arm/head/lightsaber),
       a joystick for driving and head, action buttons, routine triggers, an emergency stop, and the
       camera view. *Built, not yet tested on the robot.* Served at `http://<robot>:7700/`: status, joystick, head slider, action buttons and a stop button. The camera view is built too (shown only while open).
 - [ ] Uses the same authentication as the API (section 3).
+- [ ] **Activity presets:** one choice of Off, Quiet, Chatty or Full show for how lively R2 is on his own
+      (idle chatter and head turns, reactions to loud sounds, drive sounds, how long he stays awake), on the
+      web page and as a select in Home Assistant. *Built, not yet tested on the robot.* It is the
+      `liveliness` setting; see [docs/liveliness.md](docs/liveliness.md).
 - [ ] Later: gamepad support.
 
 ## 8. SD card installation (soft-mod)
@@ -213,7 +229,7 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       routines; switches for lightsaber, arm and projector; robot availability. *Built, not yet tested on the robot.*
       Also mode, current action and error sensors, display, mute, voice and face switches, and volume.
       Set the broker with `tools\r2.ps1 mqtt`; it must be on the robot's subnet or an allowed one.
-      Each stored routine gets a button too.
+      Each stored routine gets a button too, and the activity presets are a select.
 - [ ] **Watch with me:** R2 reacts during a film (sounds, head turns, lights) from a cue file of times,
       following a Home Assistant media player's position over MQTT, or started by hand
       (`tools\r2.ps1 watch-start`). Reactions never drive. See [docs/watch-with-me.md](docs/watch-with-me.md).
