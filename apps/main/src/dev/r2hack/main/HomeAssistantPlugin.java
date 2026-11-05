@@ -211,6 +211,34 @@ final class HomeAssistantPlugin implements Plugin {
         }
 
         @Override
+        public void event(String name) {
+            PluginContext c = ctx;
+            if (c == null) return;
+            try {
+                c.routineEvent(name);
+            } catch (PluginContext.Denied d) {
+                c.log(d.getMessage());
+            }
+        }
+
+        @Override
+        public Set<String> triggerTopics() {
+            PluginContext c = ctx;
+            return c == null ? Collections.<String>emptySet() : c.triggerTopics();
+        }
+
+        @Override
+        public void triggerMessage(String topic, String payload, boolean retained) {
+            PluginContext c = ctx;
+            if (c == null) return;
+            try {
+                c.triggerMessage(topic, payload, retained);
+            } catch (PluginContext.Denied d) {
+                c.log(d.getMessage());
+            }
+        }
+
+        @Override
         public void log(String msg) {
             PluginContext c = ctx;
             if (c != null) c.log(msg);

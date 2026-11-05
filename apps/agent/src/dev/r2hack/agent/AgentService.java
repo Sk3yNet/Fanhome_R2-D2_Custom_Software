@@ -423,6 +423,16 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 return toMain(new JSONObject().put("agent", "action").put("name", name))
                         ? result("sent " + name + " to the main app") : bad("main app not connected");
             }
+            case "POST /event": { // a named event for routines' "event" triggers (docs/routines.md)
+                if (passive) return passiveError();
+                String name = req.query.get("name");
+                if (name == null || !name.matches("[a-z0-9][a-z0-9-]{0,31}")) {
+                    return bad("name= is required: 1-32 characters, a-z, 0-9 and -, e.g. /event?name=doorbell");
+                }
+                return toMain(new JSONObject().put("agent", "event").put("name", name))
+                        ? result("sent event " + name + " to the main app; see last_trigger in GET /routines")
+                        : bad("main app not connected");
+            }
             case "POST /chirp": { // a new droid chirp: ?mood=happy, and/or text (?text= or the body) for the beeps-only reply
                 if (passive) return passiveError();
                 String mood = req.query.containsKey("mood") ? req.query.get("mood").trim() : "";

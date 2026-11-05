@@ -1,0 +1,22 @@
+{
+  "name": "good-morning",
+  "description": "Weekday wake-up: sound, look around, flash the front light. Also on \"hey R2-D2, good morning\" and the arm button",
+  "timeout": 30,
+  "while_charging": true,
+  "triggers": [
+    {"schedule": {"at": "07:30", "days": ["mon", "tue", "wed", "thu", "fri"]}},
+    {"voice": "good morning"},
+    {"button": 5}
+  ],
+  "steps": [
+    {"sound": 8},
+    {"wait": 0.6}, {"head": -40},
+    {"wait": 0.6}, {"head": 40},
+    {"wait": 0.6}, {"head": 0},
+    {"repeat": 3, "steps": [
+      {"led": {"r": 2, "b": 2}}, {"wait": 0.4},
+      {"led": {"r": 1, "b": 1}}, {"wait": 0.4}
+    ]},
+    {"sound": 7, "until_done": true}
+  ]
+}
