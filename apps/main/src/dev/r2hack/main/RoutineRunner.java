@@ -18,6 +18,9 @@ final class RoutineRunner {
 
         void playSound(int number);
 
+        /** Plays a newly generated chirp in this mood (Chirp.MOODS or "random"). */
+        void playChirp(String mood);
+
         boolean soundPlaying();
 
         void stopSound();
@@ -142,7 +145,9 @@ final class RoutineRunner {
                 pause(s.ms);
                 break;
             case SOUND:
-                host.playSound(s.number);
+            case CHIRP:
+                if (s.kind == Routine.Kind.SOUND) host.playSound(s.number);
+                else host.playChirp(s.name);
                 if (s.flag) {
                     long end = clock.now() + SOUND_WAIT_MAX_MS;
                     try {

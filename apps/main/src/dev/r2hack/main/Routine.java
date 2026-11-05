@@ -39,16 +39,16 @@ final class Routine {
             "who-are-you", "noise", "not-recognized", "lightsaber", "arm", "short-lcd", "long-lcd",
             "flash-front", "flash-back", "leia", "luke", "react-clap", "react-double-clap", "react-loud")));
 
-    enum Kind { WAIT, SOUND, HEAD, MODE, DRIVE, LED, CMD, ACTION, WAIT_UNTIL, REPEAT, ROUTINE }
+    enum Kind { WAIT, SOUND, CHIRP, HEAD, MODE, DRIVE, LED, CMD, ACTION, WAIT_UNTIL, REPEAT, ROUTINE }
 
     static final class Step {
         Kind kind;
         long ms;                 // WAIT, DRIVE, WAIT_UNTIL (timeout)
         int number;              // SOUND id, HEAD angle, MODE, REPEAT count
-        boolean flag;            // SOUND: wait for it to end; WAIT_UNTIL: carry on after a timeout
+        boolean flag;            // SOUND, CHIRP: wait for it to end; WAIT_UNTIL: carry on after a timeout
         int power, angle;        // DRIVE
         JSONObject json;         // LED values, CMD command
-        String name;             // ACTION, ROUTINE, WAIT_UNTIL field
+        String name;             // ACTION, ROUTINE, WAIT_UNTIL field, CHIRP mood
         String op;               // WAIT_UNTIL
         int value;               // WAIT_UNTIL
         List<Step> steps;        // REPEAT
@@ -143,6 +143,14 @@ final class Routine {
             case SOUND:
                 allowOnly(o, at, "sound", "until_done");
                 s.number = integer(o, "sound", 0, 255, at + ".sound");
+                s.flag = o.optBoolean("until_done", false);
+                break;
+            case CHIRP:
+                allowOnly(o, at, "chirp", "until_done");
+                s.name = o.optString("chirp", "");
+                if (!Chirp.knownMood(s.name)) {
+                    throw new Invalid(at + ".chirp: one of random, " + join(Chirp.MOODS));
+                }
                 s.flag = o.optBoolean("until_done", false);
                 break;
             case HEAD:

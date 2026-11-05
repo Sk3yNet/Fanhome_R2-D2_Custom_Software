@@ -44,6 +44,8 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         }
     });
     private static final long ROUTINE_REPLY_MS = 5_000;
+    /** Chirp.MOODS in the main app, plus "random". */
+    private static final String[] CHIRP_MOODS = {"random", "ack", "happy", "excited", "question", "sad", "worried", "chatter"};
 
     @Override
     public void onCreate() {
@@ -405,6 +407,24 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 if (name == null || name.isEmpty()) return bad("name= is required, e.g. /action?name=dance");
                 return toMain(new JSONObject().put("agent", "action").put("name", name))
                         ? result("sent " + name + " to the main app") : bad("main app not connected");
+            }
+            case "POST /chirp": { // a new droid chirp: ?mood=happy, and/or text (?text= or the body) for the beeps-only reply
+                if (passive) return passiveError();
+                String mood = req.query.containsKey("mood") ? req.query.get("mood").trim() : "";
+                String text = req.query.containsKey("text") ? req.query.get("text") : req.bodyText == null ? "" : req.bodyText;
+                if (!mood.isEmpty() && !java.util.Arrays.asList(CHIRP_MOODS).contains(mood)) {
+                    return bad("mood must be one of " + java.util.Arrays.toString(CHIRP_MOODS));
+                }
+                if (text.length() > 2000) return bad("text is limited to 2000 characters");
+                JSONObject m = new JSONObject().put("agent", "chirp").put("mood", mood).put("text", text);
+                if (req.query.containsKey("seed")) {
+                    try {
+                        m.put("seed", Long.parseLong(req.query.get("seed").trim()));
+                    } catch (NumberFormatException e) {
+                        return bad("seed must be a whole number");
+                    }
+                }
+                return toMain(m) ? result("chirping" + (mood.isEmpty() ? "" : " (" + mood + ")")) : bad("main app not connected");
             }
             case "POST /assist": { // Home Assistant voice: mode=off|robot|ha and/or host=<Home Assistant's IP, or empty>
                 String mode = req.query.get("mode");
@@ -827,6 +847,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             s.put("voice", set.optBoolean("voice"));
             s.put("face_tracking", set.optBoolean("face"));
             s.put("sound_reactions", set.optBoolean("reactions"));
+            if (set.has("chirps")) s.put("chirps", set.optBoolean("chirps"));
             s.put("assist", set.optString("assist"));
             s.put("liveliness", set.optString("liveliness", "quiet"));
         }

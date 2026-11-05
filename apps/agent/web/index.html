@@ -59,6 +59,9 @@
   .presets button { padding:10px 4px; }
   .presets button[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:#fff; }
   .presets button:disabled { opacity:.5; }
+  .pads { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:13px; margin:8px 0 0; }
+  .pads dt { color:var(--dim); } .pads dd { margin:0; }
+  #gpState.on { color:var(--ok); }
 </style>
 </head>
 <body>
@@ -96,6 +99,24 @@
   </section>
 
   <section>
+    <h2>Gamepad</h2>
+    <div class="hint" id="gpState">No gamepad. Plug one in (or pair it with this device) and press any button.</div>
+    <details>
+      <summary>Buttons</summary>
+      <dl class="pads">
+        <dt>Left stick</dt><dd>drive (up to Max power)</dd>
+        <dt>Right trigger</dt><dd>hold for more power, up to 100</dd>
+        <dt>Right stick</dt><dd>turn the head; click it to center the head</dd>
+        <dt>START</dt><dd>enable driving, when the drive lock is on</dd>
+        <dt>B (Circle) or Back</dt><dd>STOP, which also locks driving again (let go of the stick to drive again)</dd>
+        <dt>A / X / Y</dt><dd>make some noise / shake head / dance</dd>
+        <dt>D-pad</dt><dd>up wake, down who are you, left and right flash front and back lights</dd>
+      </dl>
+      <div class="hint">Driving stops when the gamepad disconnects, or when this page is hidden or loses focus.</div>
+    </details>
+  </section>
+
+  <section>
     <h2>Settings</h2>
     <div class="row"><label for="vol">Volume</label><input id="vol" type="range" min="0" max="100" value="30"><output id="volOut">–</output></div>
     <div class="row"><label>Activity</label><span class="hint" id="liveHint">–</span></div>
@@ -110,6 +131,7 @@
       <label class="sw"><input type="checkbox" id="swVoice" data-on="voice-on" data-off="voice-off"><span></span>Voice commands</label>
       <label class="sw"><input type="checkbox" id="swFace" data-on="face-on" data-off="face-off"><span></span>Face tracking</label>
       <label class="sw"><input type="checkbox" id="swReact" data-on="reactions-on" data-off="reactions-off"><span></span>Sound reactions</label>
+      <label class="sw"><input type="checkbox" id="swChirps" data-on="chirps-on" data-off="chirps-off"><span></span>New beeps each time</label>
     </div>
   </section>
 
@@ -160,7 +182,7 @@
   </section>
 </main>
 <script>
-const ACTIONS = ["wake","dance","shake-head","who-are-you","noise","turn-left","turn-right","turn-around","forward","circle","patrol","lightsaber","arm","short-lcd","long-lcd","flash-front","flash-back","leia","luke"];
+const ACTIONS = ["wake","dance","shake-head","who-are-you","noise","chirp","turn-left","turn-right","turn-around","forward","circle","patrol","lightsaber","arm","short-lcd","long-lcd","flash-front","flash-back","leia","luke"];
 const $ = id => document.getElementById(id);
 let token = "";
 try { token = localStorage.getItem("r2token") || ""; } catch (e) {}
@@ -183,7 +205,7 @@ $("save").onclick = () => {
   try { localStorage.setItem("r2token", token); } catch (e) {}
   $("setup").open = false; refresh(); loadRoutines();
 };
-$("stop").onclick = () => { driving = false; api("POST", "/stop").then(() => say("stopped"), e => say("stop failed: " + e.message)); };
+$("stop").onclick = () => { driving = false; padDriving = false; padLatched = true; api("POST", "/stop").then(() => say("stopped"), e => say("stop failed: " + e.message)); };
 
 for (const a of ACTIONS) {
   const b = document.createElement("button");
@@ -193,7 +215,7 @@ for (const a of ACTIONS) {
 }
 
 let volTouched = 0; // the controls follow /status, except right after you change them
-const SWITCHES = { swSound: s => s.muted == null ? null : !s.muted, swVoice: s => s.voice, swFace: s => s.face_tracking, swReact: s => s.sound_reactions };
+const SWITCHES = { swSound: s => s.muted == null ? null : !s.muted, swVoice: s => s.voice, swFace: s => s.face_tracking, swChirps: s => s.chirps, swReact: s => s.sound_reactions };
 for (const id in SWITCHES) {
   $(id).disabled = true; // until R2 reports the setting
   $(id).onchange = e => {
@@ -312,7 +334,7 @@ loadPlaces(); setInterval(loadPlaces, 5000);
 // Joystick: angle 0 = forward, 90 = spin right, -90 = spin left, 180 = back (the controller's `move`).
 // While held, the command is repeated so the agent's motion watchdog (3 s) keeps it alive.
 const pad = $("pad"), knob = $("knob");
-let driving = false, want = { power: 0, angle: 0 }, loopOn = false;
+let driving = false, padDriving = false, padLatched = true, want = { power: 0, angle: 0 }, loopOn = false;
 $("power").oninput = e => $("powerOut").textContent = e.target.value;
 
 function setFromPointer(ev) {
@@ -328,18 +350,32 @@ function setFromPointer(ev) {
 }
 async function driveLoop() {
   if (loopOn) return; loopOn = true;
-  while (driving) {
+  while (driving || padDriving) {
     const t = Date.now();
-    try { await send({ cmd: "move", power: want.power, angle: want.angle }); } catch (e) { say("drive: " + e.message); }
+    try { await send({ cmd: "move", power: want.power, angle: want.angle }); } catch (e) {
+      say("drive: " + e.message);
+      // Refused (drive lock or low battery): don't keep trying; the gamepad needs START and a centered stick.
+      if (e.message.startsWith("refused")) { if (driving) release(); if (padDriving) { padDriving = false; padLatched = true; } break; }
+    }
     await new Promise(r => setTimeout(r, Math.max(0, 250 - (Date.now() - t))));
+    if (document.hidden) { driving = false; padDriving = false; } // a hidden tab can't see the stick being let go
   }
   loopOn = false;
   send({ cmd: "move", power: 0, angle: 0 }).catch(() => {});
 }
-pad.addEventListener("pointerdown", e => { pad.setPointerCapture(e.pointerId); driving = true; setFromPointer(e); driveLoop(); });
+pad.addEventListener("pointerdown", e => { pad.setPointerCapture(e.pointerId); padDriving = false; padLatched = true; driving = true; setFromPointer(e); driveLoop(); });
 pad.addEventListener("pointermove", e => { if (driving) setFromPointer(e); });
 const release = () => { driving = false; knob.style.left = "50%"; knob.style.top = "50%"; };
 pad.addEventListener("pointerup", release); pad.addEventListener("pointercancel", release);
+// Switching tabs or apps mid-drive never delivers the pointerup, so stop instead of waiting for the watchdog.
+function stopAllDriving() {
+  if (driving) release();
+  if (padDriving) { padDriving = false; padLatched = true; }
+  if (headHeld) headRelease();
+  if (gpHead) { gpHead = 0; send({ cmd: "head-dir", dir: 0 }).catch(() => {}); }
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden) stopAllDriving(); });
+window.addEventListener("blur", stopAllDriving);
 
 // The camera only runs while this view is open; closing it drops the stream and R2 turns the camera off.
 let camOn = false;
@@ -454,6 +490,81 @@ headPad.addEventListener("pointermove", e => { if (headHeld) headAt(e); });
 headPad.addEventListener("pointerup", headRelease);
 headPad.addEventListener("pointercancel", headRelease);
 $("headCenter").onclick = () => send({ cmd: "head-angle", angle: 0 }).catch(err => say(err.message));
+
+// Gamepad (browser Gamepad API, "standard" button layout: Xbox, PlayStation and most USB/Bluetooth pads).
+// It feeds the same drive loop as the on-screen joystick, so the agent's motion watchdog and any check the
+// agent makes before driving (low battery, and arming) apply to it the same way. Safety on this side:
+//  - a stick must be back in the center before it can drive: after connecting, after STOP, after the
+//    page was hidden, and after the touch joystick was used, so a drifting or bumped stick can't start R2;
+//  - driving stops when the gamepad disconnects, the page is hidden or the window loses focus.
+const GP = { DEAD: 0.2, HEAD_DEAD: 0.5, A: 0, B: 1, X: 2, Y: 3, RT: 7, BACK: 8, START: 9, R3: 11, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
+const GP_ACTIONS = { [GP.A]: "noise", [GP.X]: "shake-head", [GP.Y]: "dance", [GP.UP]: "wake", [GP.DOWN]: "who-are-you",
+                     [GP.LEFT]: "flash-front", [GP.RIGHT]: "flash-back" };
+let gpIndex = null, gpPrev = [], gpHead = 0, gpHeadSent = 0, gpTimer = null;
+
+// Stick position to the controller's move: angle 0 forward, 90 spin right, 180 back; power 0..max.
+function stickToMove(x, y, maxPower, boost) {
+  const mag = Math.min(1, Math.hypot(x, y));
+  if (mag < GP.DEAD) return { power: 0, angle: 0 };
+  const scaled = (mag - GP.DEAD) / (1 - GP.DEAD);
+  const cap = maxPower + (100 - maxPower) * Math.max(0, Math.min(1, boost || 0));
+  return { power: Math.max(1, Math.round(scaled * cap)), angle: Math.round(Math.atan2(x, -y) * 180 / Math.PI) };
+}
+
+const pressed = b => b && (typeof b === "object" ? b.pressed : b === 1);
+function padState(text, on) { $("gpState").textContent = text; $("gpState").className = "hint" + (on ? " on" : ""); }
+
+function pollGamepad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  const gp = gpIndex != null ? pads[gpIndex] : null;
+  if (!gp || !gp.connected) return;
+  const btn = gp.buttons.map(pressed), prev = gpPrev, down = i => btn[i] && !prev[i];
+  gpPrev = btn;
+
+  if (down(GP.B) || down(GP.BACK)) { $("stop").onclick(); return; }
+  for (const i in GP_ACTIONS) if (down(+i)) api("POST", "/action?name=" + GP_ACTIONS[i]).then(d => say(d.result), e => say(e.message));
+  // START enables driving when the drive lock is on (docs/drive-lock.md); a robot without the lock answers 404.
+  if (down(GP.START)) api("POST", "/drive?enable=1").then(d => say(d.result || "driving enabled"),
+    e => say(/404|not found/i.test(e.message) ? "START: this R2 has no drive lock, driving is always allowed" : "START: " + e.message));
+  if (down(GP.R3)) send({ cmd: "head-angle", angle: 0 }).catch(err => say(err.message));
+
+  // Drive with the left stick, unless the on-screen joystick is being held.
+  const m = stickToMove(gp.axes[0] || 0, gp.axes[1] || 0, +$("power").value, gp.buttons[GP.RT] ? gp.buttons[GP.RT].value : 0);
+  if (m.power === 0) padLatched = false;
+  if (!driving && !padLatched) {
+    if (m.power > 0) { want = m; if (!padDriving) { padDriving = true; driveLoop(); } }
+    else if (padDriving) { want = m; padDriving = false; } // the drive loop sends the stop
+  }
+  padState(gp.id.replace(/\s*\(.*$/, "") + (padLatched && m.power > 0 ? ": let go of the stick to drive" : padDriving ? ": driving" : ": ready"), true);
+
+  // Head with the right stick's left/right: repeated every 400 ms while held, for the head watchdog.
+  const hx = gp.axes[2] || 0, hd = hx > GP.HEAD_DEAD ? 1 : hx < -GP.HEAD_DEAD ? -1 : 0;
+  if (!headHeld && (hd !== gpHead || (hd && Date.now() - gpHeadSent > 400))) {
+    gpHead = hd; gpHeadSent = Date.now();
+    send({ cmd: "head-dir", dir: hd }).catch(err => say(err.message));
+  }
+}
+
+if (!navigator.getGamepads) {
+  padState(window.isSecureContext ? "This browser has no gamepad support."
+    : "This browser only allows gamepads on https or localhost pages. Chrome and Edge work on R2's page.", false);
+} else {
+  window.addEventListener("gamepadconnected", e => {
+    if (gpIndex != null) return; // the first pad drives; others are ignored
+    gpIndex = e.gamepad.index; gpPrev = []; padLatched = true;
+    clearInterval(gpTimer); gpTimer = setInterval(pollGamepad, 50);
+    say("gamepad connected: " + e.gamepad.id);
+  });
+  window.addEventListener("gamepaddisconnected", e => {
+    if (e.gamepad.index !== gpIndex) return;
+    clearInterval(gpTimer); gpTimer = null; gpIndex = null;
+    const next = [...navigator.getGamepads()].find(p => p && p.connected && p.index !== e.gamepad.index);
+    if (next) { gpIndex = next.index; gpPrev = []; padLatched = true; gpTimer = setInterval(pollGamepad, 50); }
+    if (padDriving) { padDriving = false; want = { power: 0, angle: 0 }; }
+    if (gpHead) { gpHead = 0; send({ cmd: "head-dir", dir: 0 }).catch(() => {}); }
+    padState("Gamepad disconnected.", false); say("gamepad disconnected: stopped");
+  });
+}
 </script>
 </body>
 </html>
