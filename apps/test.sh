@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore) and the agent's
-# hotspot password helpers (Hotspot).
+# Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore), its plugin
+# interface (PluginManager, PluginContext, the built-in plugins), and the agent's hotspot password
+# helpers (Hotspot).
 # Usage: apps/test.sh
 # Needs a JDK and Android's real org.json, taken from Robolectric's android-all jar for Android 4.4
 # (the SDK's android.jar only has stubs). The jar is downloaded once to tools/test-libs/, or set
@@ -35,3 +36,10 @@ javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$J
     "$AGENT_SRC/Hotspot.java" "$AGENT_SRC/EventLog.java" \
     "$APPS_DIR/agent/test/dev/r2hack/agent/HotspotTest.java"
 java -cp "$OUT:$JAR" dev.r2hack.agent.HotspotTest
+
+javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR:$OUT" -d "$OUT" \
+    "$SRC/Plugin.java" "$SRC/PluginPermissions.java" "$SRC/PluginContext.java" "$SRC/PluginManager.java" \
+    "$SRC/BatteryAlertPlugin.java" "$SRC/HomeAssistantPlugin.java" "$SRC/HomeAssistant.java" \
+    "$SRC/MqttClient.java" "$SRC/LocalNet.java" \
+    "$APPS_DIR/main/test/dev/r2hack/main/PluginTest.java"
+java -cp "$OUT:$JAR" dev.r2hack.main.PluginTest

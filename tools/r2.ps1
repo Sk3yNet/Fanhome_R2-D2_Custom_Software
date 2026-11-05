@@ -12,6 +12,13 @@
 #   routine-stop             end the running routine or action
 #   routine-delete <name>    delete a routine (a replaced built-in action comes back)
 #   volume <0-100>           droid sounds and music volume (kept across reboots)
+#   plugins                  list the plugins (docs/plugins.md): state, what each asks for and is granted
+#   plugin-on | plugin-off <name>
+#                            enable / disable a plugin, e.g. plugin-off home-assistant
+#   plugin-grant <name>=<permissions>
+#                            what a plugin may do, e.g. plugin-grant battery-alert=status (empty: nothing)
+#   plugin-config <name>=<file.json>
+#                            merge the JSON object in the file into a plugin's config
 #   logcat [text] [-Lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
 #   dmesg [text] [-Lines N]  kernel log
 #   adb [minutes]            switch on adb over Wi-Fi for a while (default 30 min) and connect
@@ -131,6 +138,25 @@ switch ($Command) {
     'routine-run'  { if (-not $Arg) { throw 'usage: r2.ps1 routine-run <name>' }; Call POST "/routine/run?name=$([uri]::EscapeDataString($Arg))" }
     'routine-stop' { Call POST /routine/stop }
     'routine-delete' { if (-not $Arg) { throw 'usage: r2.ps1 routine-delete <name>' }; Call POST "/routine/delete?name=$([uri]::EscapeDataString($Arg))" }
+    'plugins'      {
+        $d = Call GET /plugins
+        $d.plugins | Format-Table name, enabled, state, @{ n = 'granted'; e = { $_.granted -join ',' } }, @{ n = 'asks_for'; e = { $_.asks_for -join ',' } } -AutoSize -Wrap
+        'permissions:'; $d.permissions.PSObject.Properties | ForEach-Object { "  $($_.Name): $($_.Value)" }
+    }
+    { $_ -in 'plugin-on', 'plugin-off' } {
+        if (-not $Arg) { throw "usage: r2.ps1 $Command <name>  (see: r2.ps1 plugins)" }
+        $on = if ($Command -eq 'plugin-on') { 1 } else { 0 }
+        Call POST "/plugin?name=$([uri]::EscapeDataString($Arg))&enabled=$on"
+    }
+    'plugin-grant' {
+        if ($Arg -notmatch '^([^=]+)=(.*)$') { throw 'usage: r2.ps1 plugin-grant <name>=<permissions>, e.g. battery-alert=status,sound' }
+        Call POST "/plugin?name=$([uri]::EscapeDataString($Matches[1]))&grant=$([uri]::EscapeDataString($Matches[2]))"
+    }
+    'plugin-config' {
+        if ($Arg -notmatch '^([^=]+)=(.+)$' -or -not (Test-Path $Matches[2])) { throw 'usage: r2.ps1 plugin-config <name>=<file.json>' }
+        $name = $Matches[1]
+        Call POST "/plugin/config?name=$([uri]::EscapeDataString($name))" (Get-Content $Matches[2] -Raw -Encoding UTF8)
+    }
     'volume'       { if ($Arg -notmatch '^\d+$') { throw 'usage: r2.ps1 volume <0-100>' }; Call POST "/volume?percent=$Arg" }
     { $_ -in 'logcat', 'dmesg' } {
         $q = "?lines=$Lines"; if ($Arg) { $q += '&grep=' + [uri]::EscapeDataString($Arg) }

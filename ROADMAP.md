@@ -206,7 +206,9 @@ or run it straight from the card as a soft-mod that disappears when the card is 
 ## 9. Plugins and integrations (Home Assistant first)
 - [ ] Plugin interface in R2 Main: plugins subscribe to controller events and robot state, can send
       commands and run routines, and have their own config and lifecycle. Pick a loading model:
-      built into R2 Main, or separate APKs found by an intent filter.
+      built into R2 Main, or separate APKs found by an intent filter. *Built, not yet tested on the robot.* Built into R2 Main
+      (separate APKs need IPC and signed updates first); Home Assistant is the first plugin, plus a small
+      battery-alert example. See [docs/plugins.md](docs/plugins.md).
 - [ ] **Home Assistant via MQTT discovery:** battery and charging sensors; buttons for actions and
       routines; switches for lightsaber, arm and projector; robot availability. *Built, not yet tested on the robot.*
       Also mode, current action and error sensors, display, mute, voice and face switches, and volume.
@@ -249,7 +251,10 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       (the microphone has no direction), and follow-up questions without the wake word.
 - [ ] **Vision containers:** face recognition (CompreFace / Double Take) and person detection (Frigate) on R2's
       camera stream, so R2 can greet people it knows. As a Home Assistant add-on or plain Docker.
-- [ ] Plugin permissions, so an integration can't install software or reboot unless allowed.
+- [ ] Plugin permissions, so an integration can't install software or reboot unless allowed. *Built, not yet tested on the robot.*
+      Eight permissions (status, actions, drive, routines.run, routines.edit, sound, lights, settings), granted
+      per plugin with `tools\r2.ps1 plugin-grant`. No permission can give a plugin installs, reboots, adb,
+      Wi-Fi, pairing or tokens.
 
 ## 10. Hardware mods: holoprojector
 The holoprojector is a small transmissive LCD with a white LED behind it, run by its own microcontroller.
