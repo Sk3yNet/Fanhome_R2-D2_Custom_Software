@@ -5,8 +5,9 @@
 # the plugin interface (PluginManager,
 # PluginContext, the built-in plugins), the agent's hotspot password helpers (Hotspot) and its boot
 # hardening rules (HardeningRules; the firewall scripts also run against a real iptables in a throwaway
-# network namespace when this machine allows one). Example chirps are written to apps/out/chirps/*.wav
-# for listening.
+# network namespace when this machine allows one) and security (signed requests, clients and permissions,
+# the APK signature check, and the web page's signing code). Example chirps are written to
+# apps/out/chirps/*.wav for listening.
 # Usage: apps/test.sh
 # Needs a JDK and Android's real org.json, taken from Robolectric's android-all jar for Android 4.4
 # (the SDK's android.jar only has stubs). The jar is downloaded once to tools/test-libs/, or set
@@ -106,3 +107,33 @@ javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$J
     -sourcepath "$APPS_DIR/main/src" "$APPS_DIR/main/test/android/util/Log.java" "$SRC/Assist.java" "$SRC/Beeps.java" \
     "$APPS_DIR/main/test/dev/r2hack/main/AssistTest.java"
 java -cp "$ASSIST_OUT:$JAR" dev.r2hack.main.AssistTest
+
+# Agent security. Test "APKs" are JARs signed with a throwaway key: the check reads the same JAR signature.
+SEC_SRC=$APPS_DIR/agent/src/dev/r2hack/agent
+javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \
+    "$SEC_SRC/RequestAuth.java" "$SEC_SRC/Clients.java" "$SEC_SRC/Permissions.java" "$SEC_SRC/ApkTrust.java" \
+    "$APPS_DIR/agent/test/dev/r2hack/agent/SecurityTest.java"
+APK=$OUT/apk
+mkdir -p "$APK/files"
+echo "classes" > "$APK/files/classes.dex"
+echo "manifest" > "$APK/files/AndroidManifest.xml"
+(cd "$APK/files" && jar cf "$APK/unsigned.apk" classes.dex AndroidManifest.xml)
+keytool -genkeypair -keystore "$APK/test.keystore" -storepass test-pass -keypass test-pass -alias t \
+    -keyalg RSA -keysize 2048 -validity 1 -dname CN=r2-test > /dev/null 2>&1
+cp "$APK/unsigned.apk" "$APK/signed.apk"
+jarsigner -keystore "$APK/test.keystore" -storepass test-pass "$APK/signed.apk" t > /dev/null
+CERT_SHA=$(keytool -exportcert -keystore "$APK/test.keystore" -storepass test-pass -alias t 2>/dev/null \
+    | sha256sum | cut -d' ' -f1)
+cp "$APK/signed.apk" "$APK/tampered.apk"
+echo "changed after signing" > "$APK/files/classes.dex"
+(cd "$APK/files" && jar uf "$APK/tampered.apk" classes.dex)
+java -cp "$OUT:$JAR" dev.r2hack.agent.SecurityTest "$APK/signed.apk" "$APK/tampered.apk" "$APK/unsigned.apk" "$CERT_SHA" \
+    | tee "$OUT/security.txt"
+
+# The web page signs requests in JavaScript; check it against the same vector.
+if command -v node > /dev/null; then
+    WANT=$(sed -n 's/^vector: key=test-key sig=//p' "$OUT/security.txt")
+    node "$APPS_DIR/agent/test/sign-test.js" "$APPS_DIR/agent/web/index.html" "$WANT"
+else
+    echo "(skipping the web page signing test: node not found)"
+fi
