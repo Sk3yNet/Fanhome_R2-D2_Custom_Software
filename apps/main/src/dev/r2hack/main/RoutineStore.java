@@ -23,6 +23,9 @@ final class RoutineStore {
 
     private final File dir;
     private final Set<String> actions;
+    private volatile Triggers.Table triggers;   // built on first use, rebuilt after each save or delete
+    /** Called after the routines (and so maybe the triggers) changed, e.g. so voice reloads its phrases. */
+    volatile Runnable onChange;
 
     /** actions: the built-in actions a routine's "action" step may use. */
     RoutineStore(File dir, Set<String> actions) {
@@ -33,6 +36,8 @@ final class RoutineStore {
     /** Checks and saves a routine, replacing one with the same name. */
     synchronized Routine save(JSONObject json) throws Routine.Invalid {
         Routine r = Routine.parse(json, actions);
+        String clash = triggers().conflict(r.name, r.triggers);
+        if (clash != null) throw new Routine.Invalid("triggers: " + clash);
         String text = json.toString();
         if (text.getBytes(UTF8).length > MAX_BYTES) throw new Routine.Invalid("routine is larger than " + MAX_BYTES / 1024 + " KB");
         File f = file(r.name);
@@ -52,11 +57,36 @@ final class RoutineStore {
             tmp.delete();
             throw new Routine.Invalid("could not save: " + e.getMessage());
         }
+        changed();
         return r;
     }
 
     synchronized boolean delete(String name) {
-        return Routine.validName(name) && file(name).delete();
+        boolean ok = Routine.validName(name) && file(name).delete();
+        if (ok) changed();
+        return ok;
+    }
+
+    /** All valid routines' triggers. A routine whose file no longer passes the checks has none. */
+    synchronized Triggers.Table triggers() {
+        Triggers.Table t = triggers;
+        if (t != null) return t;
+        java.util.Map<String, List<Triggers.Trigger>> all = new java.util.LinkedHashMap<>();
+        for (String n : names()) {
+            try {
+                Routine r = load(n);
+                if (r != null && !r.triggers.isEmpty()) all.put(n, r.triggers);
+            } catch (Routine.Invalid ignored) {
+            }
+        }
+        triggers = t = new Triggers.Table(all);
+        return t;
+    }
+
+    private void changed() {
+        triggers = null;
+        Runnable r = onChange;
+        if (r != null) r.run();
     }
 
     synchronized boolean exists(String name) {

@@ -35,12 +35,27 @@ public final class HomeAssistantTest {
         public void setWatch(boolean on) { }
         public void log(String msg) { }
         public void haStatus(String state) { }
+        final List<String> events = new ArrayList<>();
+        public void event(String name) { events.add(name); }
+        public java.util.Set<String> triggerTopics() { return Collections.singleton("zigbee2mqtt/door"); }
+        public void triggerMessage(String topic, String payload, boolean retained) {
+            events.add("mqtt " + topic + " " + payload + (retained ? " retained" : ""));
+        }
     }
 
     public static void main(String[] args) throws Exception {
         FakeHost h = new FakeHost();
         HomeAssistant ha = new HomeAssistant(h);
         String b = ha.base();
+
+        // routine triggers: named events on R2's own topic, anything else goes to the trigger table
+        ha.onCommand(b + "/event", "doorbell", false);
+        ha.onCommand(b + "/event", "Not Valid", false);
+        ha.onCommand(b + "/event", "doorbell", true);
+        ha.onCommand("zigbee2mqtt/door", "{\"contact\":false}", true);
+        check("events and trigger messages routed (" + h.events + ")", h.events.equals(java.util.Arrays.asList(
+                "doorbell", "mqtt zigbee2mqtt/door {\"contact\":false} retained")));
+        h.events.clear();
 
         Map<String, JSONObject> d = ha.discovery(h.state, Collections.<String>emptyList(), Collections.<String>emptyList());
         JSONObject sel = d.get("homeassistant/select/" + ha.nodeId() + "/liveliness/config");

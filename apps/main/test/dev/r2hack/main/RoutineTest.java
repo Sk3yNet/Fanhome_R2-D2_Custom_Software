@@ -136,6 +136,7 @@ public final class RoutineTest {
         waitUntil();
         nesting();
         store();
+        triggers();
         examples(args.length > 0 ? new File(args[0]) : new File("docs/routines"));
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -336,6 +337,148 @@ public final class RoutineTest {
             contains("name mismatch", e.getMessage(), "holds routine");
         }
         check("delete", s.delete("a") && !s.exists("a") && !s.delete("a"));
+    }
+
+    static String triggerInvalid(String triggers) {
+        return invalid("{\"name\":\"t\",\"steps\":[{\"wait\":1}],\"triggers\":" + triggers + "}");
+    }
+
+    static Triggers.Trigger trigger(String json) throws Exception {
+        return parse("{\"name\":\"t\",\"steps\":[{\"wait\":1}],\"triggers\":[" + json + "]}").triggers.get(0);
+    }
+
+    static java.util.Calendar at(int weekday, int h, int m) {
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        c.set(2026, java.util.Calendar.NOVEMBER, 1 + weekday, h, m, 0); // 1 Nov 2026 is a Sunday
+        return c;
+    }
+
+    static void triggers() throws Exception {
+        // parsing
+        Routine r = parse("{\"name\":\"t\",\"steps\":[{\"wait\":1}],\"triggers\":["
+                + "{\"button\":4},{\"voice\":\"Light  Show\"},{\"schedule\":{\"at\":\"7:30\",\"days\":[\"mon\",\"FRI\"]}},"
+                + "{\"schedule\":{\"every\":15,\"from\":\"22:00\",\"to\":\"06:00\"},\"if_busy\":\"replace\"},"
+                + "{\"event\":\"doorbell\"},{\"mqtt\":{\"topic\":\"zigbee2mqtt/+/door\",\"field\":\"contact\",\"value\":false}}]}");
+        eq("trigger count", 6, r.triggers.size());
+        eq("phrase normalized", "light show", r.triggers.get(1).text);
+        eq("describe schedule", "at 07:30 on mon, fri (if idle)", Triggers.describe(r.triggers.get(2)));
+        eq("describe window", "every 15 min from 22:00 to 06:00", Triggers.describe(r.triggers.get(3)));
+        check("buttons and voice replace", r.triggers.get(0).replace && r.triggers.get(1).replace);
+        check("events skip if busy by default", !r.triggers.get(4).replace);
+        eq("no triggers", 0, parse("{\"name\":\"n\",\"steps\":[{\"wait\":1}]}").triggers.size());
+        eq("R2-D2 spelled out", "hey r two d two", Triggers.normalizePhrase("Hey R2-D2"));
+
+        contains("power button", triggerInvalid("[{\"button\":1}]"), "can't be taken over");
+        contains("pairing button", triggerInvalid("[{\"button\":3}]"), "can't be taken over");
+        contains("one-word phrase", triggerInvalid("[{\"voice\":\"party\"}]"), "2 to 6 plain words");
+        contains("digits in phrase", triggerInvalid("[{\"voice\":\"party 2\"}]"), "2 to 6 plain words");
+        contains("built-in phrase", triggerInvalid("[{\"voice\":\"turn left\"}]"), "overlaps the built-in");
+        contains("phrase starting with a built-in", triggerInvalid("[{\"voice\":\"stop the music\"}]"), "overlaps the built-in");
+        contains("same button twice", triggerInvalid("[{\"button\":5},{\"button\":5}]"), "listed twice");
+        contains("at and every", triggerInvalid("[{\"schedule\":{\"at\":\"07:00\",\"every\":10}}]"), "one of them");
+        contains("bad time", triggerInvalid("[{\"schedule\":{\"at\":\"24:00\"}}]"), "not a time of day");
+        contains("every too often", triggerInvalid("[{\"schedule\":{\"every\":1}}]"), "from 5 to 1440");
+        contains("bad day", triggerInvalid("[{\"schedule\":{\"at\":\"07:00\",\"days\":[\"monday\"]}}]"), "one of sun");
+        contains("from without to", triggerInvalid("[{\"schedule\":{\"every\":10,\"from\":\"07:00\"}}]"), "go together");
+        contains("bad event", triggerInvalid("[{\"event\":\"Door Bell\"}]"), "a-z, 0-9");
+        contains("if_busy value", triggerInvalid("[{\"event\":\"x\",\"if_busy\":\"queue\"}]"), "\"skip\" (default) or \"replace\"");
+        contains("if_busy on a button", triggerInvalid("[{\"button\":4,\"if_busy\":\"skip\"}]"), "unknown key");
+        contains("mqtt everything", triggerInvalid("[{\"mqtt\":{\"topic\":\"#\"}}]"), "first level");
+        contains("mqtt $SYS", triggerInvalid("[{\"mqtt\":{\"topic\":\"$SYS/broker\"}}]"), "first level");
+        contains("mqtt bad wildcard", triggerInvalid("[{\"mqtt\":{\"topic\":\"a/b#\"}}]"), "whole level");
+        contains("mqtt # in the middle", triggerInvalid("[{\"mqtt\":{\"topic\":\"a/#/b\"}}]"), "last level");
+        contains("mqtt payload and field", triggerInvalid("[{\"mqtt\":{\"topic\":\"a\",\"payload\":\"ON\",\"field\":\"x\",\"value\":1}}]"), "not both");
+        contains("unknown trigger", triggerInvalid("[{\"timer\":5}]"), "unknown trigger");
+        contains("triggers not a list", triggerInvalid("{\"button\":4}"), "must be a list");
+
+        // MQTT topic and payload matching
+        check("+ matches one level", Triggers.topicMatches("z/+/door", "z/hall/door") && !Triggers.topicMatches("z/+/door", "z/a/b/door"));
+        check("# matches the rest", Triggers.topicMatches("z/#", "z/a/b") && Triggers.topicMatches("z/#", "z"));
+        check("exact topic", Triggers.topicMatches("a/b", "a/b") && !Triggers.topicMatches("a/b", "a/b/c") && !Triggers.topicMatches("a/b/c", "a/b"));
+        Triggers.Trigger door = trigger("{\"mqtt\":{\"topic\":\"z/door\",\"field\":\"contact\",\"value\":false}}");
+        check("field matches", Triggers.payloadMatches(door, "{\"contact\":false,\"battery\":90}"));
+        check("field differs", !Triggers.payloadMatches(door, "{\"contact\":true}"));
+        check("not JSON", !Triggers.payloadMatches(door, "open"));
+        Triggers.Trigger num = trigger("{\"mqtt\":{\"topic\":\"z\",\"field\":\"n\",\"value\":1}}");
+        check("numbers compare as numbers", Triggers.payloadMatches(num, "{\"n\":1.0}"));
+        check("payload match trims", Triggers.payloadMatches(trigger("{\"mqtt\":{\"topic\":\"z\",\"payload\":\"ON\"}}"), " ON\n"));
+
+        // fire when a live message starts matching; retained ones only set the baseline
+        Map<String, List<Triggers.Trigger>> m = new HashMap<>();
+        m.put("door", Arrays.asList(door));
+        m.put("bell", Arrays.asList(trigger("{\"mqtt\":{\"topic\":\"bell\",\"every_message\":true}}")));
+        Triggers.Table table = new Triggers.Table(m);
+        Triggers.MqttWatch w = new Triggers.MqttWatch();
+        eq("retained match doesn't fire", 0, w.onMessage(table, "z/door", "{\"contact\":false}", true).size());
+        eq("same state again doesn't fire", 0, w.onMessage(table, "z/door", "{\"contact\":false}", false).size());
+        w.onMessage(table, "z/door", "{\"contact\":true}", false);
+        List<Triggers.Hit> hits = w.onMessage(table, "z/door", "{\"contact\":false}", false);
+        eq("door opened fires", 1, hits.size());
+        eq("door routine", "door", hits.isEmpty() ? null : hits.get(0).routine);
+        eq("first live match fires", 1, new Triggers.MqttWatch().onMessage(table, "z/door", "{\"contact\":false}", false).size());
+        eq("every_message fires each time", 1, w.onMessage(table, "bell", "x", false).size());
+        eq("every_message fires again", 1, w.onMessage(table, "bell", "x", false).size());
+        eq("other topic", 0, w.onMessage(table, "other", "x", false).size());
+        eq("topics to subscribe", new java.util.HashSet<>(Arrays.asList("z/door", "bell")), table.mqttTopics());
+
+        // schedules
+        Triggers.Trigger wk = trigger("{\"schedule\":{\"at\":\"07:30\",\"days\":[\"mon\"]}}");
+        check("at: due on monday 07:30", Triggers.dueAt(wk, 7 * 60 + 30, 1));
+        check("at: not tuesday", !Triggers.dueAt(wk, 7 * 60 + 30, 2));
+        check("at: not 07:31", !Triggers.dueAt(wk, 7 * 60 + 31, 1));
+        Triggers.Trigger ev = trigger("{\"schedule\":{\"every\":30}}");
+        check("every: on the half hour", Triggers.dueAt(ev, 600, 3) && Triggers.dueAt(ev, 630, 3) && !Triggers.dueAt(ev, 615, 3));
+        Triggers.Trigger day = trigger("{\"schedule\":{\"every\":60,\"from\":\"09:15\",\"to\":\"17:15\"}}");
+        check("window: from its start", Triggers.dueAt(day, 9 * 60 + 15, 0) && Triggers.dueAt(day, 10 * 60 + 15, 0));
+        check("window: up to its end", Triggers.dueAt(day, 17 * 60 + 15, 0) && !Triggers.dueAt(day, 18 * 60 + 15, 0));
+        check("window: not before", !Triggers.dueAt(day, 8 * 60 + 15, 0) && !Triggers.dueAt(day, 10 * 60, 0));
+        Triggers.Trigger night = trigger("{\"schedule\":{\"every\":120,\"from\":\"22:00\",\"to\":\"02:00\",\"days\":[\"fri\"]}}");
+        check("overnight: friday 22:00", Triggers.dueAt(night, 22 * 60, 5));
+        check("overnight: saturday 00:00 belongs to friday", Triggers.dueAt(night, 0, 6));
+        check("overnight: not friday 00:00", !Triggers.dueAt(night, 0, 5));
+        check("overnight: not in the day", !Triggers.dueAt(night, 12 * 60, 5));
+        Map<String, List<Triggers.Trigger>> sm = new HashMap<>();
+        sm.put("morning", Arrays.asList(wk));
+        Triggers.Table st = new Triggers.Table(sm);
+        eq("table due monday", 1, st.due(at(1, 7, 30)).size());
+        eq("table not due sunday", 0, st.due(at(0, 7, 30)).size());
+        check("clock not set in 1970", !Triggers.clockSet(0) && Triggers.clockSet(at(1, 0, 0).getTimeInMillis()));
+
+        // events and the store: buttons and phrases belong to one routine
+        File dir = Files.createTempDirectory("triggers").toFile();
+        RoutineStore s = new RoutineStore(new File(dir, "r"), ACTIONS);
+        int[] changes = {0};
+        s.onChange = () -> changes[0]++;
+        s.save(new JSONObject("{\"name\":\"a\",\"steps\":[{\"wait\":1}],\"triggers\":[{\"button\":4},{\"voice\":\"light show\"},{\"event\":\"doorbell\"}]}"));
+        s.save(new JSONObject("{\"name\":\"b\",\"steps\":[{\"wait\":1}],\"triggers\":[{\"event\":\"doorbell\",\"if_busy\":\"replace\"}]}"));
+        eq("change callbacks", 2, changes[0]);
+        eq("button owner", "a", s.triggers().button(4));
+        eq("no owner", null, s.triggers().button(5));
+        eq("phrase owner", "a", s.triggers().phrases().get("light show"));
+        eq("event: both routines", 2, s.triggers().event("doorbell").size());
+        eq("event: first by name", "a", s.triggers().event("doorbell").get(0).routine);
+        eq("unknown event", 0, s.triggers().event("nope").size());
+        try {
+            s.save(new JSONObject("{\"name\":\"c\",\"steps\":[{\"wait\":1}],\"triggers\":[{\"button\":4}]}"));
+            check("button taken refused", false);
+        } catch (Routine.Invalid e) {
+            contains("button taken", e.getMessage(), "already starts routine a");
+        }
+        try {
+            s.save(new JSONObject("{\"name\":\"c\",\"steps\":[{\"wait\":1}],\"triggers\":[{\"voice\":\"Light show\"}]}"));
+            check("phrase taken refused", false);
+        } catch (Routine.Invalid e) {
+            contains("phrase taken", e.getMessage(), "already starts routine a");
+        }
+        s.save(new JSONObject("{\"name\":\"a\",\"steps\":[{\"wait\":1}],\"triggers\":[{\"button\":4}]}"));
+        eq("a routine may keep its own button", "a", s.triggers().button(4));
+        eq("phrase gone after replacing", null, s.triggers().phrases().get("light show"));
+        s.delete("a");
+        eq("button free after delete", null, s.triggers().button(4));
+        Files.write(new File(new File(dir, "r"), "bad.json").toPath(),
+                "{\"name\":\"bad\",\"steps\":[{\"head\":999}],\"triggers\":[{\"button\":5}]}".getBytes("UTF-8"));
+        s.delete("b"); // rebuilds the table
+        eq("a broken routine has no triggers", null, s.triggers().button(5));
     }
 
     /** The examples in docs/routines must all be valid. */

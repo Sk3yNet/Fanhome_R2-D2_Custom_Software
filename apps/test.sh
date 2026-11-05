@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore), places (Places),
+# Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore, Triggers), places (Places),
 # watch-with-me (CueFile, CueStore, WatchWithMe), idle personality (IdlePersonality), sound reactions
 # (SoundReactions), "follow me"
 # (FollowTracker, FollowControl, Follower), Home Assistant link
@@ -34,7 +34,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 SRC=$APPS_DIR/main/src/dev/r2hack/main
 javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \
-    "$SRC/Routine.java" "$SRC/RoutineRunner.java" "$SRC/RoutineStore.java" "$SRC/Places.java" "$SRC/Chirp.java" \
+    "$SRC/Routine.java" "$SRC/RoutineRunner.java" "$SRC/RoutineStore.java" "$SRC/Triggers.java" "$SRC/Places.java" "$SRC/Chirp.java" \
     "$SRC/CueFile.java" "$SRC/CueStore.java" "$SRC/WatchWithMe.java" "$SRC/IdlePersonality.java" \
     "$SRC/SoundReactions.java" "$SRC/HomeAssistant.java" "$SRC/MqttClient.java" "$SRC/LocalNet.java" \
     "$SRC/FollowTracker.java" "$SRC/FollowControl.java" "$SRC/Follower.java" \

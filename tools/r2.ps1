@@ -33,6 +33,7 @@
 #                            from the start or from -At; Home Assistant does this by itself when set up
 #   watch-pause | watch-resume | watch-stop
 #   watch-on | watch-off     the "Watch with me" switch: off keeps R2 quiet during films
+#   event <name>             send a named event; routines with that "event" trigger run (docs/routines.md)
 #   volume <0-100>           droid sounds and music volume (kept across reboots)
 #   liveliness [level]       how much R2 does on his own: off, quiet, chatty or full (docs/liveliness.md);
 #                            no level shows the current one
@@ -308,7 +309,8 @@ switch ($Command) {
     'routines'     {
         $d = Call GET /routines
         "running: $($d.running)" + $(if ($d.last_routine) { "   last: $($d.last_routine)" } else { '' })
-        $d.routines | Format-Table name, steps, timeout, while_charging, replaces_action, description, error -AutoSize
+        if ($d.last_trigger) { "last trigger: $($d.last_trigger)" }
+        $d.routines | Format-Table name, steps, timeout, while_charging, replaces_action, @{ n = 'triggers'; e = { $_.triggers -join '; ' } }, description, error -AutoSize
     }
     'routine'      { if (-not $Arg) { throw 'usage: r2.ps1 routine <name>' }; (Call GET "/routine?name=$([uri]::EscapeDataString($Arg))").routine | ConvertTo-Json -Depth 20 }
     'routine-put'  {
@@ -317,6 +319,7 @@ switch ($Command) {
     }
     'routine-run'  { if (-not $Arg) { throw 'usage: r2.ps1 routine-run <name>' }; Call POST "/routine/run?name=$([uri]::EscapeDataString($Arg))" }
     'routine-stop' { Call POST /routine/stop }
+    'event'        { if (-not $Arg) { throw 'usage: r2.ps1 event <name>' }; Call POST "/event?name=$([uri]::EscapeDataString($Arg))" }
     'places'       {
         $d = Call GET /places
         "R2 is at: $($d.location)" + $(if ($d.teaching) { "   teaching: $($d.teaching)" } else { '' }) + $(if ($d.last_trip) { "   last: $($d.last_trip)" } else { '' })

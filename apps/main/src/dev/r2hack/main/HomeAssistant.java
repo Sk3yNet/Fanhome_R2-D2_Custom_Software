@@ -61,6 +61,15 @@ final class HomeAssistant {
 
         /** The connection state changed (for the agent's /status). */
         void haStatus(String state);
+
+        /** A named event published to r2d2/<id>/event (routines' "event" triggers). */
+        void event(String name);
+
+        /** The MQTT topic filters routines' "mqtt" triggers listen to. */
+        java.util.Set<String> triggerTopics();
+
+        /** A message on one of triggerTopics(); retained: replayed by the broker, not new. */
+        void triggerMessage(String topic, String payload, boolean retained);
     }
 
     /** Buttons: action name -> display name. */
@@ -149,6 +158,7 @@ final class HomeAssistant {
     private final java.util.Set<String> discoveredTopics = new java.util.HashSet<>();
     private volatile String connectedNode = "";
     private volatile boolean republish;
+    private final java.util.Set<String> subscribedTriggers = new java.util.HashSet<>();
 
     HomeAssistant(Host host) {
         this(host, LocalNet.SYSTEM);
@@ -276,14 +286,19 @@ final class HomeAssistant {
                     discoveredFor = "";
                 }
                 c.subscribe(base() + "/action/run", base() + "/routine/run", base() + "/goto/set", base() + "/switch/+/set", base() + "/volume/set",
-                        base() + "/liveliness/set", watchTopic(), s.prefix + "/status");
+                        base() + "/liveliness/set", watchTopic(), base() + "/event", s.prefix + "/status");
+                synchronized (subscribedTriggers) {
+                    subscribedTriggers.clear();
+                }
+                subscribeTriggers(c);
+                final MqttClient conn = c;
                 client = c;
                 setStatus("connected to " + addr.getHostAddress() + ":" + s.port);
                 stateChanged(); // publish discovery and state now
                 c.readLoop(new MqttClient.Callback() {
                     @Override
                     public void onMessage(String topic, byte[] payload) {
-                        onCommand(topic, new String(payload, UTF8).trim());
+                        onCommand(topic, new String(payload, UTF8).trim(), conn.lastRetained);
                     }
                 });
             } catch (Exception e) {
@@ -330,8 +345,38 @@ final class HomeAssistant {
 
     // ---- commands from Home Assistant -------------------------------------------------------
 
+    /** Subscribes to routines' trigger topics not subscribed yet on this connection. */
+    void subscribeTriggers(MqttClient c) throws Exception {
+        java.util.List<String> add = new ArrayList<>();
+        synchronized (subscribedTriggers) {
+            for (String t : host.triggerTopics()) if (subscribedTriggers.add(t)) add.add(t);
+        }
+        // A routine deleted since stays subscribed until the next reconnect; its messages are ignored.
+        if (!add.isEmpty()) {
+            c.subscribe(add.toArray(new String[0]));
+            host.log("home assistant: listening to " + add + " for routine triggers");
+        }
+    }
+
     void onCommand(String topic, String payload) {
+        onCommand(topic, payload, false);
+    }
+
+    void onCommand(String topic, String payload, boolean retained) {
         String b = base();
+        if (!retained && topic.equals(b + "/event")) {
+            if (Routine.validName(payload)) {
+                host.log("home assistant: event " + payload);
+                host.event(payload);
+            } else {
+                host.log("home assistant: ignored event " + clip(payload) + " (a-z, 0-9 and -)");
+            }
+            return;
+        }
+        if (!topic.startsWith(b + "/") && !topic.equals(settings.prefix + "/status")) {
+            host.triggerMessage(topic, payload, retained);
+            return;
+        }
         if (topic.equals(settings.prefix + "/status")) {
             if ("online".equals(payload)) { // Home Assistant restarted: send everything again
                 republish = true;
@@ -500,6 +545,7 @@ final class HomeAssistant {
             if (c == null) continue;
             try {
                 publishAll(c);
+                subscribeTriggers(c);
                 c.keepAlive();
             } catch (Exception e) {
                 host.log("home assistant: publish failed: " + e.getMessage());

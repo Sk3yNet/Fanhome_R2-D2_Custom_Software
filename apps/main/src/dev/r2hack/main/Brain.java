@@ -93,6 +93,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private volatile JSONObject teachExtra = new JSONObject(); // spoken names and area for a new place
     private final CueStore cues;
     private final WatchWithMe watch;
+    private volatile String lastTrigger = "";   // what a trigger last started or skipped
+    private final Triggers.MqttWatch mqttWatch = new Triggers.MqttWatch();
     private volatile String subtitle = "";      // what R2 last answered through Home Assistant
     private volatile long subtitleAt;
     private volatile boolean subtitleBeeps;     // ...in beeps (the text is the translation)
@@ -166,7 +168,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             }
         });
         this.voice = new Voice(io, this);
-        voice.setExtraPhrases(Places.phrases(places.list()));
+        voice.setExtraPhrases(voicePhrases());
         this.assist = new Assist(io, this, beeper());
         voice.setStream(assist);
         this.ears = new SoundReactions(new SoundReactions.Listener() {
@@ -205,6 +207,13 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 plugins.event(Plugin.EVENT_STATE, null);
             }
         });
+        routines.onChange = new Runnable() {
+            @Override
+            public void run() {
+                voice.setExtraPhrases(voicePhrases()); // plugins hear of it from saveRoutine/deleteRoutine
+            }
+        };
+        voice.setExtraPhrases(voicePhrases());
         camera.setRawListener(new CameraStream.RawListener() {
             @Override
             public void onFrame(byte[] nv21, int width, int height) {
@@ -234,6 +243,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 + (teaching.isEmpty() ? "" : ", teaching " + teaching)
                 + "\nwatch-with-me: " + watchLine()
                 + "\n" + idle.status()
+                + (lastTrigger.isEmpty() ? "" : "\ntriggers: last " + lastTrigger)
                 + "\n" + plugins.status();
     }
 
@@ -379,6 +389,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 if (msg.optString("op").startsWith("cue") || "watch".equals(msg.optString("op"))) onWatchRequest(msg);
                 else onRoutinesRequest(msg);
                 break;
+            case "event": // POST /event?name=
+                onEvent(msg.optString("name"), "POST /event");
+                break;
             case "drove": // a command someone sent through the agent's /serial, e.g. the web page's joystick
                 onDrove(msg.optJSONObject("cmd"));
                 break;
@@ -418,6 +431,11 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         try {
             plugins.event(Plugin.EVENT_BUTTON, new JSONObject().put("value", value));
         } catch (Exception ignored) {
+        }
+        String r = routines.triggers().button(value); // a routine can take over buttons 4-6
+        if (r != null) {
+            startTriggered(new Triggers.Hit(r, true), "button " + value);
+            return;
         }
         switch (value) {
             case 1: break; // power off: handled by the agent so it works even if this app is hung
@@ -768,6 +786,56 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         return null;
     }
 
+    // ---- triggers (docs/routines.md) ------------------------------------------------------
+
+    /**
+     * Starts a routine for a trigger. Buttons and voice replace what runs, like any action. Schedules,
+     * events and MQTT skip unless R2 is idle (no action, routine, patrol, pairing or phone control),
+     * unless the trigger says "if_busy": "replace".
+     */
+    private void startTriggered(Triggers.Hit hit, String why) {
+        String running = seq.running();
+        int m = robot.mode;
+        boolean busy = !"idle".equals(running) || m == Robot.PATROL || m == Robot.PAIR || m == Robot.USER_CONTROL;
+        if (!hit.replace && busy) {
+            lastTrigger = why + ": skipped " + hit.routine + ", R2 is busy ("
+                    + (!"idle".equals(running) ? running : m == Robot.PAIR ? "pairing" : m == Robot.PATROL ? "patrol" : "phone control") + ")";
+            Log.i(TAG, "trigger " + lastTrigger);
+            return;
+        }
+        String err = runRoutine(hit.routine);
+        lastTrigger = why + ": " + (err == null ? "started " + hit.routine : err);
+        Log.i(TAG, "trigger " + lastTrigger);
+    }
+
+    private void onEvent(String name, String from) {
+        java.util.List<Triggers.Hit> hits = routines.triggers().event(name);
+        if (hits.isEmpty()) {
+            lastTrigger = "event " + name + " (" + from + "): no routine listens for it";
+            Log.i(TAG, "trigger " + lastTrigger);
+            return;
+        }
+        startTriggered(hits.get(0), "event " + name); // one thing runs at a time: the first routine by name
+    }
+
+    private long lastScheduleMinute;
+
+    /** Called by the timers: runs the routines whose schedule falls in a minute that just began. */
+    private void checkSchedules(long now) {
+        long minute = now / 60_000;
+        long last = lastScheduleMinute;
+        if (minute == last) return;
+        lastScheduleMinute = minute;
+        // Not before the clock is set, and not for minutes skipped by a clock jump (e.g. the first network time).
+        if (last == 0 || !Triggers.clockSet(now) || minute < last || minute - last > 2) return;
+        for (long mm = last + 1; mm <= minute; mm++) {
+            java.util.Calendar c = java.util.Calendar.getInstance();
+            c.setTimeInMillis(mm * 60_000);
+            java.util.List<Triggers.Hit> hits = routines.triggers().due(c);
+            if (!hits.isEmpty()) startTriggered(hits.get(0), "schedule");
+        }
+    }
+
     /** Saves a routine (the API's and plugins' way); returns what happened. */
     private String saveRoutine(JSONObject j) throws Routine.Invalid {
         String name = j.optString("name");
@@ -878,15 +946,18 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                         try {
                             Routine r = routines.load(n);
                             if (r == null) continue;
+                            JSONArray tr = new JSONArray();
+                            for (Triggers.Trigger t : r.triggers) tr.put(Triggers.describe(t));
                             e.put("description", r.description).put("steps", r.stepCount())
-                                    .put("timeout", r.timeoutMs / 1000.0).put("while_charging", r.whileCharging);
+                                    .put("timeout", r.timeoutMs / 1000.0).put("while_charging", r.whileCharging)
+                                    .put("triggers", tr);
                         } catch (Routine.Invalid bad) {
                             e.put("error", bad.getMessage());
                         }
                         list.put(e);
                     }
                     reply.put("ok", true).put("routines", list).put("actions", new JSONArray(Arrays.asList(ACTIONS)))
-                            .put("running", seq.running()).put("last_routine", lastRoutine);
+                            .put("running", seq.running()).put("last_routine", lastRoutine).put("last_trigger", lastTrigger);
                     break;
                 }
                 case "get": {
@@ -976,7 +1047,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
 
     /** Voice phrases, Home Assistant's place list and the agent's /status follow the places. */
     private void placesChanged() {
-        voice.setExtraPhrases(Places.phrases(places.list()));
+        voice.setExtraPhrases(voicePhrases());
         if (plugins != null) plugins.event(Plugin.EVENT_STATE, null);
         reportRunning();
     }
@@ -1388,6 +1459,11 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     } catch (InterruptedException ignored) {
                     }
                     long now = System.currentTimeMillis();
+                    try {
+                        checkSchedules(now);
+                    } catch (Exception e) {
+                        Log.w(TAG, "schedule check failed", e);
+                    }
                     long sleepAfter = "full".equals(liveliness()) ? SLEEP_AFTER_FULL_MS : SLEEP_AFTER_MS;
                     if (robot.mode == Robot.READY && now - lastActivity > sleepAfter) {
                         Log.i(TAG, "sleeping after " + sleepAfter / 1000 + " s idle");
@@ -1734,6 +1810,24 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         }
 
         @Override
+        public void routineEvent(String name, String from) {
+            onEvent(name, from);
+        }
+
+        @Override
+        public java.util.Set<String> triggerTopics() {
+            return routines.triggers().mqttTopics();
+        }
+
+        @Override
+        public void triggerMessage(String topic, String payload, boolean retained) {
+            for (Triggers.Hit h : mqttWatch.onMessage(routines.triggers(), topic, payload, retained)) {
+                startTriggered(h, "mqtt " + topic);
+                break; // one thing runs at a time
+            }
+        }
+
+        @Override
         public void log(String msg) {
             Log.i(TAG, msg);
         }
@@ -1743,7 +1837,21 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
 
     @Override
     public void onVoiceCommand(String action) {
+        if (action.startsWith("routine:")) { // a routine's voice trigger
+            startTriggered(new Triggers.Hit(action.substring(8), true), "voice");
+            return;
+        }
         action(action);
+    }
+
+    /** Phrases beyond the built-in commands: routines' voice triggers ("routine:<name>") and places ("goto:<place>"). */
+    private java.util.Map<String, String> voicePhrases() {
+        java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
+        for (java.util.Map.Entry<String, String> e : routines.triggers().phrases().entrySet()) {
+            m.put(e.getKey(), "routine:" + e.getValue());
+        }
+        m.putAll(Places.phrases(places.list())); // a place's phrase wins over a routine's
+        return m;
     }
 
     @Override

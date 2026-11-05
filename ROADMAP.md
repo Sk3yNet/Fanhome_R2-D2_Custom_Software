@@ -200,6 +200,10 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
 - [ ] Upload, list, run and stop routines through the agent API and the PC tool. *Built, not yet tested on the robot.*
       `GET /routines`, `POST /routine`, `POST /routine/run`, `tools\r2.ps1 routines`, and buttons on the web page.
 - [ ] Triggers: robot buttons, voice commands, a schedule, or external events (see section 9).
+      *Built, not yet tested on the robot.* A routine's `triggers` list: buttons 4–6, voice phrases after
+      "hey R2-D2", daily times or intervals with weekdays, named events (`POST /event`, `tools\r2.ps1 event`,
+      or `r2d2/<id>/event` from Home Assistant) and messages on any MQTT topic. Automatic triggers wait until
+      R2 is idle. See [docs/routines.md](docs/routines.md#triggers).
 - [ ] **Rooms: "go to the kitchen".** Routes taught by driving R2 from a home spot with the joystick, replayed
       as routines (the way back taught too, or mirrored after a taught turn-around), with R2 tracking where he
       is. Voice ("go to the kitchen", "go home"), Home Assistant (Go to select, Location sensor), API
