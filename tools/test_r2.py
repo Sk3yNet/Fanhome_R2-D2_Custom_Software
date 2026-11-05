@@ -265,6 +265,21 @@ class R2CliTest(unittest.TestCase):
         self.assertIn('NOT confirmed', err)
         self.assertNotIn('/hardening/confirm', [r['path'] for r in FakeAgent.requests])
 
+    def test_plugins(self):
+        self.run_cli('plugin-off', 'home-assistant')
+        self.assertEqual(self.last()['path'], '/plugin?name=home-assistant&enabled=0')
+        self.run_cli('plugin-grant', 'battery-alert=status,sound')
+        self.assertEqual(self.last()['path'], '/plugin?name=battery-alert&grant=status%2Csound')
+        self.run_cli('plugin-grant', 'battery-alert=')
+        self.assertEqual(self.last()['path'], '/plugin?name=battery-alert&grant=')
+        self.assertEqual(self.run_cli('plugin-config', 'x=missing.json')[0], 1)
+        FakeAgent.replies['/plugins'] = (200, 'application/json', {
+            'plugins': [{'name': 'battery-alert', 'enabled': True, 'granted': ['status'], 'asks_for': ['status', 'sound']}],
+            'permissions': {'status': 'read the robot state'}})
+        _, out, _ = self.run_cli('plugins')
+        self.assertIn('status,sound', out)
+        self.assertIn('  status: read the robot state', out)
+
     def test_chirp(self):
         self.run_cli('chirp')
         self.assertEqual(self.last()['path'], '/chirp?mood=random')

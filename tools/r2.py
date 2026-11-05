@@ -46,6 +46,13 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   volume <0-100>           droid sounds and music volume (kept across reboots)
   liveliness [level]       how much R2 does on his own: off, quiet, chatty or full (docs/liveliness.md);
                            no level shows the current one
+  plugins                  list the plugins (docs/plugins.md): state, what each asks for and is granted
+  plugin-on | plugin-off <name>
+                           enable / disable a plugin, e.g. plugin-off home-assistant
+  plugin-grant <name>=<permissions>
+                           what a plugin may do, e.g. plugin-grant battery-alert=status (empty: nothing)
+  plugin-config <name>=<file.json>
+                           merge the JSON object in the file into a plugin's config
   logcat [text] [--lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
   dmesg [text] [--lines N]  kernel log
   adb [minutes]            switch on adb over Wi-Fi for a while (default 30 min) and connect
@@ -514,6 +521,36 @@ def cmd_liveliness(robot, a):
         raise R2Error('usage: r2.py liveliness <off|quiet|chatty|full>')
     else:
         show(robot.call('POST', '/action?name=liveliness-' + a.arg.lower()))
+
+
+def cmd_plugins(robot, a):
+    d = robot.call('GET', '/plugins')
+    rows = [dict(pl, granted=','.join(pl.get('granted') or []), asks_for=','.join(pl.get('asks_for') or []))
+            for pl in d.get('plugins') or []]
+    print(table(rows, ['name', 'enabled', 'state', 'granted', 'asks_for']))
+    print('permissions:')
+    for k, v in (d.get('permissions') or {}).items():
+        print('  %s: %s' % (k, v))
+
+
+def cmd_plugin_switch(robot, a):
+    name = need(a.arg, '%s <name>  (see: r2.py plugins)' % a.command)
+    show(robot.call('POST', '/plugin?name=%s&enabled=%d' % (q(name), 1 if a.command == 'plugin-on' else 0)))
+
+
+def cmd_plugin_grant(robot, a):
+    name, eq, perms = (a.arg or '').partition('=')
+    if not name or not eq:
+        raise R2Error('usage: r2.py plugin-grant <name>=<permissions>, e.g. battery-alert=status,sound')
+    show(robot.call('POST', '/plugin?name=%s&grant=%s' % (q(name), q(perms))))
+
+
+def cmd_plugin_config(robot, a):
+    name, _, path = (a.arg or '').partition('=')
+    if not name or not path or not os.path.isfile(path):
+        raise R2Error('usage: r2.py plugin-config <name>=<file.json>')
+    with open(path, encoding='utf-8-sig') as f:
+        show(robot.call('POST', '/plugin/config?name=' + q(name), f.read()))
 
 
 def cmd_logs(robot, a):
@@ -1316,6 +1353,11 @@ COMMANDS = {
     'watch-off': lambda robot, a: post_watch(robot, {'enabled': False}),
     'volume': cmd_volume,
     'liveliness': cmd_liveliness,
+    'plugins': cmd_plugins,
+    'plugin-on': cmd_plugin_switch,
+    'plugin-off': cmd_plugin_switch,
+    'plugin-grant': cmd_plugin_grant,
+    'plugin-config': cmd_plugin_config,
     'logcat': cmd_logs,
     'dmesg': cmd_logs,
     'fetch-token': cmd_fetch_token,
