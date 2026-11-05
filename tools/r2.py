@@ -9,7 +9,12 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   status | log             agent state / agent event log
   log-previous             agent event log from the previous boot (e.g. after a crash or power loss)
   action <name>            run a robot action, e.g. dance, wake, lightsaber, leia (list: actions)
-  stop                     emergency stop (the agent stops the robot itself, then cancels the action)
+  stop                     emergency stop (the agent stops the robot itself, then cancels the action;
+                           with the drive lock on, driving is locked again)
+  drive                    drive lock state (docs/drive-lock.md)
+  drive-lock [on|off]      require enabling before R2 drives (kept across reboots); no argument shows it
+  drive-enable [minutes]   enable driving until R2 hasn't driven for this long (default 10, max 120)
+  drive-disable            lock driving again now (stops R2 if it is driving)
   routines                 list the stored routines (docs/routines.md) and what's running
   routine <name>           show one routine's JSON
   routine-put <file.json>  upload a routine (checked on the robot; replaces one with the same name)
@@ -288,6 +293,22 @@ def need(arg, usage):
 def cmd_find(robot, a):
     ip = find_robot(10)
     print('robot at %s' % ip if ip else 'no announcement heard')
+
+
+def cmd_drive_lock(robot, a):
+    if not a.arg:
+        show(robot.call('GET', '/drive'))
+    elif a.arg in ('on', 'off'):
+        show(robot.call('POST', '/drive?lock=' + ('1' if a.arg == 'on' else '0')))
+    else:
+        raise R2Error('usage: r2.py drive-lock [on|off]')
+
+
+def cmd_drive_enable(robot, a):
+    m = a.arg or '10'
+    if not m.isdigit():
+        raise R2Error('usage: r2.py drive-enable [minutes]')
+    show(robot.call('POST', '/drive?enable=1&minutes=' + m))
 
 
 def cmd_routines(robot, a):
@@ -663,6 +684,10 @@ COMMANDS = {
     'actions': lambda robot, a: print('\n'.join(ACTIONS)),
     'action': with_name('/action?name=', 'action <name>  (see: r2.py actions)'),
     'stop': simple('POST', '/stop'),
+    'drive': simple('GET', '/drive'),
+    'drive-lock': cmd_drive_lock,
+    'drive-enable': cmd_drive_enable,
+    'drive-disable': simple('POST', '/drive?enable=0'),
     'routines': cmd_routines,
     'routine': cmd_routine,
     'routine-put': cmd_routine_put,

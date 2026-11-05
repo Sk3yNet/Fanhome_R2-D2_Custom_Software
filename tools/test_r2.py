@@ -182,6 +182,15 @@ class R2CliTest(unittest.TestCase):
         _, out, _ = self.run_cli('cues')
         self.assertIn('A, B', out)
 
+    def test_drive_lock(self):
+        for args, path in ((['drive'], '/drive'), (['drive-lock'], '/drive'), (['drive-lock', 'on'], '/drive?lock=1'),
+                           (['drive-lock', 'off'], '/drive?lock=0'), (['drive-enable'], '/drive?enable=1&minutes=10'),
+                           (['drive-enable', '30'], '/drive?enable=1&minutes=30'), (['drive-disable'], '/drive?enable=0')):
+            with self.subTest(args):
+                self.assertEqual(self.run_cli(*args)[0], 0)
+                self.assertEqual(self.last()['path'], path)
+        self.assertEqual(self.run_cli('drive-lock', 'maybe')[0], 1)
+
     def test_liveliness(self):
         FakeAgent.replies['/status'] = (200, 'application/json', {'liveliness': 'chatty'})
         self.assertEqual(self.run_cli('liveliness')[1], 'chatty\n')
