@@ -16,7 +16,8 @@ import java.util.List;
  * Joins the home network (the saved network with the highest priority, i.e. the one
  * set up on this robot; credentials stay in wpa_supplicant.conf) and
  * falls back to the robot's own hotspot if that fails, so the agent is always reachable.
- * KitKat's hotspot API is hidden, hence the reflection.
+ * KitKat's hotspot API is hidden, hence the reflection. The hotspot's name and password come from
+ * {@link Hotspot}: this robot's own password, or the factory settings in the pairing button's setup window.
  */
 final class WifiFailover {
     static final String MODE_STATION = "station";
@@ -27,10 +28,62 @@ final class WifiFailover {
     private volatile String state = "starting";
     private volatile long disconnectedSince;
     private volatile String homeSsid = "";
+    private final Hotspot hotspot;
 
-    WifiFailover(Context ctx) {
+    WifiFailover(Context ctx, boolean passive) {
         wm = (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         prefs = ctx.getSharedPreferences("wifi", Context.MODE_PRIVATE);
+        hotspot = new Hotspot(ctx, wm, passive);
+    }
+
+    Hotspot hotspot() {
+        return hotspot;
+    }
+
+    /**
+     * Pairing button: the hotspot runs with its factory settings for ms, then goes back to this robot's
+     * own password. A running hotspot is restarted for each switch (phones on it have to join again).
+     */
+    void factoryWindow(final long ms) {
+        boolean wasOwn = !hotspot.usingFactory();
+        hotspot.openFactoryWindow(ms);
+        if (!hotspot.factoryDiffers()) return;
+        if (wasOwn) {
+            EventLog.i("hotspot: factory settings for " + ms / 1000 + " s (pairing button)");
+            restartApLater(500);
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                sleep(ms + 500);
+                if (hotspot.usingFactory()) return; // extended by another press, or passive
+                EventLog.i("hotspot: setup window over, back to this robot's password");
+                restartAp();
+            }
+        }, "hotspot-window").start();
+    }
+
+    /** Restarts a running hotspot after delayMs so it picks up new settings; the HTTP reply goes out first. */
+    void restartApLater(final long delayMs) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                sleep(delayMs);
+                restartAp();
+            }
+        }, "hotspot-restart").start();
+    }
+
+    private synchronized void restartAp() {
+        if (!isAp()) return; // the new settings apply the next time the hotspot comes up
+        try {
+            setAp(false);
+            sleep(2000);
+            setAp(true);
+            EventLog.i("hotspot: restarted with " + (hotspot.usingFactory() ? "the factory settings" : "this robot's password"));
+        } catch (Exception e) {
+            EventLog.e("hotspot restart failed", e);
+        }
     }
 
     String preferredMode() {
@@ -135,8 +188,8 @@ final class WifiFailover {
     }
 
     private void setAp(boolean on) throws Exception {
-        Method get = WifiManager.class.getMethod("getWifiApConfiguration");
-        WifiConfiguration cfg = (WifiConfiguration) get.invoke(wm);
+        // Starting with a configuration also saves it as Android's hotspot settings (KitKat).
+        WifiConfiguration cfg = hotspot.config();
         Method set = WifiManager.class.getMethod("setWifiApEnabled", WifiConfiguration.class, boolean.class);
         set.invoke(wm, cfg, on);
     }
