@@ -41,6 +41,11 @@ import org.json.JSONObject;
  *    own wake word (openWakeWord) starts each request.
  * If Home Assistant isn't connected, the on-robot voice commands work as before.
  *
+ * Replies can also come back as droid beeps instead of the pipeline's voice ("beeps-on"): Home Assistant
+ * sends the reply's text (synthesize) before its audio, so R2 beeps something that fits the text, shows the
+ * text as a subtitle (web page, /status, Home Assistant), and drops the spoken audio. Only answers to a
+ * request turn into beeps; announcements and other audio with no request before them still play as sent.
+ *
  * Wire format: a JSON header line {"type", "data_length", "payload_length", "version"}, then
  * data_length bytes of JSON data, then payload_length bytes of raw audio.
  */
@@ -62,6 +67,18 @@ final class Assist implements Voice.Stream {
         boolean playingSound();
 
         String robotName();
+
+        /** R2 answered (text is what the pipeline said); beeps=true if he beeped it instead of speaking. */
+        void onAssistReply(String text, boolean beeps);
+    }
+
+    /** Plays droid beeps in place of a spoken reply. */
+    interface Beeper {
+        /** Beeps something that fits this text; blocks until done or stop(). */
+        void say(String text) throws InterruptedException;
+
+        /** Ends say() early. */
+        void stop();
     }
 
     /** Plays the reply audio. Separate so the protocol can be tested without Android audio. */
@@ -92,16 +109,27 @@ final class Assist implements Voice.Stream {
     private static final int MAX_HEADER = 64 * 1024, MAX_DATA = 1024 * 1024, MAX_PAYLOAD = 4 * 1024 * 1024;
     private static final Object END = new Object();
 
+    private static final class BeepItem {
+        final String text;
+
+        BeepItem(String text) {
+            this.text = text;
+        }
+    }
+
     private final Context ctx;
     private final SharedPreferences prefs;
     private final Host host;
     private final Speaker speaker;
+    private final Beeper beeper;
     private final int port;
     private final CopyOnWriteArrayList<Conn> conns = new CopyOnWriteArrayList<>();
     private final LinkedBlockingQueue<Object> playQueue = new LinkedBlockingQueue<>();
 
     private volatile int mode;
     private volatile String pinnedHost;
+    private volatile boolean beepReplies;   // answer in beeps, with the text as a subtitle
+    private volatile boolean beeping;       // the current reply is beeps (its audio is dropped)
     private volatile Conn active;           // the connection that sent run-satellite
     private volatile boolean streaming;     // mic audio goes to the active connection
     private volatile long streamStarted, streamTimestamp;
@@ -116,19 +144,21 @@ final class Assist implements Voice.Stream {
     private Object nsdListener;
 
     /** On the robot. */
-    Assist(Context ctx, Host host) {
-        this(ctx, host, new TrackSpeaker(), PORT);
+    Assist(Context ctx, Host host, Beeper beeper) {
+        this(ctx, host, new TrackSpeaker(), beeper, PORT);
     }
 
     /** ctx may be null (tests): settings are then kept in memory only and nothing is advertised. */
-    Assist(Context ctx, Host host, Speaker speaker, int port) {
+    Assist(Context ctx, Host host, Speaker speaker, Beeper beeper, int port) {
         this.ctx = ctx;
         this.prefs = ctx != null ? ctx.getSharedPreferences("assist", Context.MODE_PRIVATE) : null;
         this.host = host;
         this.speaker = speaker;
+        this.beeper = beeper;
         this.port = port;
         this.mode = prefs != null ? prefs.getInt("mode", OFF) : OFF;
         this.pinnedHost = prefs != null ? prefs.getString("host", "") : "";
+        this.beepReplies = prefs != null && prefs.getBoolean("beeps", false);
     }
 
     void start() {
@@ -171,11 +201,23 @@ final class Assist implements Voice.Stream {
         return status();
     }
 
+    /** Answers in beeps (true) or in the pipeline's voice (false, the default). Kept across reboots. */
+    void setBeepReplies(boolean on) {
+        beepReplies = on;
+        if (prefs != null) prefs.edit().putBoolean("beeps", on).apply();
+        Log.i(TAG, on ? "replies in beeps" : "replies in the pipeline's voice");
+        host.onAssistStatus();
+    }
+
+    boolean beepReplies() {
+        return beepReplies;
+    }
+
     String status() {
         if (mode == OFF) return "assist: off";
         Conn a = active;
         String s = "assist: " + (mode == ROBOT_WAKE ? "wake word on the robot" : "wake word in Home Assistant")
-                + (pinnedHost.isEmpty() ? "" : ", only " + pinnedHost) + ", ";
+                + (pinnedHost.isEmpty() ? "" : ", only " + pinnedHost) + (beepReplies ? ", answers in beeps" : "") + ", ";
         if (a == null) return s + "waiting for Home Assistant on port " + port;
         String[] names = {"idle", "listening", "thinking", "speaking"};
         return s + "connected to " + a.peer + ", " + names[state]
@@ -331,16 +373,27 @@ final class Assist implements Voice.Stream {
                     setState(THINKING);
                 }
                 break;
-            case "synthesize":
-                if (isActive) lastReply = clip(data.optString("text"));
+            case "synthesize": // the reply's text, sent just before its audio
+                if (isActive) {
+                    String text = subtitle(data.optString("text"));
+                    lastReply = clip(text);
+                    if (text.isEmpty()) break;
+                    // Only an answer to a request (we have its transcript) becomes beeps, not an announcement.
+                    boolean beeps = beepReplies && state == THINKING;
+                    if (beeps) startBeeps(c, text);
+                    host.onAssistReply(text, beeps);
+                }
                 break;
             case "audio-start":
-                if (isActive) startReply(c, data);
+                if (isActive) {
+                    if (beeping && speakingTo == c) lastReplyAudio = System.currentTimeMillis(); // dropped
+                    else startReply(c, data);
+                }
                 break;
             case "audio-chunk":
                 if (isActive && speaking && speakingTo == c && payload != null) {
                     lastReplyAudio = System.currentTimeMillis();
-                    playQueue.add(payload);
+                    if (!beeping) playQueue.add(payload);
                 }
                 break;
             case "audio-stop":
@@ -404,6 +457,12 @@ final class Assist implements Voice.Stream {
         return s.length() > 200 ? s.substring(0, 200) + "..." : s;
     }
 
+    /** A reply's text for subtitles: one line, at most 1000 characters. */
+    static String subtitle(String s) {
+        s = s == null ? "" : s.replaceAll("\\s+", " ").trim();
+        return s.length() > 1000 ? s.substring(0, 1000) + "..." : s;
+    }
+
     // ---- reply audio ----------------------------------------------------------------------
 
     private static final class ReplyFormat {
@@ -431,10 +490,23 @@ final class Assist implements Voice.Stream {
         setState(SPEAKING);
     }
 
+    /** A reply in beeps: R2 beeps now, and the reply audio that follows only tells us when it's over. */
+    private void startBeeps(Conn c, String text) {
+        if (speaking) abortReply();
+        endStream(c);
+        speaking = true; // the mic stops now (Brain.mayListen)
+        beeping = true;
+        speakingTo = c;
+        lastReplyAudio = System.currentTimeMillis();
+        playQueue.add(new BeepItem(text));
+        setState(SPEAKING);
+    }
+
     private void abortReply() {
         if (!speaking) return;
         playQueue.clear();
         speaker.abort();
+        if (beeper != null) beeper.stop();
         finishReply(false);
     }
 
@@ -442,6 +514,7 @@ final class Assist implements Voice.Stream {
         if (!speaking) return;
         Conn c = speakingTo;
         speaking = false;
+        beeping = false;
         speakingTo = null;
         if (played && c != null) {
             try {
@@ -465,13 +538,15 @@ final class Assist implements Voice.Stream {
         while (true) {
             try {
                 Object item = playQueue.take();
-                if (item instanceof ReplyFormat) {
+                if (item instanceof BeepItem) {
+                    if (beeper != null) beeper.say(((BeepItem) item).text);
+                } else if (item instanceof ReplyFormat) {
                     ReplyFormat f = (ReplyFormat) item;
                     speaker.open(f.rate, f.width, f.channels);
                 } else if (item instanceof byte[]) {
                     speaker.write((byte[]) item);
                 } else if (item == END) {
-                    speaker.drain();
+                    if (!beeping) speaker.drain();
                     finishReply(true);
                 }
             } catch (InterruptedException e) {
