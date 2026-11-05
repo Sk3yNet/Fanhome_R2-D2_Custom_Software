@@ -47,6 +47,12 @@ routine engine in section 6.
 - [ ] Load the sounds at runtime from the factory files on the robot, the same way as the serial library,
       so nothing gets redistributed. *Built, not yet tested on the robot.* Later, optional user sound packs.
 - [ ] Mute and volume, kept across reboots. *Built, not yet tested on the robot.* Mute is reachable as an action; volume is set with `POST /volume`, the DLNA renderer and Home Assistant.
+- [ ] **New droid chirps on the fly** instead of the same recorded confirmation beep each time (Fanhome
+      owners' most common sound complaint). R2 Main generates R2-style phrases (blips, glides, warbles,
+      trills) in seven moods, plus droid sounds shaped like a sentence for a beeps-only reply. Used for the
+      confirmation beep (`chirps-off` brings back the factory one), the `chirp` action, `POST /chirp`,
+      `{"chirp": "happy"}` routine steps and a Home Assistant button. See [docs/chirps.md](docs/chirps.md).
+      *Built, not yet tested on the robot.*
 
 ### Buttons, status and lights
 - [ ] **Robot buttons:** power off (a clean shutdown of both the controller and Android), hotspot/Wi-Fi
