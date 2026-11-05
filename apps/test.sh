@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore), its plugin
-# interface (PluginManager, PluginContext, the built-in plugins), and the agent's hotspot password
-# helpers (Hotspot).
+# Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore), watch-with-me
+# (CueFile, CueStore, WatchWithMe), the plugin interface (PluginManager, PluginContext, the built-in
+# plugins) and the agent's hotspot password helpers (Hotspot).
 # Usage: apps/test.sh
 # Needs a JDK and Android's real org.json, taken from Robolectric's android-all jar for Android 4.4
 # (the SDK's android.jar only has stubs). The jar is downloaded once to tools/test-libs/, or set
@@ -28,8 +28,10 @@ mkdir -p "$OUT"
 SRC=$APPS_DIR/main/src/dev/r2hack/main
 javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \
     "$SRC/Routine.java" "$SRC/RoutineRunner.java" "$SRC/RoutineStore.java" \
-    "$APPS_DIR/main/test/dev/r2hack/main/RoutineTest.java"
+    "$SRC/CueFile.java" "$SRC/CueStore.java" "$SRC/WatchWithMe.java" \
+    "$APPS_DIR/main/test/dev/r2hack/main/RoutineTest.java" "$APPS_DIR/main/test/dev/r2hack/main/WatchTest.java"
 java -cp "$OUT:$JAR" dev.r2hack.main.RoutineTest "$ROOT/docs/routines"
+java -cp "$OUT:$JAR" dev.r2hack.main.WatchTest "$ROOT/docs/watch-with-me"
 
 AGENT_SRC=$APPS_DIR/agent/src/dev/r2hack/agent
 javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \

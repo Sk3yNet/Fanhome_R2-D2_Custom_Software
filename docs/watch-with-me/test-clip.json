@@ -1,0 +1,16 @@
+{
+  "name": "test-clip",
+  "title": "Test: any video, reactions every 15 seconds",
+  "description": "For trying watch-with-me with any video: a reaction at 0:05, then every 15 seconds for two minutes.",
+  "match": ["r2 test clip"],
+  "cues": [
+    {"at": "0:05", "steps": [{"sound": 8}], "note": "hello"},
+    {"at": "0:20", "routine": "gasp", "note": "something shocking"},
+    {"at": "0:35", "routine": "cheer", "note": "the heroes win"},
+    {"at": "0:50", "steps": [{"head": -60}, {"wait": 2}, {"head": 0}], "note": "look at the viewer"},
+    {"at": "1:05", "routine": "sad", "note": "a sad moment"},
+    {"at": "1:20", "routine": "gasp"},
+    {"at": "1:35", "routine": "cheer"},
+    {"at": "1:50", "steps": [{"action": "shake-head"}], "note": "disagree"}
+  ]
+}

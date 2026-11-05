@@ -244,8 +244,9 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     private HttpApi.Response routines(JSONObject ask) throws Exception {
         if (passive) return passiveError();
         String op = ask.optString("op");
-        if (("get".equals(op) || "delete".equals(op) || "run".equals(op)) && ask.optString("name").isEmpty()) {
-            return bad("name= is required, e.g. ?name=greet");
+        if (("get".equals(op) || "delete".equals(op) || "run".equals(op) || "cue-get".equals(op) || "cue-delete".equals(op))
+                && ask.optString("name").isEmpty()) {
+            return bad("name= is required, e.g. ?name=" + (op.startsWith("cue") ? "a-new-hope" : "greet"));
         }
         JSONObject reply = mainRequests.ask(ask.put("agent", "routines"), ROUTINE_REPLY_MS);
         if (reply == null) return HttpApi.Response.json(503, "{\"error\":\"the main app is not connected or did not answer\"}");
@@ -444,6 +445,38 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             case "POST /routine/stop": // ends the running routine or action (POST /stop also stops the robot here)
                 if (passive) return passiveError();
                 return routines(new JSONObject().put("op", "stop"));
+            // Watch-with-me (docs/watch-with-me.md): cue files and the session, handled by the main app.
+            case "GET /cues":
+                return routines(new JSONObject().put("op", "cue-list"));
+            case "GET /cue":
+                return routines(new JSONObject().put("op", "cue-get").put("name", req.query.get("name")));
+            case "POST /cue": { // body: the cue file as JSON; ?name= optional
+                if (passive) return passiveError();
+                JSONObject body;
+                try {
+                    body = new JSONObject(req.bodyText);
+                } catch (Exception e) {
+                    return bad("the body must be the cue file as a JSON object: " + e.getMessage());
+                }
+                JSONObject ask = new JSONObject().put("op", "cue-put").put("cue", body);
+                if (req.query.containsKey("name")) ask.put("name", req.query.get("name"));
+                return routines(ask);
+            }
+            case "POST /cue/delete":
+                if (passive) return passiveError();
+                return routines(new JSONObject().put("op", "cue-delete").put("name", req.query.get("name")));
+            case "GET /watch":
+                return routines(new JSONObject().put("op", "watch"));
+            case "POST /watch": { // body: {"state","position","title","cue","enabled"}
+                if (passive) return passiveError();
+                JSONObject body;
+                try {
+                    body = new JSONObject(req.bodyText == null || req.bodyText.trim().isEmpty() ? "{}" : req.bodyText);
+                } catch (Exception e) {
+                    return bad("the body must be a JSON object, e.g. {\"state\":\"playing\",\"cue\":\"a-new-hope\",\"position\":0}");
+                }
+                return routines(new JSONObject().put("op", "watch").put("watch", body));
+            }
             case "GET /plugins":
                 return plugins(new JSONObject().put("op", "list"));
             case "POST /plugin": { // ?name=&enabled=1|0 and/or &grant=status,actions (empty: nothing)

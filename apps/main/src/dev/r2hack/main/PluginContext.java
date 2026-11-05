@@ -18,7 +18,7 @@ final class PluginContext {
         /**
          * The robot's state: battery (int, -1 unknown), charging (0/1/2), lightsaber, arm, lcd_s, lcd_l
          * (booleans), projector (0/1/2), mode (string), action (string), error (string), muted, voice,
-         * face (booleans), volume (0-100), name, uuid, version (strings).
+         * face (booleans), volume (0-100), name, uuid, version (strings), watch (WatchWithMe.status()).
          */
         JSONObject state();
 
@@ -51,6 +51,12 @@ final class PluginContext {
         void setVolume(int percent);
 
         void led(int r, int b, int y, int g);
+
+        /** A media player update for watch-with-me; returns what happened, or throws IllegalArgumentException. */
+        String watchUpdate(JSONObject msg);
+
+        /** The "Watch with me" switch. */
+        void setWatch(boolean on);
 
         void log(String msg);
     }
@@ -210,6 +216,20 @@ final class PluginContext {
         need(PluginPermissions.SETTINGS, "volume");
         if (percent < 0 || percent > 100) throw new Denied(plugin + ": volume is 0-100");
         host.setVolume(percent);
+    }
+
+    // ---- watch-with-me (docs/watch-with-me.md) ----
+
+    /** What a film is doing (playing, paused, position...): R2 then reacts with his actions and sounds. */
+    String watchUpdate(JSONObject msg) {
+        need(PluginPermissions.ACTIONS, "watch update");
+        return host.watchUpdate(msg);
+    }
+
+    /** The "Watch with me" switch: off keeps R2 quiet during films. */
+    void setWatch(boolean on) {
+        need(PluginPermissions.SETTINGS, "watch-with-me switch");
+        host.setWatch(on);
     }
 
     // ---- always allowed ----

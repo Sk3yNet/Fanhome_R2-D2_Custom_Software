@@ -18,13 +18,13 @@ import java.util.TreeSet;
  */
 final class PluginPermissions {
     static final String STATUS = "status";               // read the robot's state, get events
-    static final String ACTIONS = "actions";             // run built-in actions (dance, lightsaber, projector...)
+    static final String ACTIONS = "actions";             // run built-in actions (dance, lightsaber, projector...), watch-with-me updates
     static final String DRIVE = "drive";                 // drive, move the head, send movement commands
     static final String ROUTINES_RUN = "routines.run";   // list and run stored routines
     static final String ROUTINES_EDIT = "routines.edit"; // save and delete routines
     static final String SOUND = "sound";                 // play droid sounds
     static final String LIGHTS = "lights";               // set the status lights
-    static final String SETTINGS = "settings";           // volume, mute, voice commands, face tracking
+    static final String SETTINGS = "settings";           // volume, mute, voice commands, face tracking, watch-with-me switch
 
     /** Every permission, with the line GET /plugins shows for it. */
     static final Map<String, String> ALL;
@@ -32,13 +32,13 @@ final class PluginPermissions {
     static {
         Map<String, String> m = new LinkedHashMap<>();
         m.put(STATUS, "read the robot's state and events");
-        m.put(ACTIONS, "run built-in actions");
+        m.put(ACTIONS, "run built-in actions, and react along with a film (watch-with-me)");
         m.put(DRIVE, "drive and move the head");
         m.put(ROUTINES_RUN, "list and run routines");
         m.put(ROUTINES_EDIT, "save and delete routines");
         m.put(SOUND, "play droid sounds");
         m.put(LIGHTS, "set the status lights");
-        m.put(SETTINGS, "change volume, mute, voice and face tracking");
+        m.put(SETTINGS, "change volume, mute, voice, face tracking and watch-with-me");
         ALL = Collections.unmodifiableMap(m);
     }
 

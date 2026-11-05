@@ -94,6 +94,11 @@ final class HomeAssistantPlugin implements Plugin {
         }
     }
 
+    /** The MQTT topic Home Assistant sends watch-with-me updates to. */
+    String watchTopic() {
+        return ha.watchTopic();
+    }
+
     @Override
     public String status() {
         return ha.status().replaceFirst("^home assistant: ", "");
@@ -158,6 +163,30 @@ final class HomeAssistantPlugin implements Plugin {
             if (c == null) return;
             try {
                 c.setVolume(percent);
+            } catch (PluginContext.Denied d) {
+                c.log(d.getMessage());
+            }
+        }
+
+        @Override
+        public void watchUpdate(JSONObject msg) {
+            PluginContext c = ctx;
+            if (c == null) return;
+            try {
+                c.log("watch " + c.watchUpdate(msg));
+            } catch (PluginContext.Denied d) {
+                c.log(d.getMessage());
+            } catch (IllegalArgumentException e) {
+                c.log("watch update ignored: " + e.getMessage());
+            }
+        }
+
+        @Override
+        public void setWatch(boolean on) {
+            PluginContext c = ctx;
+            if (c == null) return;
+            try {
+                c.setWatch(on);
             } catch (PluginContext.Denied d) {
                 c.log(d.getMessage());
             }
