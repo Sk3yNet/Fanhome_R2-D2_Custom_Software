@@ -65,6 +65,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private final HomeAssistant ha;
     private final RoutineStore routines;
     private volatile String lastRoutine = "";   // how the last routine ended, for listings and /status
+    private final CueStore cues;
+    private final WatchWithMe watch;
 
     private volatile long lastActivity = System.currentTimeMillis();
     private volatile long pairUntil;
@@ -99,6 +101,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             }
         });
         this.routines = new RoutineStore(new File(io.getFilesDir(), "routines"), ROUTINE_ACTIONS);
+        this.cues = new CueStore(new File(io.getFilesDir(), "cues"), ROUTINE_ACTIONS);
+        this.watch = new WatchWithMe(watchHost);
         this.dlna = new DlnaRenderer(io, sounds);
         sounds.onChange = new Runnable() {
             @Override
@@ -121,6 +125,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         voice.setStream(assist);
         this.face = new FaceTracker(this);
         this.ha = new HomeAssistant(haHost());
+        watch.setEnabled(io.getSharedPreferences("settings", 0).getBoolean("watch", true));
         robot.addListener(new Robot.Listener() {
             @Override
             public void onRobotChanged() {
@@ -145,6 +150,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 + "\nface: " + (face.tracking() ? "tracking a face" : faceActive ? "looking" : "off") + "\nname: " + robot.name()
                 + "\nbattery: " + (robot.battery < 0 ? "?" : robot.battery + "%")
                 + "\nroutines: " + routines.names().size() + (lastRoutine.isEmpty() ? "" : ", last: " + lastRoutine)
+                + "\nwatch-with-me: " + watchLine()
                 + "\n" + ha.status();
     }
 
@@ -236,7 +242,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 ha.configure(msg);
                 break;
             case "routines":
-                onRoutinesRequest(msg);
+                if (msg.optString("op").startsWith("cue") || "watch".equals(msg.optString("op"))) onWatchRequest(msg);
+                else onRoutinesRequest(msg);
                 break;
             case "wifi-list":
             case "wifi-join-result":
@@ -269,6 +276,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         wake();
         switch (name) {
             case "stop":
+                watch.stop();
                 seq.cancel();
                 dlna.stopMedia();
                 assist.stop();
@@ -739,6 +747,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                         camera.setDetecting(wantFace);
                     }
                     if (face.tracking()) lastActivity = now; // someone is there: stay awake
+                    watch.tick(android.os.SystemClock.elapsedRealtime());
+                    if (watch.active()) lastActivity = now; // watching a film together: stay awake
                     voice.setEnabled(robot.voiceRecognition());
                     if (robot.mode == Robot.PAIR && now > pairUntil) {
                         Log.i(TAG, "pairing mode ended");
@@ -763,6 +773,181 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         t.start();
     }
 
+    // ---- watch-with-me (docs/watch-with-me.md) -------------------------------------------------
+
+    private void setWatchEnabled(boolean on) {
+        io.getSharedPreferences("settings", 0).edit().putBoolean("watch", on).apply();
+        watch.setEnabled(on);
+    }
+
+    private String watchLine() {
+        JSONObject w = watch.status(android.os.SystemClock.elapsedRealtime());
+        return (w.optBoolean("enabled") ? "" : "switched off, ") + w.optString("state")
+                + (w.optString("cue").isEmpty() ? "" : " " + w.optString("cue") + " at " + w.optString("position_text"))
+                + (w.optString("last").isEmpty() ? "" : ", last: " + w.optString("last"));
+    }
+
+    private final WatchWithMe.Host watchHost = new WatchWithMe.Host() {
+        @Override
+        public CueFile loadCue(String name) {
+            try {
+                return cues.load(name);
+            } catch (Routine.Invalid e) {
+                Log.w(TAG, "cue file " + name + ": " + e.getMessage());
+                return null;
+            }
+        }
+
+        @Override
+        public CueFile findCue(String title) {
+            return cues.find(title);
+        }
+
+        /**
+         * Runs a reaction on the sequencer, stationary and allowed on the charger. It doesn't interrupt
+         * anything else you started (an action, a routine, patrol, pairing, phone control); an earlier
+         * reaction still running is replaced.
+         */
+        @Override
+        public void fire(CueFile file, CueFile.Cue cue) {
+            String running = seq.running();
+            if (!"idle".equals(running) && !running.startsWith("watch-")) {
+                Log.i(TAG, "watch-with-me: skipped " + cue.what() + ", busy with " + running);
+                return;
+            }
+            if (robot.mode == Robot.PAIR || robot.mode == Robot.PATROL || robot.mode == Robot.USER_CONTROL) {
+                Log.i(TAG, "watch-with-me: skipped " + cue.what() + " (mode " + robot.mode + ")");
+                return;
+            }
+            final Routine r;
+            if (cue.steps != null) {
+                r = cue.steps;
+            } else {
+                Routine stored = routineHost.load(cue.routine);
+                if (stored == null) {
+                    Log.w(TAG, "watch-with-me: no usable routine named " + cue.routine);
+                    return;
+                }
+                r = stored;
+            }
+            wake();
+            final RoutineRunner runner = new RoutineRunner(routineHost, RoutineRunner.REAL_CLOCK).stationary().whileCharging();
+            seq.start("watch-" + file.name, new Sequencer.Job() {
+                public void run() throws Exception {
+                    try {
+                        runner.run(r);
+                    } catch (RoutineRunner.Abort a) {
+                        Log.w(TAG, "watch-with-me reaction stopped: " + a.getMessage());
+                        stopMotion();
+                    }
+                }
+            });
+        }
+
+        @Override
+        public void log(String msg) {
+            Log.i(TAG, msg);
+        }
+
+        @Override
+        public void changed() {
+            ha.stateChanged();
+        }
+    };
+
+    /**
+     * Cue files and the watch session, through the agent's routine channel:
+     * op cue-list | cue-get | cue-put | cue-delete | watch (with "watch": the update, or none for the status).
+     */
+    private void onWatchRequest(JSONObject msg) {
+        JSONObject reply = new JSONObject();
+        try {
+            reply.put("agent", "routines-reply").put("seq", msg.optInt("seq"));
+            String op = msg.optString("op"), name = msg.optString("name");
+            switch (op) {
+                case "cue-list": {
+                    JSONArray list = new JSONArray();
+                    for (String n : cues.names()) {
+                        JSONObject e = new JSONObject().put("name", n);
+                        try {
+                            CueFile c = cues.load(n);
+                            if (c == null) continue;
+                            e.put("title", c.title).put("description", c.description).put("cues", c.cues.size())
+                                    .put("match", new JSONArray(c.match)).put("offset", c.offset);
+                        } catch (Routine.Invalid bad) {
+                            e.put("error", bad.getMessage());
+                        }
+                        list.put(e);
+                    }
+                    reply.put("ok", true).put("cues", list).put("watch", watch.status(android.os.SystemClock.elapsedRealtime()));
+                    break;
+                }
+                case "cue-get": {
+                    CueFile c = cues.load(name);
+                    if (c == null) reply.put("ok", false).put("error", "no cue file named " + name);
+                    else reply.put("ok", true).put("cue", c.source);
+                    break;
+                }
+                case "cue-put": {
+                    JSONObject j = msg.optJSONObject("cue");
+                    if (j == null) throw new Routine.Invalid("send the cue file as a JSON object");
+                    if (name.isEmpty()) name = j.optString("name");
+                    else if (!j.has("name")) j.put("name", name);
+                    if (!name.equals(j.optString("name"))) throw new Routine.Invalid("the name in the URL and in the cue file differ");
+                    boolean existed = cues.exists(name);
+                    CueFile c = cues.save(j);
+                    Log.i(TAG, "cue file saved: " + c.name);
+                    StringBuilder missing = new StringBuilder();
+                    for (CueFile.Cue q : c.cues) {
+                        if (q.routine != null && !routines.exists(q.routine) && missing.indexOf(q.routine) < 0) {
+                            missing.append(missing.length() > 0 ? ", " : "").append(q.routine);
+                        }
+                    }
+                    reply.put("ok", true).put("result", (existed ? "replaced " : "saved ") + c.name + " (" + c.cues.size() + " cues)"
+                            + (missing.length() > 0 ? "; upload these routines too: " + missing : ""));
+                    break;
+                }
+                case "cue-delete":
+                    if (name.equals(watch.cueName())) watch.stop();
+                    if (cues.delete(name)) reply.put("ok", true).put("result", "deleted " + name);
+                    else reply.put("ok", false).put("error", "no cue file named " + name);
+                    break;
+                case "watch": {
+                    long now = android.os.SystemClock.elapsedRealtime();
+                    JSONObject w = msg.optJSONObject("watch");
+                    if (w != null && w.has("enabled")) {
+                        setWatchEnabled(w.optBoolean("enabled"));
+                        w.remove("enabled");
+                    }
+                    if (w != null && w.length() > 0) {
+                        try {
+                            reply.put("result", watch.update(w, false, now));
+                        } catch (IllegalArgumentException e) {
+                            reply.put("ok", false).put("error", e.getMessage());
+                            break;
+                        }
+                    }
+                    reply.put("ok", true).put("watch", watch.status(now)).put("topic", ha.watchTopic());
+                    break;
+                }
+                default:
+                    reply.put("ok", false).put("error", "unknown op " + op);
+            }
+        } catch (Routine.Invalid e) {
+            try {
+                reply.put("ok", false).put("error", e.getMessage());
+            } catch (Exception ignored) {
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "watch request failed", e);
+            try {
+                reply.put("ok", false).put("error", String.valueOf(e));
+            } catch (Exception ignored) {
+            }
+        }
+        io.send(reply);
+    }
+
     // ---- Home Assistant ---------------------------------------------------------------------
 
     private HomeAssistant.Host haHost() {
@@ -779,7 +964,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                             .put("action", seq.running()).put("error", robot.error)
                             .put("muted", sounds.muted()).put("volume", sounds.volume())
                             .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
-                            .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION);
+                            .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION)
+                            .put("watch", watch.status(android.os.SystemClock.elapsedRealtime()));
                 } catch (Exception ignored) {
                 }
                 return s;
@@ -813,6 +999,20 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             @Override
             public void log(String msg) {
                 Log.i(TAG, msg);
+            }
+
+            @Override
+            public void watchUpdate(JSONObject msg) {
+                try {
+                    Log.i(TAG, "home assistant: watch " + watch.update(msg, true, android.os.SystemClock.elapsedRealtime()));
+                } catch (IllegalArgumentException e) {
+                    Log.w(TAG, "home assistant: watch update ignored: " + e.getMessage());
+                }
+            }
+
+            @Override
+            public void setWatch(boolean on) {
+                setWatchEnabled(on);
             }
 
             @Override

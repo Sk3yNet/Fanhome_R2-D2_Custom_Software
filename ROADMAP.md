@@ -216,6 +216,11 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       Also mode, current action and error sensors, display, mute, voice and face switches, and volume.
       Set the broker with `tools\r2.ps1 mqtt`; it must be on the robot's subnet or an allowed one.
       Each stored routine gets a button too.
+- [ ] **Watch with me:** R2 reacts during a film (sounds, head turns, lights) from a cue file of times,
+      following a Home Assistant media player's position over MQTT, or started by hand
+      (`tools\r2.ps1 watch-start`). Reactions never drive. See [docs/watch-with-me.md](docs/watch-with-me.md).
+      *Built, not yet tested on the robot.* Still to do: cue files for real films (the hard part), and
+      sounds tagged by mood so reactions fit better.
 - [ ] Alternatively, a Home Assistant integration over a local REST/WebSocket API, using the security
       work in section 3.
 - [ ] **R2 as a Home Assistant media destination** (a `media_player` entity):
