@@ -48,8 +48,15 @@ final class RoutineRunner {
     static final int MAX_CALL_DEPTH = 4;            // routine steps calling routines
     private static final long POLL_MS = 100;
 
+    /** Controller modes that drive the robot (turns, forward, patrol, circle; docs/serial-protocol.md). */
+    static final int[] MOVING_MODES = {2, 3, 4, 5, 9, 12};
+    /** Built-in actions that drive the robot. */
+    static final String[] MOVING_ACTIONS = {"turn-left", "turn-right", "turn-around", "forward", "circle", "dance"};
+
     private final Host host;
     private final Clock clock;
+    private boolean stationary;
+    private boolean forceWhileCharging;
     private long deadline;
     private String errorAtStart;
     private Routine top;
@@ -77,6 +84,38 @@ final class RoutineRunner {
         this.clock = clock;
     }
 
+    /**
+     * Stationary: steps that drive (drive, moving modes, "move" commands, the turning actions) are skipped,
+     * so R2 stays where he is (watch-with-me reactions). Sounds, head, lights and the rest still run.
+     */
+    RoutineRunner stationary() {
+        stationary = true;
+        return this;
+    }
+
+    /** Runs on the charger too, whatever the routine says (only useful together with stationary()). */
+    RoutineRunner whileCharging() {
+        forceWhileCharging = true;
+        return this;
+    }
+
+    /** Whether a step would drive the robot (not counting steps inside repeat blocks or other routines). */
+    static boolean moves(Routine.Step s) {
+        switch (s.kind) {
+            case DRIVE:
+                return true;
+            case MODE:
+                for (int m : MOVING_MODES) if (m == s.number) return true;
+                return false;
+            case CMD:
+                return "move".equals(s.json.optString("cmd"));
+            case ACTION:
+                return Routine.contains(MOVING_ACTIONS, s.name);
+            default:
+                return false;
+        }
+    }
+
     /** Runs r to the end. Throws Abort (a safety rule) or InterruptedException (cancelled). */
     void run(Routine r) throws Exception {
         top = r;
@@ -94,6 +133,7 @@ final class RoutineRunner {
     }
 
     private void runStep(Routine.Step s, int calls, String path) throws Exception {
+        if (stationary && moves(s)) return;
         switch (s.kind) {
             case WAIT:
                 pause(s.ms);
@@ -200,7 +240,7 @@ final class RoutineRunner {
             throw new Abort("controller error: " + err);
         }
         int charging = host.field("charging");
-        if (charging > 0 && !top.whileCharging) throw new Abort("R2 is on the charger");
+        if (charging > 0 && !top.whileCharging && !forceWhileCharging) throw new Abort("R2 is on the charger");
         int battery = host.field("battery");
         if (battery >= 0 && battery < LOW_BATTERY_PCT && charging <= 0) throw new Abort("battery low (" + battery + "%)");
     }
