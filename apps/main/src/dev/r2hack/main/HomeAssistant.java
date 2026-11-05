@@ -29,8 +29,8 @@ final class HomeAssistant {
         /**
          * The robot's state: battery (int, -1 unknown), charging (0/1/2), lightsaber, arm, lcd_s, lcd_l
          * (booleans), projector (0/1/2), mode (string), action (string), error (string), muted, voice,
-         * face (booleans), volume (0-100), liveliness (one of LIVELINESS, the activity preset), name, uuid,
-         * version, location (strings), watch (WatchWithMe.status()).
+         * face, beeps (booleans), volume (0-100), liveliness (one of LIVELINESS, the activity preset),
+         * reply (string: R2's last voice answer), name, uuid, version, location (strings), watch (WatchWithMe.status()).
          */
         JSONObject haState();
 
@@ -91,6 +91,7 @@ final class HomeAssistant {
             {"mute", "Mute", "mdi:volume-off"}, {"voice", "Voice commands", "mdi:microphone"},
             {"face", "Face tracking", "mdi:face-recognition"},
             {"watch", "Watch with me", "mdi:movie-open-play"},
+            {"beeps", "Answer in beeps", "mdi:message-processing"},
     };
 
     static final String[] MODES = {"ready", "sleeping", "pairing", "patrol", "phone control"};
@@ -486,6 +487,9 @@ final class HomeAssistant {
             case "watch":
                 host.setWatch(on);
                 break;
+            case "beeps":
+                host.action(on ? "beeps-on" : "beeps-off");
+                break;
             default:
                 break;
         }
@@ -507,12 +511,19 @@ final class HomeAssistant {
                 JSONObject w = st.optJSONObject("watch");
                 return w != null && w.optBoolean("enabled");
             }
+            case "beeps": return st.optBoolean("beeps");
             default: return null;
         }
     }
 
     private static String clip(String s) {
         return s.length() > 40 ? s.substring(0, 40) + "..." : s;
+    }
+
+    /** Home Assistant drops sensor states over 255 characters. "none" before R2 has answered. */
+    static String sensorText(String s) {
+        if (s.isEmpty()) return "none";
+        return s.length() > 255 ? s.substring(0, 252) + "..." : s;
     }
 
     // ---- publishing ---------------------------------------------------------------------------
@@ -587,6 +598,7 @@ final class HomeAssistant {
         m.put(b + "/location", st.optString("location", "unknown"));
         String live = st.optString("liveliness", "");
         if (!live.isEmpty()) m.put(b + "/liveliness", live); // left out until R2 Main reports it
+        m.put(b + "/reply", sensorText(st.optString("reply", "")));
         for (String[] sw : SWITCHES) m.put(b + "/switch/" + sw[0], switchState(sw[0], st) ? "ON" : "OFF");
         JSONObject w = st.optJSONObject("watch");
         if (w != null) {
@@ -630,6 +642,8 @@ final class HomeAssistant {
                 .put("icon", "mdi:robot"));
         m.put(p + "/sensor/" + node + "/action/config", entity("Action", node, "action", device, origin)
                 .put("state_topic", b + "/action").put("icon", "mdi:play-circle-outline"));
+        m.put(p + "/sensor/" + node + "/reply/config", entity("Last reply", node, "reply", device, origin)
+                .put("state_topic", b + "/reply").put("icon", "mdi:message-text-outline"));
         m.put(p + "/sensor/" + node + "/error/config", entity("Controller error", node, "error", device, origin)
                 .put("state_topic", b + "/error").put("entity_category", "diagnostic")
                 .put("icon", "mdi:alert-circle-outline"));

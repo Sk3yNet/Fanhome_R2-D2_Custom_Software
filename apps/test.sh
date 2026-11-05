@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore, Triggers), places (Places),
 # watch-with-me (CueFile, CueStore, WatchWithMe), idle personality (IdlePersonality), Home Assistant link
-# (HomeAssistant, without a broker), the chirp generator (Chirp), the plugin interface (PluginManager,
+# (HomeAssistant, without a broker), the chirp generator (Chirp), Home Assistant voice replies (Assist, Beeps),
+# the plugin interface (PluginManager,
 # PluginContext, the built-in plugins), the agent's hotspot password helpers (Hotspot) and its boot
 # hardening rules (HardeningRules; the firewall scripts also run against a real iptables in a throwaway
 # network namespace when this machine allows one). Example chirps are written to apps/out/chirps/*.wav
@@ -95,3 +96,13 @@ if command -v iptables > /dev/null && command -v ip6tables > /dev/null; then
 else
     echo "skipped: no iptables here to try the firewall scripts on"
 fi
+
+# Home Assistant voice replies (Assist, Beeps). Android's Log is native, so a stand-in is compiled first
+# on the class path.
+ASSIST_OUT=$APPS_DIR/out/test-assist
+rm -rf "$ASSIST_OUT"
+mkdir -p "$ASSIST_OUT"
+javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$ASSIST_OUT" \
+    -sourcepath "$APPS_DIR/main/src" "$APPS_DIR/main/test/android/util/Log.java" "$SRC/Assist.java" "$SRC/Beeps.java" \
+    "$APPS_DIR/main/test/dev/r2hack/main/AssistTest.java"
+java -cp "$ASSIST_OUT:$JAR" dev.r2hack.main.AssistTest
