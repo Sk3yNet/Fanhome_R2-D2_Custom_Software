@@ -164,6 +164,24 @@ class R2CliTest(unittest.TestCase):
         self.assertEqual(self.last()['path'], '/wifi/join')
         self.assertEqual(json.loads(self.last()['body']), {'ssid': 'Home', 'password': 'secret'})
 
+    def test_watch_with_me(self):
+        self.run_cli('watch-start', 'film', '--at', '1:02:03')
+        self.assertEqual(self.last()['path'], '/watch')
+        self.assertEqual(json.loads(self.last()['body']), {'state': 'playing', 'cue': 'film', 'position': '1:02:03'})
+        self.run_cli('watch-start', 'film')
+        self.assertEqual(json.loads(self.last()['body'])['position'], 0)
+        self.run_cli('watch-resume')
+        self.assertEqual(json.loads(self.last()['body']), {'state': 'playing'})
+        for cmd, body in (('watch-pause', {'state': 'paused'}), ('watch-stop', {'state': 'stopped'}),
+                          ('watch-on', {'enabled': True}), ('watch-off', {'enabled': False})):
+            self.run_cli(cmd)
+            self.assertEqual(json.loads(self.last()['body']), body)
+        self.run_cli('cue-delete', 'my film')
+        self.assertEqual(self.last()['path'], '/cue/delete?name=my%20film')
+        FakeAgent.replies['/cues'] = (200, 'application/json', {'cues': [{'name': 'f', 'match': ['A', 'B'], 'cues': 3}]})
+        _, out, _ = self.run_cli('cues')
+        self.assertIn('A, B', out)
+
     def test_hotspot(self):
         FakeAgent.replies['/hotspot'] = (200, 'application/json', {'ssid': 'R2-D2', 'password': 'pw12345678'})
         code, out, _ = self.run_cli('hotspot')

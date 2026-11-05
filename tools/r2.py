@@ -16,6 +16,16 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   routine-run <name>       run a routine (also: action <name>)
   routine-stop             end the running routine or action
   routine-delete <name>    delete a routine (a replaced built-in action comes back)
+  cues                     list the watch-with-me cue files (docs/watch-with-me.md)
+  cue <name>               show one cue file's JSON
+  cue-put <file.json>      upload a cue file (checked on the robot; replaces one with the same name)
+  cue-delete <name>        delete a cue file
+  watch                    watch-with-me: what R2 is watching, where, and the next reaction
+  watch-start <cue> [--at h:mm:ss]
+                           start reacting along with a film by hand (press play at the same moment),
+                           from the start or from --at; Home Assistant does this by itself when set up
+  watch-pause | watch-resume [--at h:mm:ss] | watch-stop
+  watch-on | watch-off     the "Watch with me" switch: off keeps R2 quiet during films
   volume <0-100>           droid sounds and music volume (kept across reboots)
   logcat [text] [--lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
   dmesg [text] [--lines N]  kernel log
@@ -297,6 +307,43 @@ def cmd_routine_put(robot, a):
         raise R2Error('usage: r2.py routine-put <file.json>  (examples: docs/routines/)')
     with open(a.arg, encoding='utf-8-sig') as f:
         show(robot.call('POST', '/routine', f.read()))
+
+
+def cmd_cues(robot, a):
+    rows = []
+    for c in robot.call('GET', '/cues').get('cues') or []:
+        c = dict(c)
+        if isinstance(c.get('match'), list):
+            c['match'] = ', '.join(str(m) for m in c['match'])
+        rows.append(c)
+    print(table(rows, ['name', 'title', 'cues', 'offset', 'match', 'error']))
+
+
+def cmd_cue(robot, a):
+    show(robot.call('GET', '/cue?name=' + q(need(a.arg, 'cue <name>'))).get('cue'))
+
+
+def cmd_cue_put(robot, a):
+    if not a.arg or not os.path.isfile(a.arg):
+        raise R2Error('usage: r2.py cue-put <file.json>  (examples: docs/watch-with-me/)')
+    with open(a.arg, encoding='utf-8-sig') as f:
+        show(robot.call('POST', '/cue', f.read()))
+
+
+def post_watch(robot, body):
+    show(robot.call('POST', '/watch', json.dumps(body, separators=(',', ':'))))
+
+
+def cmd_watch_start(robot, a):
+    cue = need(a.arg, 'watch-start <cue file> [--at h:mm:ss]  (list: r2.py cues)')
+    post_watch(robot, {'state': 'playing', 'cue': cue, 'position': a.at if a.at else 0})
+
+
+def cmd_watch_resume(robot, a):
+    body = {'state': 'playing'}
+    if a.at:
+        body['position'] = a.at
+    post_watch(robot, body)
 
 
 def cmd_volume(robot, a):
@@ -610,6 +657,17 @@ COMMANDS = {
     'routine-run': with_name('/routine/run?name=', 'routine-run <name>'),
     'routine-stop': simple('POST', '/routine/stop'),
     'routine-delete': with_name('/routine/delete?name=', 'routine-delete <name>'),
+    'cues': cmd_cues,
+    'cue': cmd_cue,
+    'cue-put': cmd_cue_put,
+    'cue-delete': with_name('/cue/delete?name=', 'cue-delete <name>'),
+    'watch': simple('GET', '/watch'),
+    'watch-start': cmd_watch_start,
+    'watch-pause': lambda robot, a: post_watch(robot, {'state': 'paused'}),
+    'watch-resume': cmd_watch_resume,
+    'watch-stop': lambda robot, a: post_watch(robot, {'state': 'stopped'}),
+    'watch-on': lambda robot, a: post_watch(robot, {'enabled': True}),
+    'watch-off': lambda robot, a: post_watch(robot, {'enabled': False}),
     'volume': cmd_volume,
     'logcat': cmd_logs,
     'dmesg': cmd_logs,
@@ -658,6 +716,7 @@ def parse(argv):
     p.add_argument('--robot', '-r', help='robot IP (default: last one found, its hotspot, or listen for it)')
     p.add_argument('--user', '-u', help='mqtt: broker user name (asks for the password); "" clears it')
     p.add_argument('--lines', '-n', type=int, default=500, help='logcat/dmesg: how many lines (default 500)')
+    p.add_argument('--at', help='watch-start/watch-resume: film position, e.g. 1:02:03')
     p.add_argument('--port', help='serial-*: serial port, e.g. COM4 or /dev/ttyUSB0')
     p.add_argument('--baud', type=int, default=115200, help='serial-*: baud rate (default 115200)')
     p.add_argument('--seconds', type=int, default=180, help='serial-capture: how long (default 180)')
