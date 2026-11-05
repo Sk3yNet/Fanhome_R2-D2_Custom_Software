@@ -24,6 +24,10 @@ public final class HomeAssistantTest {
         public JSONObject haState() { return state; }
         public void action(String name) { actions.add(name); }
         public List<String> routineNames() { return Collections.emptyList(); }
+
+        public List<String> placeNames() { return Collections.emptyList(); }
+
+        public void goTo(String place) { }
         public void runRoutine(String name) { }
         public void projector(int mode) { }
         public void setVolume(int percent) { }
@@ -38,7 +42,7 @@ public final class HomeAssistantTest {
         HomeAssistant ha = new HomeAssistant(h);
         String b = ha.base();
 
-        Map<String, JSONObject> d = ha.discovery(h.state, Collections.<String>emptyList());
+        Map<String, JSONObject> d = ha.discovery(h.state, Collections.<String>emptyList(), Collections.<String>emptyList());
         JSONObject sel = d.get("homeassistant/select/" + ha.nodeId() + "/liveliness/config");
         check("activity select is discovered", sel != null);
         check("select topics", sel != null && (b + "/liveliness").equals(sel.optString("state_topic"))
