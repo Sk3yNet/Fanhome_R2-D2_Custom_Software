@@ -65,6 +65,23 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   sim-button <n>           pretend a robot button was pressed (simulator only)
   assist <off|robot|ha>    Home Assistant voice pipeline (docs/home-assistant-voice.md)
   assist-only [ip]         accept the voice connection only from this address; no ip: anyone on R2's subnet
+  pair                     give this PC its own admin key (press R2's pairing button first); saved to
+                           secrets/robot-client.txt (docs/security.md)
+  whoami                   which key this PC uses and what it may do
+  clients                  list API clients (paired devices, tokens), their level and when they were last seen
+  client-add <name> [--role read|control|admin] [--plain]
+                           make a key for another device; --plain makes a token that can be sent as is
+                           (Home Assistant), read or control only
+  client-role <id> --role <r>   change a client's level
+  client-revoke <id>       revoke a client's key
+  rotate-owner             replace the robot's owner key (secrets/robot-token.txt is updated)
+  update                   self-update settings and the latest release seen
+  update-check | update-install
+                           look for a newer GitHub release / download, verify and install it (R2 reboots)
+  update-auto <on|off>     check every 6 hours and install while R2 is idle (off by default)
+  update-source <owner/repo>   follow another repository's releases (also add its certificate: trust-add)
+  trust | trust-add <sha256> | trust-remove <sha256>
+                           signing certificates whose APKs R2 installs (its own is always trusted)
   reboot | shutdown
 
 First-time install over adb (USB, or Wi-Fi adb after 'adb'), as tools/install-on-robot.ps1:
@@ -81,6 +98,8 @@ adb is taken from tools/platform-tools/ if it's there, otherwise from your PATH.
 
 import argparse
 import getpass
+import hashlib
+import hmac
 import json
 import os
 import shutil
@@ -115,14 +134,46 @@ def q(value):
     return urllib.parse.quote(str(value), safe='')
 
 
-def read_token():
-    """The robot's own token if fetched, otherwise the development token built into your agent."""
-    for name in ('robot-token.txt', 'agent-token.txt'):
+def read_credentials():
+    """(client id, key) to sign with: this PC's own key (pair), the robot's owner key (fetch-token), or the
+    development key built into your own agent builds. None if there is none."""
+    for name, client in (('robot-client.txt', None), ('robot-token.txt', 'owner'), ('agent-token.txt', 'dev')):
         path = os.path.join(SECRETS, name)
         if os.path.isfile(path):
             with open(path, encoding='utf-8-sig') as f:
-                return f.read().strip()
-    return ''
+                text = f.read().strip()
+            if client is None:
+                client, _, text = text.partition(':')
+            return client, text
+    return None
+
+
+EMPTY_SHA256 = hashlib.sha256(b'').hexdigest()
+
+
+def canonical(method, target, time_s, nonce, body_sha256):
+    """The string a request signs (docs/security.md): the query as URL-decoded name=value pairs, sorted,
+    without the r2client/r2time/r2nonce/r2sig parameters."""
+    path, _, query = target.partition('?')
+    pairs = []
+    for kv in query.split('&') if query else []:
+        k, eq, v = kv.partition('=')
+        if not eq or not k:
+            continue
+        k = urllib.parse.unquote_plus(k)
+        if k in ('r2client', 'r2time', 'r2nonce', 'r2sig'):
+            continue
+        pairs.append(k + '=' + urllib.parse.unquote_plus(v))
+    pairs.sort()
+    return '\n'.join(['R2-HMAC-SHA256', method, path, '&'.join(pairs), str(time_s), nonce, body_sha256])
+
+
+def signed_headers(client, key, method, target, body_sha256, time_s, nonce=None):
+    nonce = nonce or os.urandom(12).hex()
+    sig = hmac.new(key.encode('utf-8'), canonical(method, target, time_s, nonce, body_sha256).encode('utf-8'),
+                   hashlib.sha256).hexdigest()
+    return {'X-R2-Client': client, 'X-R2-Time': str(time_s), 'X-R2-Nonce': nonce, 'X-R2-Body': body_sha256,
+            'X-R2-Signature': sig}
 
 
 def write_secret(name, text):
@@ -157,17 +208,38 @@ def find_robot(seconds=8):
 
 
 def ping(ip, timeout=2):
+    """The /ping reply (a dict, or {} if it isn't JSON), or None if the robot doesn't answer."""
     try:
-        with urllib.request.urlopen('http://%s:%d/ping' % (ip, API_PORT), timeout=timeout):
-            return True
+        with urllib.request.urlopen('http://%s:%d/ping' % (ip, API_PORT), timeout=timeout) as resp:
+            reply = decode(resp.read(), resp.headers.get('Content-Type', ''))
+            return reply if isinstance(reply, dict) else {}
     except Exception:
-        return False
+        return None
 
 
 class Robot:
-    def __init__(self, ip=None, token=None):
+    def __init__(self, ip=None, credentials=None):
         self._ip = ip
-        self.token = read_token() if token is None else token
+        cred = read_credentials() if credentials is None else credentials
+        self.client_id, self.key = cred if cred else (None, None)
+        self._clock_offset = None  # robot time - this PC's time, in seconds; None: not asked yet
+        self._signs = None  # False for agents from before signed requests: they take X-R2-Token
+
+    def auth_headers(self, method, target, body_sha256):
+        if not self.key:
+            return {}
+        now = int(time.time())
+        if self._clock_offset is None:
+            # Signed requests carry the robot's time (within 5 minutes), so sign with its clock, not this PC's.
+            reply = ping(self.ip, timeout=5) or {}
+            self._signs = 'time' in reply
+            try:
+                self._clock_offset = int(reply['time']) - now
+            except (KeyError, TypeError, ValueError):
+                self._clock_offset = 0
+        if not self._signs:
+            return {'X-R2-Token': self.key}
+        return signed_headers(self.client_id, self.key, method, target, body_sha256, now + self._clock_offset)
 
     @property
     def ip(self):
@@ -190,8 +262,6 @@ class Robot:
 
     def call(self, method, path, body=None, in_file=None, timeout=30, token=True):
         headers = {}
-        if token:
-            headers['X-R2-Token'] = self.token
         data = None
         if in_file is not None:
             with open(in_file, 'rb') as f:
@@ -202,6 +272,8 @@ class Robot:
             headers['Content-Type'] = 'application/json'
         elif method == 'POST':
             data = b''
+        if token:
+            headers.update(self.auth_headers(method, path, hashlib.sha256(data or b'').hexdigest()))
         req = urllib.request.Request('http://%s:%d%s' % (self.ip, API_PORT, path), data=data,
                                      headers=headers, method=method)
         try:
@@ -416,7 +488,8 @@ def cmd_fetch_token(robot, a):
     if len(t) != 48 or any(c not in '0123456789abcdef' for c in t):
         raise R2Error('no token found (is the agent updated and running?)')
     write_secret('robot-token.txt', t)
-    print('saved to ' + os.path.join('secrets', 'robot-token.txt'))
+    print('saved to %s (the owner key: keep it private; it always works, so it is your way back in)'
+          % os.path.join('secrets', 'robot-token.txt'))
 
 
 def cmd_adb(robot, a):
@@ -504,6 +577,60 @@ def cmd_hotspot_password(robot, a):
             print(h['result'])
     else:
         show(h)
+
+
+def cmd_pair(robot, a):
+    # Works in the pairing button's 2-minute window, or with an admin key already in place.
+    c = robot.call('POST', '/clients/pair?name=' + q('PC ' + socket.gethostname()))
+    write_secret('robot-client.txt', '%s:%s' % (c['id'], c['key']))
+    print('paired as %s (%s); key saved to %s' % (c['id'], c.get('role'), os.path.join('secrets', 'robot-client.txt')))
+
+
+def cmd_clients(robot, a):
+    rows = []
+    for c in robot.call('GET', '/clients').get('clients') or []:
+        seen = c.get('last_seen')
+        rows.append({'id': c.get('id'), 'name': c.get('name'), 'role': c.get('role'), 'plain': c.get('plain_token'),
+                     'last_seen': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(seen)) if seen else 'never',
+                     'last': c.get('last_request')})
+    print(table(rows, ['id', 'name', 'role', 'plain', 'last_seen', 'last']))
+
+
+def cmd_client_add(robot, a):
+    name = need(a.arg, 'client-add <name> [--role read|control|admin] [--plain]')
+    query = 'name=%s&role=%s' % (q(name), q(a.role or 'control')) + ('&plain=1' if a.plain else '')
+    c = robot.call('POST', '/clients/add?' + query)
+    print('id:   %s   (%s%s)' % (c['id'], c.get('role'), ', plain token' if c.get('plain_token') else ''))
+    print('token: %s' % c['key'] if c.get('plain_token') else 'key:  %s:%s' % (c['id'], c['key']))
+    print('Shown only now. Revoke with: r2.py client-revoke ' + c['id'])
+
+
+def cmd_client_role(robot, a):
+    if not a.arg or not a.role:
+        raise R2Error('usage: r2.py client-role <id> --role read|control|admin')
+    show(robot.call('POST', '/clients/role?id=%s&role=%s' % (q(a.arg), q(a.role))))
+
+
+def cmd_rotate_owner(robot, a):
+    if robot.client_id != 'owner':
+        raise R2Error('sign with the owner key for this: move secrets/robot-client.txt away for a moment, '
+                      'or run fetch-token first')
+    c = robot.call('POST', '/clients/owner/rotate')
+    write_secret('robot-token.txt', c['key'])
+    print('new owner key saved to %s; the old one no longer works' % os.path.join('secrets', 'robot-token.txt'))
+
+
+def cmd_update_auto(robot, a):
+    if a.arg not in ('on', 'off'):
+        raise R2Error('usage: r2.py update-auto <on|off>')
+    show(robot.call('POST', '/update/auto?on=' + ('1' if a.arg == 'on' else '0')))
+
+
+def cmd_update_source(robot, a):
+    import re
+    if not re.match(r'^[\w.-]+/[\w.-]+$', a.arg or ''):
+        raise R2Error('usage: r2.py update-source <owner/repo>')
+    show(robot.call('POST', '/update/source?repo=' + q(a.arg)))
 
 
 def identity_body(xml_text):
@@ -733,6 +860,21 @@ COMMANDS = {
     'stock-off': simple('POST', '/stock?enable=0'),
     'assist': cmd_assist,
     'assist-only': lambda robot, a: show(robot.call('POST', '/assist?host=' + q(a.arg or ''))),
+    'pair': cmd_pair,
+    'whoami': simple('GET', '/whoami'),
+    'clients': cmd_clients,
+    'client-add': cmd_client_add,
+    'client-role': cmd_client_role,
+    'client-revoke': with_name('/clients/revoke?id=', 'client-revoke <id>'),
+    'rotate-owner': cmd_rotate_owner,
+    'update': simple('GET', '/update'),
+    'update-check': lambda robot, a: show(robot.call('POST', '/update/check', timeout=60)),
+    'update-install': lambda robot, a: show(robot.call('POST', '/update/install', timeout=600)),
+    'update-auto': cmd_update_auto,
+    'update-source': cmd_update_source,
+    'trust': simple('GET', '/trust'),
+    'trust-add': with_name('/trust?add=', 'trust-add <certificate sha256>'),
+    'trust-remove': with_name('/trust?remove=', 'trust-remove <certificate sha256>'),
     'reboot': simple('POST', '/reboot'),
     'shutdown': simple('POST', '/shutdown'),
     'sim-on': simple('POST', '/sim?on=1'),
@@ -753,6 +895,8 @@ def parse(argv):
     p.add_argument('arg', nargs='?', help='the command\'s argument, if it takes one')
     p.add_argument('--robot', '-r', help='robot IP (default: last one found, its hotspot, or listen for it)')
     p.add_argument('--user', '-u', help='mqtt: broker user name (asks for the password); "" clears it')
+    p.add_argument('--role', choices=['read', 'control', 'admin'], help='client-add/client-role: access level')
+    p.add_argument('--plain', action='store_true', help='client-add: a plain token (Home Assistant)')
     p.add_argument('--lines', '-n', type=int, default=500, help='logcat/dmesg: how many lines (default 500)')
     p.add_argument('--at', help='watch-start/watch-resume: film position, e.g. 1:02:03')
     p.add_argument('--port', help='serial-*: serial port, e.g. COM4 or /dev/ttyUSB0')

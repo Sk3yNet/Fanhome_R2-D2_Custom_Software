@@ -28,6 +28,8 @@ class FakeAgent(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(n) if n else b''
         FakeAgent.requests.append({'method': self.command, 'path': self.path, 'body': body,
                                    'token': self.headers.get('X-R2-Token'),
+                                   'signed': {k: self.headers.get(k) for k in ('X-R2-Client', 'X-R2-Time', 'X-R2-Nonce',
+                                                                                'X-R2-Body', 'X-R2-Signature')},
                                    'type': self.headers.get('Content-Type')})
         code, ctype, payload = FakeAgent.replies.get(self.path.split('?')[0],
                                                      (200, 'application/json', {'result': 'ok'}))
@@ -56,7 +58,7 @@ class R2CliTest(unittest.TestCase):
     def setUp(self):
         FakeAgent.requests = []
         FakeAgent.replies = {}
-        patches = [mock.patch.object(r2, 'API_PORT', self.port), mock.patch.object(r2, 'read_token', lambda: 'tok')]
+        patches = [mock.patch.object(r2, 'API_PORT', self.port), mock.patch.object(r2, 'read_credentials', lambda: ('owner', 'tok'))]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -190,6 +192,49 @@ class R2CliTest(unittest.TestCase):
                 self.assertEqual(self.run_cli(*args)[0], 0)
                 self.assertEqual(self.last()['path'], path)
         self.assertEqual(self.run_cli('drive-lock', 'maybe')[0], 1)
+
+    def test_signature_matches_the_agent_test_vector(self):
+        # SecurityTest's vector (apps/agent tests): the agent, the web page and r2.ps1 compute the same.
+        h = r2.signed_headers('owner', 'test-key', 'POST', '/action?name=dance%20party&b=2', r2.EMPTY_SHA256,
+                              1700000000, nonce='abcdefghijklmnop0123')
+        self.assertEqual(h['X-R2-Signature'], 'a5eea87075222e27ce5763e65e8e82294456c2199b66cb6e1365b5c40faccd2f')
+        self.assertEqual(r2.canonical('GET', '/x?r2sig=1&b=a+b&a=%26', 5, 'n', 'h'), 'R2-HMAC-SHA256\nGET\n/x\na=&&b=a b\n5\nn\nh')
+
+    def test_requests_are_signed_when_the_agent_supports_it(self):
+        FakeAgent.replies['/ping'] = (200, 'application/json', {'r2agent': True, 'time': 1700000000})
+        with mock.patch.object(r2.time, 'time', return_value=1699999000.0):
+            code, _, err = self.run_cli('serial', '{"cmd":"mode","mode":13}')
+        self.assertEqual(code, 0, err)
+        req = self.last()
+        self.assertIsNone(req['token'], 'a signing key must never be sent in plain text')
+        s = req['signed']
+        self.assertEqual((s['X-R2-Client'], s['X-R2-Time']), ('owner', '1700000000'))  # the robot's clock
+        self.assertEqual(s['X-R2-Body'], r2.hashlib.sha256(req['body']).hexdigest())
+        want = r2.signed_headers('owner', 'tok', 'POST', '/serial', s['X-R2-Body'], 1700000000, nonce=s['X-R2-Nonce'])
+        self.assertEqual(s['X-R2-Signature'], want['X-R2-Signature'])
+
+    def test_clients_and_updates(self):
+        FakeAgent.replies['/clients/add'] = (200, 'application/json', {'id': 'c1', 'key': 'k', 'role': 'control',
+                                                                        'plain_token': True})
+        code, out, _ = self.run_cli('client-add', 'home assistant', '--plain')
+        self.assertEqual(self.last()['path'], '/clients/add?name=home%20assistant&role=control&plain=1')
+        self.assertIn('token: k', out)
+        self.run_cli('client-role', 'c1', '--role', 'read')
+        self.assertEqual(self.last()['path'], '/clients/role?id=c1&role=read')
+        self.assertEqual(self.run_cli('client-role', 'c1')[0], 1)
+        self.run_cli('client-revoke', 'c1')
+        self.assertEqual(self.last()['path'], '/clients/revoke?id=c1')
+        self.run_cli('update-auto', 'on')
+        self.assertEqual(self.last()['path'], '/update/auto?on=1')
+        self.run_cli('update-source', 'someone/fork')
+        self.assertEqual(self.last()['path'], '/update/source?repo=someone%2Ffork')
+        self.assertEqual(self.run_cli('update-source', 'bad repo')[0], 1)
+        self.run_cli('trust-add', 'ab12')
+        self.assertEqual(self.last()['path'], '/trust?add=ab12')
+        FakeAgent.replies['/clients/pair'] = (200, 'application/json', {'id': 'pc1', 'key': 'secret', 'role': 'admin'})
+        with mock.patch.object(r2, 'write_secret') as ws:
+            self.run_cli('pair')
+        ws.assert_called_once_with('robot-client.txt', 'pc1:secret')
 
     def test_liveliness(self):
         FakeAgent.replies['/status'] = (200, 'application/json', {'liveliness': 'chatty'})
