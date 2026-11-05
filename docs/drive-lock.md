@@ -53,6 +53,7 @@ sensibly instead of having commands silently dropped:
 - if driving locks while a routine or a driving action runs, it ends at its next drive step (the agent
   has already stopped the wheels);
 - phone app driving is refused, with the sound at most every 2 s.
+- "follow me" ([follow-me.md](follow-me.md)) doesn't start, and ends if driving locks while R2 follows;
 - a trip to a place or a tour ([places.md](places.md)) doesn't start, so R2 still knows where he is;
   teaching a route needs driving enabled, since it records the joystick.
 
@@ -61,7 +62,7 @@ sensibly instead of having commands silently dropped:
 ## For code that drives
 New features that move R2 (follow-me, room navigation, a gamepad) need no extra code to be safe: the agent
 refuses their drive commands while locked. To behave well:
-- check `robot.driveAllowed()` in R2 Main before starting, and say no (the "didn't understand" sound
+- check `robot.driveAllowed()` in R2 Main before starting (follow me and room trips do), and say no (the "didn't understand" sound
   via `driveRefused(...)` in `Brain`) instead of starting something that can't move;
 - treat it turning false as "stop now" and end the behavior;
 - a gamepad can map its START button to `POST /drive?enable=1` (or `{"agent":"drive-set","enable":true}`

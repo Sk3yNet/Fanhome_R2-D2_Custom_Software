@@ -565,7 +565,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             seq.start("not-recognized", job("not-recognized"));
             return;
         }
-        if (Routine.DRIVE_ACTIONS.contains(name) && !robot.driveAllowed()) {
+        if (drivesWheels(name) && !robot.driveAllowed()) {
             driveRefused(name);
             return;
         }
@@ -584,11 +584,16 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         // The agent has already stopped the wheels; end a built-in drive action so it doesn't run on as
         // sounds and lights only. A routine ends itself at its next drive step.
         String running = seq.running();
-        if (wasAllowed && !robot.driveAllowed() && Routine.DRIVE_ACTIONS.contains(running)) {
+        if (wasAllowed && !robot.driveAllowed() && drivesWheels(running)) {
             Log.i(TAG, "drive lock closed, cancelling " + running);
             seq.cancel();
         }
         robot.changed();
+    }
+
+    /** Built-in actions that drive the wheels: the routine ones, and follow me. */
+    private static boolean drivesWheels(String action) {
+        return Routine.DRIVE_ACTIONS.contains(action) || "follow".equals(action);
     }
 
     /** A drive was refused because driving is locked: the "didn't understand" sound, not too often. */
@@ -771,6 +776,10 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                         lastActivity = now;
                         if (robot.battery >= 0 && robot.battery < Robot.LOW_BATTERY_PCT && robot.charging == 0) {
                             Log.i(TAG, "follow me: battery low, stopping");
+                            break;
+                        }
+                        if (!robot.driveAllowed()) { // the drive lock closed (onDriveState cancels us too)
+                            Log.i(TAG, "follow me: driving is locked, stopping");
                             break;
                         }
                         FollowControl.Command c = ctl.update(follower.latest(), now);
