@@ -27,6 +27,8 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   watch-pause | watch-resume [--at h:mm:ss] | watch-stop
   watch-on | watch-off     the "Watch with me" switch: off keeps R2 quiet during films
   volume <0-100>           droid sounds and music volume (kept across reboots)
+  liveliness [level]       how much R2 does on his own: off, quiet, chatty or full (docs/liveliness.md);
+                           no level shows the current one
   logcat [text] [--lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
   dmesg [text] [--lines N]  kernel log
   adb [minutes]            switch on adb over Wi-Fi for a while (default 30 min) and connect
@@ -96,7 +98,8 @@ ANNOUNCE_PORT = 7702
 
 ACTIONS = ('stop wake turn-left turn-right turn-around forward circle patrol dance shake-head who-are-you noise '
            'not-recognized lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair '
-           'phone-app-on phone-app-off voice-on voice-off face-on face-off').split()
+           'phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty '
+           'liveliness-full').split()
 
 
 class R2Error(Exception):
@@ -350,6 +353,15 @@ def cmd_volume(robot, a):
     if not (a.arg or '').isdigit():
         raise R2Error('usage: r2.py volume <0-100>')
     show(robot.call('POST', '/volume?percent=' + a.arg))
+
+
+def cmd_liveliness(robot, a):
+    if not a.arg:
+        show(robot.call('GET', '/status').get('liveliness'))
+    elif a.arg.lower() not in ('off', 'quiet', 'chatty', 'full'):
+        raise R2Error('usage: r2.py liveliness <off|quiet|chatty|full>')
+    else:
+        show(robot.call('POST', '/action?name=liveliness-' + a.arg.lower()))
 
 
 def cmd_logs(robot, a):
@@ -669,6 +681,7 @@ COMMANDS = {
     'watch-on': lambda robot, a: post_watch(robot, {'enabled': True}),
     'watch-off': lambda robot, a: post_watch(robot, {'enabled': False}),
     'volume': cmd_volume,
+    'liveliness': cmd_liveliness,
     'logcat': cmd_logs,
     'dmesg': cmd_logs,
     'fetch-token': cmd_fetch_token,

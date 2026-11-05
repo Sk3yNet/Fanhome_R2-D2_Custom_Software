@@ -182,6 +182,13 @@ class R2CliTest(unittest.TestCase):
         _, out, _ = self.run_cli('cues')
         self.assertIn('A, B', out)
 
+    def test_liveliness(self):
+        FakeAgent.replies['/status'] = (200, 'application/json', {'liveliness': 'chatty'})
+        self.assertEqual(self.run_cli('liveliness')[1], 'chatty\n')
+        self.run_cli('liveliness', 'Quiet')
+        self.assertEqual(self.last()['path'], '/action?name=liveliness-quiet')
+        self.assertEqual(self.run_cli('liveliness', 'loud')[0], 1)
+
     def test_hotspot(self):
         FakeAgent.replies['/hotspot'] = (200, 'application/json', {'ssid': 'R2-D2', 'password': 'pw12345678'})
         code, out, _ = self.run_cli('hotspot')
@@ -234,6 +241,8 @@ class R2CliTest(unittest.TestCase):
             ps_cmds |= set(re.findall(r"'([a-z-]+)'", group))
         self.assertTrue(ps_cmds, 'could not read r2.ps1')
         self.assertEqual(sorted(ps_cmds - set(r2.COMMANDS)), [], 'r2.ps1 commands missing from r2.py')
+        actions = re.search(r"'actions'\s+\{\s*'([^']*)'", switch).group(1).split()
+        self.assertEqual(sorted(set(actions) - set(r2.ACTIONS)), [], 'r2.ps1 actions missing from r2.py ACTIONS')
 
 
 if __name__ == '__main__':
