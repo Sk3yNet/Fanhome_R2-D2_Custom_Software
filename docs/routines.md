@@ -169,6 +169,9 @@ An `mqtt` trigger listens to any topic, e.g. a Zigbee door sensor or another aut
 | `field`, `value` | Optional, instead of `payload`. The message is JSON and this top-level key has this value, e.g. `"field": "contact", "value": false`. |
 | `every_message` | Optional. By default the routine starts when the message *starts* matching (the door opens), not on every repeat of the same state. `true` starts it on each matching message (a button that always sends `"single"`). |
 
+Events and `mqtt` triggers from Home Assistant go through the `home-assistant` plugin and need its
+`routines.run` permission (on by default; see [plugins.md](plugins.md)).
+
 Retained messages (the last state the broker replays when R2 connects) never start a routine; they only
 tell R2 what the state was, so reconnecting doesn't run anything.
 

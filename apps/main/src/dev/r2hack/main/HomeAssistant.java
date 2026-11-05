@@ -145,7 +145,9 @@ final class HomeAssistant {
     private final Object lock = new Object();
     private volatile Settings settings = new Settings();
     private volatile MqttClient client;
-    private volatile String status = "off (set a broker with POST /mqtt)";
+    static final String OFF = "off (set a broker with POST /mqtt)";
+    private volatile String offText = OFF;
+    private volatile String status = OFF;
     private int settingsVersion;
 
     // Per connection: what was published, so only changes go out.
@@ -190,10 +192,19 @@ final class HomeAssistant {
 
     /** New settings from the agent ({"agent":"mqtt",...}); reconnects if they changed. */
     void configure(JSONObject msg) {
+        configure(msg, OFF);
+    }
+
+    /** The same, with the status to show while it is off (e.g. because its plugin is disabled). */
+    void configure(JSONObject msg, String off) {
+        offText = off;
         Settings s = Settings.from(msg);
         Settings old = settings;
         settings = s;
-        if (s.key().equals(old.key()) && sameSubnets(s, old)) return;
+        if (s.key().equals(old.key()) && sameSubnets(s, old)) {
+            if (!s.enabled) setStatus(offText);
+            return;
+        }
         synchronized (lock) {
             settingsVersion++;
             lock.notifyAll();
@@ -242,7 +253,7 @@ final class HomeAssistant {
             }
             Settings s = settings;
             if (!s.enabled) {
-                setStatus("off (set a broker with POST /mqtt)");
+                setStatus(offText);
                 waitForChange(version, 0);
                 continue;
             }

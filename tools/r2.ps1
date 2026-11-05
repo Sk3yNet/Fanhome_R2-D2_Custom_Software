@@ -37,6 +37,13 @@
 #   volume <0-100>           droid sounds and music volume (kept across reboots)
 #   liveliness [level]       how much R2 does on his own: off, quiet, chatty or full (docs/liveliness.md);
 #                            no level shows the current one
+#   plugins                  list the plugins (docs/plugins.md): state, what each asks for and is granted
+#   plugin-on | plugin-off <name>
+#                            enable / disable a plugin, e.g. plugin-off home-assistant
+#   plugin-grant <name>=<permissions>
+#                            what a plugin may do, e.g. plugin-grant battery-alert=status (empty: nothing)
+#   plugin-config <name>=<file.json>
+#                            merge the JSON object in the file into a plugin's config
 #   logcat [text] [-Lines N] Android log (all apps, incl. main-app crash traces), optionally only lines containing text
 #   dmesg [text] [-Lines N]  kernel log
 #   adb [minutes]            switch on adb over Wi-Fi for a while (default 30 min) and connect
@@ -45,6 +52,13 @@
 #   adb-always               keep adb over Wi-Fi on, also after reboots (trusted networks only)
 #   allow-subnets [list]     also accept API clients from these subnets, e.g. 10.0.20.0/24,10.0.30.5
 #                            (empty: only the robot's own subnet; no argument: show the list)
+#   hardening                boot hardening report: firewall, device permissions, Bluetooth, and what listens
+#                            on the network (docs/hardening.md)
+#   harden-on                switch on the firewall (as a 5-minute trial), tighten device permissions and keep
+#                            Bluetooth off, then check the API still answers and confirm the firewall
+#   harden-trial             firewall trial only, without confirming (it removes itself after 5 minutes)
+#   harden-confirm           keep the firewall in a trial, also after reboots
+#   harden-off               undo all of it (firewall, device permissions, Bluetooth)
 #   mqtt [host[:port]] [-User name]
 #                            Home Assistant over MQTT: set the broker (asks for the password with -User),
 #                            'off' switches it off, no argument shows the settings and connection state
@@ -350,6 +364,25 @@ switch ($Command) {
     'watch-stop'   { Call POST /watch '{"state":"stopped"}' }
     'watch-on'     { Call POST /watch '{"enabled":true}' }
     'watch-off'    { Call POST /watch '{"enabled":false}' }
+    'plugins'      {
+        $d = Call GET /plugins
+        $d.plugins | Format-Table name, enabled, state, @{ n = 'granted'; e = { $_.granted -join ',' } }, @{ n = 'asks_for'; e = { $_.asks_for -join ',' } } -AutoSize -Wrap
+        'permissions:'; $d.permissions.PSObject.Properties | ForEach-Object { "  $($_.Name): $($_.Value)" }
+    }
+    { $_ -in 'plugin-on', 'plugin-off' } {
+        if (-not $Arg) { throw "usage: r2.ps1 $Command <name>  (see: r2.ps1 plugins)" }
+        $on = if ($Command -eq 'plugin-on') { 1 } else { 0 }
+        Call POST "/plugin?name=$([uri]::EscapeDataString($Arg))&enabled=$on"
+    }
+    'plugin-grant' {
+        if ($Arg -notmatch '^([^=]+)=(.*)$') { throw 'usage: r2.ps1 plugin-grant <name>=<permissions>, e.g. battery-alert=status,sound' }
+        Call POST "/plugin?name=$([uri]::EscapeDataString($Matches[1]))&grant=$([uri]::EscapeDataString($Matches[2]))"
+    }
+    'plugin-config' {
+        if ($Arg -notmatch '^([^=]+)=(.+)$' -or -not (Test-Path $Matches[2])) { throw 'usage: r2.ps1 plugin-config <name>=<file.json>' }
+        $name = $Matches[1]
+        Call POST "/plugin/config?name=$([uri]::EscapeDataString($name))" (Get-Content $Matches[2] -Raw -Encoding UTF8)
+    }
     'volume'       { if ($Arg -notmatch '^\d+$') { throw 'usage: r2.ps1 volume <0-100>' }; Call POST "/volume?percent=$Arg" }
     'liveliness'   {
         if (-not $Arg) { (Call GET /status).liveliness }
@@ -389,6 +422,19 @@ switch ($Command) {
     'allow-subnets' {
         if ($PSBoundParameters.ContainsKey('Arg')) { Call POST "/clients/allow?subnets=$([uri]::EscapeDataString("$Arg"))" }
         else { (Call GET /clients/allow).extra_subnets }
+    }
+    'hardening'    { Call GET /hardening | ConvertTo-Json -Depth 6 }
+    'harden-trial' { Call POST '/hardening?firewall=1' }
+    'harden-confirm' { Call POST /hardening/confirm }
+    'harden-off'   { Call POST '/hardening?all=0' }
+    'harden-on'    {
+        (Call POST '/hardening?firewall=1&devices=1&bluetooth=1').result
+        Start-Sleep -Seconds 2
+        # A new connection through the firewall: if it gets through, the firewall can stay.
+        try { Call GET /status -Timeout 10 | Out-Null } catch {
+            throw "The API stopped answering with the firewall on, so it was NOT confirmed; it removes itself within 5 minutes. ($_)"
+        }
+        (Call POST /hardening/confirm).result
     }
     'mqtt'         {
         if (-not $Arg) { Call GET /mqtt | ConvertTo-Json }

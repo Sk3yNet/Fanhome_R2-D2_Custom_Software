@@ -142,16 +142,22 @@ Known exposure: kernel privilege-escalation bugs (e.g. Dirty COW), the media fra
 the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne), root adb and
 `ro.secure=0` from the engineering build, and world-writable device nodes.
 - [ ] **Firewall at boot:** iptables rules that allow only the agent's ports, only from the local subnet,
-      and drop everything else, including stray system services.
+      and drop everything else, including stray system services. *Built, not yet tested on the robot.*
+      Opt-in (`tools\r2.ps1 harden-on`), from private addresses and allowed subnets only, as a 5-minute trial
+      that removes itself unless confirmed. See [docs/hardening.md](docs/hardening.md).
 - [ ] **Turn off what isn't used:** Bluetooth (unless phone app compatibility needs it), MTP, unused system
-      apps and services, and any listener we don't need.
+      apps and services, and any listener we don't need. *Built, not yet tested on the robot* (first step):
+      Bluetooth is kept off, and `tools\r2.ps1 hardening` lists every listener and its app. Switching off
+      system apps waits for that list from the robot; MTP stays, to keep USB adb safe.
 - [ ] **No untrusted content:** no WebView, no media from the network, no downloads from URLs. Only the
       robot's own sound files and our signed updates.
 - [ ] **Current TLS in our apps:** bundle a modern TLS library for outbound connections (MQTT, Home
       Assistant, GitHub) instead of relying on the system's.
 - [ ] **Least privilege:** keep the agent's shell commands to a minimum, give R2 Main no extra
       permissions, and sandbox plugins.
-- [ ] **Fix device node permissions** at boot, e.g. world-writable UARTs.
+- [ ] **Fix device node permissions** at boot, e.g. world-writable UARTs. *Built, not yet tested on the robot.*
+      UARTs (not the console), raw memory, the eMMC, I2C/SPI and the sunxi_debug backdoor; the
+      controller UART goes to the agent's user.
 - [ ] **Production-style build:** turn off root adb and `ro.secure=0` with a modified boot image (shares the
       boot-image work in section 8), keeping the serial console for recovery.
 - [ ] **Patch the Wi-Fi stack:** rebuild wpa_supplicant/hostapd with the KRACK fixes.
@@ -234,7 +240,9 @@ or run it straight from the card as a soft-mod that disappears when the card is 
 ## 9. Plugins and integrations (Home Assistant first)
 - [ ] Plugin interface in R2 Main: plugins subscribe to controller events and robot state, can send
       commands and run routines, and have their own config and lifecycle. Pick a loading model:
-      built into R2 Main, or separate APKs found by an intent filter.
+      built into R2 Main, or separate APKs found by an intent filter. *Built, not yet tested on the robot.* Built into R2 Main
+      (separate APKs need IPC and signed updates first); Home Assistant is the first plugin, plus a small
+      battery-alert example. See [docs/plugins.md](docs/plugins.md).
 - [ ] **Home Assistant via MQTT discovery:** battery and charging sensors; buttons for actions and
       routines; switches for lightsaber, arm and projector; robot availability. *Built, not yet tested on the robot.*
       Also mode, current action and error sensors, display, mute, voice and face switches, and volume.
@@ -282,7 +290,10 @@ or run it straight from the card as a soft-mod that disappears when the card is 
       (the microphone has no direction), and follow-up questions without the wake word.
 - [ ] **Vision containers:** face recognition (CompreFace / Double Take) and person detection (Frigate) on R2's
       camera stream, so R2 can greet people it knows. As a Home Assistant add-on or plain Docker.
-- [ ] Plugin permissions, so an integration can't install software or reboot unless allowed.
+- [ ] Plugin permissions, so an integration can't install software or reboot unless allowed. *Built, not yet tested on the robot.*
+      Eight permissions (status, actions, drive, routines.run, routines.edit, sound, lights, settings), granted
+      per plugin with `tools\r2.ps1 plugin-grant`. No permission can give a plugin installs, reboots, adb,
+      Wi-Fi, pairing or tokens.
 
 ## 10. Hardware mods: holoprojector
 The holoprojector is a small transmissive LCD with a white LED behind it, run by its own microcontroller.
