@@ -43,6 +43,7 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
                            from the start or from --at; Home Assistant does this by itself when set up
   watch-pause | watch-resume [--at h:mm:ss] | watch-stop
   watch-on | watch-off     the "Watch with me" switch: off keeps R2 quiet during films
+  event <name>             send a named event; routines with that "event" trigger run (docs/routines.md)
   volume <0-100>           droid sounds and music volume (kept across reboots)
   liveliness [level]       how much R2 does on his own: off, quiet, chatty or full (docs/liveliness.md);
                            no level shows the current one
@@ -436,8 +437,12 @@ def cmd_routines(robot, a):
     if d.get('last_routine'):
         line += '   last: %s' % d['last_routine']
     print(line)
-    print(table(d.get('routines') or [],
-                ['name', 'steps', 'timeout', 'while_charging', 'replaces_action', 'description', 'error']))
+    if d.get('last_trigger'):
+        print('last trigger: %s' % d['last_trigger'])
+    rows = [dict(r, triggers='; '.join(str(t) for t in r['triggers']) if isinstance(r.get('triggers'), list)
+                 else r.get('triggers')) for r in d.get('routines') or []]
+    print(table(rows, ['name', 'steps', 'timeout', 'while_charging', 'replaces_action', 'triggers', 'description',
+                       'error']))
 
 
 def cmd_routine(robot, a):
@@ -1358,6 +1363,7 @@ COMMANDS = {
     'watch-stop': lambda robot, a: post_watch(robot, {'state': 'stopped'}),
     'watch-on': lambda robot, a: post_watch(robot, {'enabled': True}),
     'watch-off': lambda robot, a: post_watch(robot, {'enabled': False}),
+    'event': with_name('/event?name=', 'event <name>'),
     'volume': cmd_volume,
     'liveliness': cmd_liveliness,
     'plugins': cmd_plugins,

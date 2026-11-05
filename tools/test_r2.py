@@ -287,6 +287,16 @@ class R2CliTest(unittest.TestCase):
         self.assertEqual(self.last()['path'], '/action?name=beeps-off')
         self.assertEqual(self.run_cli('assist-reply', 'loud')[0], 1)
 
+    def test_event(self):
+        self.run_cli('event', 'door open')
+        self.assertEqual(self.last()['path'], '/event?name=door%20open')
+        FakeAgent.replies['/routines'] = (200, 'application/json', {
+            'running': '', 'last_trigger': 'event door open',
+            'routines': [{'name': 'greet', 'triggers': ['event door open', 'button 2']}]})
+        _, out, _ = self.run_cli('routines')
+        self.assertIn('last trigger: event door open', out)
+        self.assertIn('event door open; button 2', out)
+
     def test_chirp(self):
         self.run_cli('chirp')
         self.assertEqual(self.last()['path'], '/chirp?mood=random')
