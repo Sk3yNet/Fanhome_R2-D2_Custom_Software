@@ -5,10 +5,14 @@ asked read it, so one switch turns them all up or down.
 
 | Level | Idle chatter (this page) | Other features |
 |-------|--------------------------|----------------|
-| `off` | none | [sound reactions](sound-reactions.md) off |
+| `off` | none | [sound reactions](sound-reactions.md) off, no drive sounds |
 | `quiet` (default) | a sound every 1 to 2 minutes, no head moves | reactions to very loud sounds only, no head move |
 | `chatty` | something every 25 to 50 s; about a third of the time he looks around instead | reactions to claps, double claps and loud sounds, no head move |
-| `full` | something every 10 to 25 s; half the time he looks around, sometimes with a sound | normal reactions, with head moves |
+| `full` | something every 10 to 25 s; half the time he looks around, sometimes with a sound | normal reactions, with head moves; stays awake 10 minutes instead of 3 |
+
+Liveliness only covers what R2 does unprompted: commands, routines and the phone app work the same at
+every level. Face tracking and voice commands keep their own switches. Drive sounds are the factory's
+droid sounds while you drive straight ahead.
 
 The setting is kept across reboots. Sound reactions also have their own on/off switch
 (`reactions-on` / `reactions-off`), see [sound-reactions.md](sound-reactions.md).
@@ -20,6 +24,9 @@ The setting is kept across reboots. Sound reactions also have their own on/off s
 - As actions: `liveliness-off`, `liveliness-quiet`, `liveliness-chatty`, `liveliness-full`, so
   `POST /action?name=liveliness-full` works, and routines' reserved-name rules apply to them.
 - `GET /status` shows it as `liveliness`.
+- **Web page:** Settings, Activity: Off, Quiet, Chatty or Full show.
+- **Home Assistant:** the **Activity** select on R2's device (MQTT topics `r2d2/<robot id>/liveliness`
+  and `liveliness/set`, payload `off`, `quiet`, `chatty` or `full`).
 
 In R2 Main, other features read it with `Brain.liveliness()` (one of `IdlePersonality.LEVELS`) and set it
 with `Brain.setLiveliness(level)`. Unknown values fall back to `quiet`.
@@ -37,7 +44,8 @@ again. Nothing happens while:
 - another sound is playing (chatter waits for it).
 
 After any of these, the wait starts again from the beginning, so R2 doesn't chatter straight after a
-command. Chatter never counts as activity: R2 still falls asleep after the usual idle time. Mute
+command. Chatter never counts as activity: R2 still falls asleep after the usual idle time (3 minutes,
+10 at `full`). Mute
 silences it like every other sound.
 
 ## Mood banks

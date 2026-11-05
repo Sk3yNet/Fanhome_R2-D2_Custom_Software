@@ -52,6 +52,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private static final long PROJECTOR_FALLBACK_MS = 15_000;  // if its audio can't play
     private static final long CLIP_MAX_MS = 60_000;
     private static final long SLEEP_AFTER_MS = 180_000;        // factory: sleep after 3 minutes idle
+    private static final long SLEEP_AFTER_FULL_MS = 600_000;   // activity "full": the show runs 10 minutes
     private static final long PAIR_MS = 30_000;
     private static final long DRIVE_SOUND_MS = 2_000;          // droid sounds while driving straight
     private static final long REACT_GAP_MS = 5_000;            // at most one sound reaction this often
@@ -908,8 +909,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     } catch (InterruptedException ignored) {
                     }
                     long now = System.currentTimeMillis();
-                    if (robot.mode == Robot.READY && now - lastActivity > SLEEP_AFTER_MS) {
-                        Log.i(TAG, "sleeping after " + SLEEP_AFTER_MS / 1000 + " s idle");
+                    long sleepAfter = "full".equals(liveliness()) ? SLEEP_AFTER_FULL_MS : SLEEP_AFTER_MS;
+                    if (robot.mode == Robot.READY && now - lastActivity > sleepAfter) {
+                        Log.i(TAG, "sleeping after " + sleepAfter / 1000 + " s idle");
                         robot.setMode(Robot.SLEEP);
                         lights.refresh();
                     }
@@ -934,7 +936,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                         stopPairing();
                     }
                     // Factory: while driving straight, a droid sound every other 2 s beat, alternating two sounds.
-                    if (driveSounds && now - lastStraightMove > 1000) driveSounds = false;
+                    // Activity "off" keeps them quiet.
+                    if (driveSounds && (now - lastStraightMove > 1000 || "off".equals(liveliness()))) driveSounds = false;
                     if (driveSounds && now >= nextDriveSound) {
                         if (drivePhase == 0) sounds.play(S_SING, true);
                         else if (drivePhase == 2) sounds.play(S_REPLY, true);
@@ -1144,6 +1147,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                             .put("muted", sounds.muted()).put("volume", sounds.volume())
                             .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
                             .put("reactions", reactionsOn())
+                            .put("liveliness", liveliness())
                             .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION)
                             .put("watch", watch.status(android.os.SystemClock.elapsedRealtime()));
                 } catch (Exception ignored) {

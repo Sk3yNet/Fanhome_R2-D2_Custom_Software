@@ -102,7 +102,8 @@ sound-number map lives in `apps\main\assets\sounds.json` (`{"7": "<resource name
 not part of this repository. Without it R2 Main still runs every action, just silently.
 
 While R2 is awake and idle he chatters and looks around now and then, as much as the **liveliness**
-setting (off, quiet, chatty, full) allows: [liveliness.md](liveliness.md).
+setting (off, quiet, chatty, full) allows: [liveliness.md](liveliness.md). The web page and Home
+Assistant show it as the **Activity** presets.
 
 ## Routines (R2 Main)
 Routines are JSON step lists (sounds, head moves, modes, driving, lights, built-in actions, waits on
@@ -156,16 +157,17 @@ The device (named after the robot) has:
   state. The lightsaber, arm, projector and display states come from the controller's status, which R2
   reads every 5 s, so a switch can take a few seconds to show its new state.
 - **Volume** (0–100 %), shared with the droid sounds and the media player.
+- **Activity** select: the liveliness preset (off, quiet, chatty, full), see [liveliness.md](liveliness.md).
 - **Availability:** R2 is shown as unavailable when R2 Main stops or loses the broker (MQTT last will).
 
 Topics are under `r2d2/<robot id>/`: state in `battery`, `charging`, `mode`, `action`, `error`,
-`volume`, `switch/<name>`, `watch/state`, `watch/attributes`; commands in `action/run` (payload: the action name), `routine/run` (payload: the routine name), `switch/<name>/set`
-(`ON`/`OFF`), `volume/set` and `watch/set` (a media player's state and position, see
+`volume`, `liveliness`, `switch/<name>`, `watch/state`, `watch/attributes`; commands in `action/run` (payload: the action name), `routine/run` (payload: the routine name), `switch/<name>/set`
+(`ON`/`OFF`), `volume/set`, `liveliness/set` (`off`, `quiet`, `chatty` or `full`) and `watch/set` (a media player's state and position, see
 [watch-with-me.md](watch-with-me.md)). When Home Assistant restarts (`homeassistant/status` = `online`), R2 sends
 discovery and state again.
 
 **Safety and security:** MQTT commands run as ordinary actions, so the agent's motion watchdog,
-low-battery stop and emergency stop apply. Only the buttons and switches above can be used: no pairing,
+low-battery stop and emergency stop apply. Only the buttons, switches and select above can be used: no pairing,
 no phone app switch, nothing that installs software or reboots. The broker must be on the robot's own
 subnet, or in a subnet allowed with `tools\r2.ps1 allow-subnets`, the same rule as for API clients; any
 other broker address is refused and shown in `tools\r2.ps1 mqtt`. Anyone who can publish to the broker
