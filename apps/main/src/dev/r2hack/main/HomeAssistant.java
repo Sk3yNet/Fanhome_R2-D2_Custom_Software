@@ -77,7 +77,7 @@ final class HomeAssistant {
             {"stop", "Stop"}, {"wake", "Wake up"}, {"turn-left", "Turn left"}, {"turn-right", "Turn right"},
             {"turn-around", "Turn around"}, {"forward", "Go forward"}, {"circle", "Walk a circle"},
             {"patrol", "Patrol"}, {"dance", "Dance"}, {"shake-head", "Shake head"},
-            {"who-are-you", "Who are you"}, {"noise", "Make some noise"},
+            {"who-are-you", "Who are you"}, {"noise", "Make some noise"}, {"chirp", "Chirp"},
             {"flash-front", "Flash front light"}, {"flash-back", "Flash back light"},
             {"go-home", "Go home"}, {"tour", "Tour the rooms"},
     };

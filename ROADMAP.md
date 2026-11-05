@@ -47,6 +47,12 @@ routine engine in section 6.
 - [ ] Load the sounds at runtime from the factory files on the robot, the same way as the serial library,
       so nothing gets redistributed. *Built, not yet tested on the robot.* Later, optional user sound packs.
 - [ ] Mute and volume, kept across reboots. *Built, not yet tested on the robot.* Mute is reachable as an action; volume is set with `POST /volume`, the DLNA renderer and Home Assistant.
+- [ ] **New droid chirps on the fly** instead of the same recorded confirmation beep each time (Fanhome
+      owners' most common sound complaint). R2 Main generates R2-style phrases (blips, glides, warbles,
+      trills) in seven moods, plus droid sounds shaped like a sentence for a beeps-only reply. Used for the
+      confirmation beep (`chirps-off` brings back the factory one), the `chirp` action, `POST /chirp`,
+      `{"chirp": "happy"}` routine steps and a Home Assistant button. See [docs/chirps.md](docs/chirps.md).
+      *Built, not yet tested on the robot.*
 
 ### Buttons, status and lights
 - [ ] **Robot buttons:** power off (a clean shutdown of both the controller and Android), hotspot/Wi-Fi
@@ -160,7 +166,9 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       without a token, signs them with the key in the repository's secrets, and publishes them; forks
       release with their own key. Setup and switching between signers: [docs/releases.md](docs/releases.md).
 - [ ] **Switch between signers without manual steps** (e.g. upstream releases ↔ a fork's): a
-      `switch-source` command that keeps settings. Plan in [docs/releases.md](docs/releases.md).
+      `switch-source` command that keeps settings. *Built, not yet tested on the robot.*
+      `tools\r2.ps1 switch-source <owner/repo | folder>` checks the new certificate, backs up both apps'
+      settings, reinstalls with the new key and restores them. See [docs/releases.md](docs/releases.md).
 - [ ] **Cross-platform PC tool:** replace the PowerShell scripts with one small Python CLI (status, push,
       logs, adb, install, restore) for Windows, macOS and Linux.
 - [ ] Setup script for the build toolchain (JDK, Android SDK, platform-tools).
@@ -205,7 +213,7 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       (idle chatter and head turns, reactions to loud sounds, drive sounds, how long he stays awake), on the
       web page and as a select in Home Assistant. *Built, not yet tested on the robot.* It is the
       `liveliness` setting; see [docs/liveliness.md](docs/liveliness.md).
-- [ ] Later: gamepad support.
+- [ ] Gamepad support: drive with the left stick, head with the right, STOP and actions on buttons. *Built, not yet tested on the robot.* See docs/architecture.md (Web control page).
 
 ## 8. SD card installation (soft-mod)
 New users should be able to put an SD card into an untouched robot and either install this software,
