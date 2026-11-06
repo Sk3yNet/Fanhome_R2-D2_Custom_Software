@@ -1,0 +1,57 @@
+configuration:
+  repositories:
+    name: GitHub repositories
+    description: >-
+      Whose releases to copy, as owner/name. Keep the default unless R2 follows a fork
+      (tools\r2.ps1 update-source); then add the fork here. The first one is the one shown as R2's update.
+  check_hours:
+    name: Check GitHub every (hours)
+    description: >-
+      How often to look for a new release, 1 to 168. The Check now button on the R2-D2 page checks right away.
+  prereleases:
+    name: Include pre-releases
+    description: >-
+      Also copy pre-releases (tags with a dash, such as v0.4.0-beta.1). Leave off for normal use.
+  keep_releases:
+    name: Releases to keep
+    description: >-
+      How many releases to keep on disk per repository, 1 to 10. Only the newest is offered to R2.
+  trusted_certs:
+    name: Trusted signing certificates
+    description: >-
+      Optional. SHA-256 fingerprints of signing certificates (from the release notes, colons allowed).
+      When set, a release signed by anything else is not copied. Leave empty to accept the certificate the
+      release notes name; R2 still checks its own trusted list either way.
+  github_token:
+    name: GitHub token
+    description: >-
+      Not needed: leave empty. Only for a private repository or if GitHub rate-limits you (the add-on asks
+      a few times a day; the limit is 60 an hour).
+  robot:
+    name: R2's address
+    description: >-
+      R2's IP address on your network, such as 192.168.2.103. http://192.168.2.103:7700 also works; the port
+      defaults to 7700. Leave empty to only serve updates (no health check, update entity or backups).
+  robot_token:
+    name: R2 token
+    description: >-
+      A plain control token for R2. Make one on the PC with tools\r2.ps1 client-add home-assistant -Plain
+      (or reuse the r2_token from secrets.yaml). It can't change R2's settings or keys. For the Install
+      button, also run tools\r2.ps1 update-control on once.
+  ha_entities:
+    name: Home Assistant entities
+    description: >-
+      Show R2's software update (with Install), a Check button and health sensors in Home Assistant.
+      Needs the MQTT integration with the Mosquitto broker add-on, and R2's address and token above.
+  backup_settings:
+    name: Daily settings backup
+    description: >-
+      Once a day, save R2's routines, taught rooms and watch-with-me cue files into this add-on, so Home
+      Assistant's backups include them. Restore from the R2-D2 page. Wi-Fi, keys and other agent settings
+      are not included (use tools\r2.ps1 save-settings for those).
+  backup_keep:
+    name: Backups to keep
+    description: How many daily backups to keep, 1 to 60.
+network:
+  8765/tcp: >-
+    Port R2 downloads updates from. Point R2 at it once: tools\r2.ps1 update-mirror http://<Home Assistant's IP>:8765

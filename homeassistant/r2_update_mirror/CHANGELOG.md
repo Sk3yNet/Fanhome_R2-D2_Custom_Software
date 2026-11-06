@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- Help text for every option in the Configuration tab.
+- `robot` also accepts `http://192.168.2.103:7700` (the port defaults to 7700).
+
 ## 1.1.0
 
 - The page is in Home Assistant's sidebar (ingress), with **Check now**, **Install on R2** and backup buttons.
