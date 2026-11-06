@@ -120,6 +120,7 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
                            skipping what R2 already has (R2 reboots for a new agent)
   update-build             git pull, build both apps (apps/build.sh or build.ps1), then update-push apps/out
   update-serve [port]      serve the update mirror over HTTP (default port 8780) for R2 to download from
+  update-control <on|off>  let control clients (Home Assistant's token) install updates (off by default)
   update-mirror <url|off>  read releases from a copy on the local network, e.g. the Home Assistant add-on
                            (http://<host>:8765, docs/update-mirror.md); off: straight from GitHub
   trust | trust-add <sha256> | trust-remove <sha256>
@@ -789,6 +790,12 @@ def cmd_update_source(robot, a):
     if not re.match(r'^[\w.-]+/[\w.-]+$', a.arg or ''):
         raise R2Error('usage: r2.py update-source <owner/repo>')
     show(robot.call('POST', '/update/source?repo=' + q(a.arg)))
+
+
+def cmd_update_control(robot, a):
+    if a.arg not in ('on', 'off'):
+        raise R2Error('usage: r2.py update-control <on|off>')
+    show(robot.call('POST', '/update/control?on=' + ('1' if a.arg == 'on' else '0')))
 
 
 def cmd_update_mirror(robot, a):
@@ -1700,6 +1707,7 @@ COMMANDS = {
     'update-build': cmd_update_build,
     'update-serve': cmd_update_serve,
     'update-mirror': cmd_update_mirror,
+    'update-control': cmd_update_control,
     'trust': simple('GET', '/trust'),
     'trust-add': with_name('/trust?add=', 'trust-add <certificate sha256>'),
     'trust-remove': with_name('/trust?remove=', 'trust-remove <certificate sha256>'),

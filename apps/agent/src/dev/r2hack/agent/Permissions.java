@@ -34,7 +34,11 @@ final class Permissions {
                 "POST /place/teach/save", "POST /place/teach/cancel", "POST /places/settings",
                 // Drive lock (docs/drive-lock.md): enabling and locking driving; switching the lock itself
                 // needs admin, checked in AgentService.
-                "POST /drive");
+                "POST /drive",
+                // Updates (docs/update-mirror.md): asking for one, and installing it only if an admin allowed
+                // control clients to (POST /update/control, checked in AgentService). Where updates come from
+                // (source, mirror, trust) stays admin.
+                "POST /update/check", "POST /update/install");
         // Everything else (installs, reboot, shutdown, adb, Wi-Fi, stock app, serial, simulator, logcat,
         // dmesg, clients, trust, updates, MQTT and subnet settings) is admin.
     }

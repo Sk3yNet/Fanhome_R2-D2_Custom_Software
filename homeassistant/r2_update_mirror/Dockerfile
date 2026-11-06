@@ -3,6 +3,6 @@ FROM $BUILD_FROM
 
 RUN apk add --no-cache python3
 
-COPY mirror.py /mirror.py
+COPY mirror.py hass.py mqtt_lite.py r2robot.py /app/
 
-CMD ["python3", "-u", "/mirror.py", "serve"]
+CMD ["python3", "-u", "/app/mirror.py", "serve"]

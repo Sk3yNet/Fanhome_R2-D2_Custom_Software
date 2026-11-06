@@ -201,11 +201,7 @@ class MirrorTest(unittest.TestCase):
         main, _ = self.release('v1')
         m = self.mirror()
         m.update_all()
-        srv = mirror.Server(('127.0.0.1', 0), mirror.make_handler(m))
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
-        self.addCleanup(srv.server_close)
-        self.addCleanup(srv.shutdown)
-        base = 'http://127.0.0.1:%d' % srv.server_address[1]
+        srv, base = self.serve(mirror.App(m, m.opts, self.dir, action_ips=set()))
         get = lambda p: urllib.request.urlopen(base + p, timeout=5).read()
         man = json.loads(get('/%s/latest.json' % REPO))
         self.assertEqual(get('/%s/%s' % (REPO, man['assets']['R2Main.apk']['path'])), main)
@@ -221,9 +217,18 @@ class MirrorTest(unittest.TestCase):
                 get(bad)
             self.assertEqual(e.exception.code, 404)
 
+    def serve(self, app):
+        srv = mirror.Server(('127.0.0.1', 0), mirror.make_handler(app))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return srv, 'http://127.0.0.1:%d' % srv.server_address[1]
+
     def test_options(self):
         self.assertEqual(self.opts()['repositories'], [REPO])
-        for bad in ({'repositories': ['not a repo']}, {'repositories': ['a/..']}, {'trusted_certs': ['xyz']}):
+        self.assertEqual((self.opts()['robot'], self.opts()['backup_settings'], self.opts()['ha_entities']), ('', False, True))
+        for bad in ({'repositories': ['not a repo']}, {'repositories': ['a/..']}, {'trusted_certs': ['xyz']},
+                    {'robot': 'http://x/'}):
             with self.assertRaises(mirror.MirrorError):
                 self.opts(**bad)
 

@@ -17,7 +17,7 @@ The robot still only accepts clients on its own subnet (and the extra subnets yo
 | Level | What it may do |
 | --- | --- |
 | `read` | status, logs (`/log`), camera, routine, cue, room and plugin lists, watch-with-me state, the drive lock state, boot-hardening status, update and trust status, and the emergency stop |
-| `control` | read, plus actions, routines (run, upload, delete, stop), watch-with-me cues and playback state, rooms (go to, tour, teach), enabling and locking driving ([drive lock](drive-lock.md)), volume, the voice-pipeline mode |
+| `control` | read, plus actions, routines (run, upload, delete, stop), watch-with-me cues and playback state, rooms (go to, tour, teach), enabling and locking driving ([drive lock](drive-lock.md)), volume, the voice-pipeline mode, update checks, and installing updates if an admin allowed it (`update-control on`, [update-mirror.md](update-mirror.md)) |
 | `admin` | everything: plugin grants and settings, boot hardening, installs, updates, reboot, shutdown, adb, Wi-Fi, hotspot, MQTT and subnet settings, raw controller commands (`/serial`, so the web page's joystick needs admin), switching the drive lock on or off, clients, trust, logcat/dmesg |
 
 Any route not listed as read or control needs admin, so new routes start locked down

@@ -35,8 +35,13 @@ the previous one stays served, and the add-on's page shows why.
 2. Add `https://github.com/Sk3yNet/Fanhome_R2-D2_Custom_Software` and close the dialog.
 3. Find **R2-D2 update mirror** in the store (reload the page if needed), **Install**, then **Start**.
    Turn on **Start on boot** and **Watchdog**.
-4. **Open web UI** shows what it has mirrored, the signing certificate of each release, and the command to
-   point R2 at it. The first check runs when the add-on starts, then every 6 hours.
+   Turn on **Show in sidebar** too.
+4. The **R2-D2** page in the sidebar shows R2's health, its version and any update, what the add-on has
+   mirrored with each release's signing certificate, and the commands to point R2 at it. The first check
+   runs when the add-on starts, then every 6 hours; **Check now** checks right away.
+
+The page is also on port 8765 (`http://<HA IP>:8765/`) for a quick look, read-only: its buttons only work
+from the sidebar, where you're signed in to Home Assistant.
 
 This needs Home Assistant OS or a Supervised install (add-ons don't exist in Home Assistant Container or
 Core; there, use the PC option).
@@ -59,16 +64,57 @@ R2 follows one repository (`update-source`); the mirror must list it under `repo
 were built on your PC with your own key, the releases must be signed with the same key
 (see [releases.md](releases.md#one-time-setup-add-the-signing-key)), or do the one-time `switch-source` first.
 
+## R2 in Home Assistant: updates, health, backups
+
+Give the add-on R2's address and a token, and it shows R2's state and lets you install updates from Home
+Assistant. In the add-on's **Configuration** tab:
+
+- `robot`: R2's IP address, e.g. `192.168.2.103`.
+- `robot_token`: a plain token, made once on the PC with `tools\r2.ps1 client-add home-assistant -Plain`
+  (the same kind as the `r2_token` in `secrets.yaml`; you can use the same one). It is a *control* token:
+  it can't change settings, keys or where updates come from.
+
+Then, once, on the PC: `tools\r2.ps1 update-control on`. It lets control tokens start an install (off by
+default). Such an install is exactly `update-install`: only a newer build, signed by a trusted certificate,
+from the source and mirror R2 already uses. `update-control off` takes it back.
+
+With the [MQTT integration](https://www.home-assistant.io/integrations/mqtt/) set up (the Mosquitto broker
+add-on), these appear in Home Assistant, on R2's device if R2 Main's MQTT link is on:
+
+| Entity | |
+| --- | --- |
+| **Software** (update) | R2 Main's installed version and the newest one R2 can install. It shows under **Settings → Updates** with an **Install** button. Installing reboots R2 if the agent is updated; a notification says how it went. |
+| **Check for updates** (button) | checks GitHub and R2 now |
+| **Reachable** (connectivity) | R2's API answers |
+| **adb over Wi-Fi open** (problem) | something answers on R2's adb port 5555, which is an unauthenticated root shell |
+| **Problems** (problem) | on when any problem below is found; the list is in its attributes |
+
+The health check, every 5 minutes, reports as problems: R2 not answering, the token refused, the adb port
+open while R2 says adb is off (or adb set to always on), R2 Main not running, safe mode, and the agent being
+passive. The adb check connects to port 5555 itself instead of trusting R2's own report.
+
+Settings backups (`backup_settings`, off by default): once a day the add-on saves R2's routines, taught rooms
+and watch-with-me cue files, the things the token can read back and write again, and keeps the last
+`backup_keep` days. They live in the add-on's folder, so Home Assistant's own backups include them. The page
+lists them with a **Restore** button that writes them back to R2 (ones with the same name are replaced).
+Not included: Wi-Fi, keys, MQTT and other agent settings, which need the owner key. For those, use
+`tools\r2.ps1 save-settings` on the PC.
+
 ## Add-on options
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `repositories` | `Sk3yNet/Fanhome_R2-D2_Custom_Software` | Repositories whose releases are mirrored, as `owner/name`. Add a fork here if R2 follows one. |
-| `check_hours` | `6` | How often to ask GitHub for a new release. Restart the add-on to check now. |
+| `check_hours` | `6` | How often to ask GitHub for a new release. **Check now** on the page, or the Check button in Home Assistant, checks right away. |
 | `prereleases` | `false` | Also mirror pre-releases (tags with a dash, such as `v0.4.0-beta.1`). |
 | `keep_releases` | `2` | How many releases to keep on disk per repository. Only the newest is offered to R2. |
 | `trusted_certs` | empty | SHA-256 certificates (from the release notes, colons allowed). When set, a release signed by anything else isn't mirrored. |
-| `github_token` | empty | Only needed for a private repository or if GitHub rate-limits you. A fine-grained token with read access to the repository's contents. |
+| `github_token` | empty | Not needed normally: only for a private repository or if GitHub rate-limits you (60 requests an hour without one; the add-on uses a few a day). A fine-grained token with read access to the repository's contents. |
+| `robot` | empty | R2's IP address, for the health check, the update entity and backups. |
+| `robot_token` | empty | A plain control token for R2 (`client-add home-assistant -Plain`). |
+| `ha_entities` | `true` | Publish the entities above through MQTT. |
+| `backup_settings` | `false` | Back up routines, rooms and cue files daily. |
+| `backup_keep` | `14` | How many daily backups to keep. |
 
 The port is 8765; change the host side under **Network** in the add-on's settings if it's taken, and use
 that port in `update-mirror`.
@@ -100,7 +146,10 @@ Any web server that serves files in this layout works as a mirror.
 | Route | Level | |
 | --- | --- | --- |
 | `POST /update/mirror?url=http://host:port[/path]` | admin | read releases from that mirror; `url=` (empty) or `url=off` goes back to GitHub |
-| `GET /update` | read | shows `mirror` along with the other update settings |
+| `GET /update` | read | shows `mirror` and `control_may_install` along with the other update settings |
+| `POST /update/check` | control | ask the mirror (or GitHub) for a newer release |
+| `POST /update/install` | control, if allowed | install it; a control client only after `POST /update/control?on=1` |
+| `POST /update/control?on=1\|0` | admin | let control clients (Home Assistant) start installs; off by default |
 
 `POST /update/check` and `/update/install` use the mirror when one is set.
 
@@ -113,3 +162,7 @@ Still to do:
 - [ ] `update-install` installs R2 Main and the agent from the mirror; R2 reboots into the new build.
 - [ ] An APK signed by another key, served by a hand-made mirror, is refused.
 - [ ] `update-auto on` picks up a new release on its own once the add-on has mirrored it.
+- [ ] With `robot` and `robot_token` set: the page shows R2's versions and no problems; switching adb on
+      (`tools\r2.ps1 adb`) shows it as open; the entities appear on R2's device in Home Assistant.
+- [ ] Install from Home Assistant's Updates page is refused before `update-control on` and works after it.
+- [ ] A settings backup, then deleting a routine and restoring it from the page.

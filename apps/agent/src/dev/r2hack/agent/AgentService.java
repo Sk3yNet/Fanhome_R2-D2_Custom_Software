@@ -623,6 +623,10 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 }
             case "POST /update/install":
                 if (passive) return passiveError();
+                if (Clients.level(req.role) < Clients.level(Clients.ADMIN) && !updater.controlMayInstall()) {
+                    return HttpApi.Response.json(403, "{\"error\":\"installing updates needs an admin client, unless an admin "
+                            + "allows it for control clients such as Home Assistant: tools\\\\r2.ps1 update-control on\"}");
+                }
                 try {
                     return result(updater.install());
                 } catch (Exception e) {
@@ -638,6 +642,12 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 return result("following releases of " + repo + ". Only APKs signed by a trusted certificate are "
                         + "installed (GET /trust); add a fork's with POST /trust?add=<sha256>");
             }
+            case "POST /update/control": // on=1|0: may control clients (Home Assistant) start an install?
+                updater.setControlMayInstall("1".equals(req.query.get("on")));
+                return result(updater.controlMayInstall()
+                        ? "control clients (such as Home Assistant's token) may now install updates. They can only install "
+                                + "what update-install would: newer builds signed by a trusted certificate, from the configured source"
+                        : "only admin clients may install updates");
             case "POST /update/mirror": { // ?url=http://host:port: read releases from a local mirror; empty: GitHub
                 String raw = req.query.get("url") == null ? "" : String.valueOf(req.query.get("url")).trim();
                 if (raw.isEmpty() || "off".equals(raw)) {
