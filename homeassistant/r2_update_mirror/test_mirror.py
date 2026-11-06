@@ -226,9 +226,13 @@ class MirrorTest(unittest.TestCase):
 
     def test_options(self):
         self.assertEqual(self.opts()['repositories'], [REPO])
+        for typed, want in (('192.168.2.103', ('192.168.2.103', 7700)), ('http://192.168.2.103:7700', ('192.168.2.103', 7700)),
+                            ('HTTP://r2.lan:8000/', ('r2.lan', 8000)), (' 10.0.0.5 ', ('10.0.0.5', 7700))):
+            o = self.opts(robot=typed)
+            self.assertEqual((o['robot'], o['robot_port']), want, typed)
         self.assertEqual((self.opts()['robot'], self.opts()['backup_settings'], self.opts()['ha_entities']), ('', False, True))
         for bad in ({'repositories': ['not a repo']}, {'repositories': ['a/..']}, {'trusted_certs': ['xyz']},
-                    {'robot': 'http://x/'}):
+                    {'robot': 'ftp://x/'}, {'robot': 'http://x:99999'}, {'robot': 'x/path'}):
             with self.assertRaises(mirror.MirrorError):
                 self.opts(**bad)
 

@@ -110,7 +110,7 @@ Not included: Wi-Fi, keys, MQTT and other agent settings, which need the owner k
 | `keep_releases` | `2` | How many releases to keep on disk per repository. Only the newest is offered to R2. |
 | `trusted_certs` | empty | SHA-256 certificates (from the release notes, colons allowed). When set, a release signed by anything else isn't mirrored. |
 | `github_token` | empty | Not needed normally: only for a private repository or if GitHub rate-limits you (60 requests an hour without one; the add-on uses a few a day). A fine-grained token with read access to the repository's contents. |
-| `robot` | empty | R2's IP address, for the health check, the update entity and backups. |
+| `robot` | empty | R2's IP address, for the health check, the update entity and backups, e.g. `192.168.2.103` (`http://192.168.2.103:7700` works too; the port defaults to 7700). |
 | `robot_token` | empty | A plain control token for R2 (`client-add home-assistant -Plain`). |
 | `ha_entities` | `true` | Publish the entities above through MQTT. |
 | `backup_settings` | `false` | Back up routines, rooms and cue files daily. |

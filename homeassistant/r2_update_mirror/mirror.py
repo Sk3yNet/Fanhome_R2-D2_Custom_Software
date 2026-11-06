@@ -39,7 +39,7 @@ import zipfile
 import hass
 import r2robot
 
-ADDON_VERSION = '1.1.0'
+ADDON_VERSION = '1.1.1'
 DEFAULT_REPO = 'Sk3yNet/Fanhome_R2-D2_Custom_Software'
 ASSETS = ('R2Main.apk', 'R2Agent.apk')
 MAX_APK = 64 * 1024 * 1024  # the agent's limit too
@@ -150,6 +150,18 @@ def sha256_file(path):
 
 # ---- options ----------------------------------------------------------------------------------------
 
+def parse_robot(value):
+    """R2's address as people type it: '192.168.2.103', 'r2.lan', 'http://192.168.2.103:7700/' ->
+    (host, port). The port defaults to the agent's 7700."""
+    v = (value or '').strip()
+    if not v:
+        return '', r2robot.API_PORT
+    m = re.match(r'^(?:https?://)?([A-Za-z0-9.\-]{1,100})(?::(\d{1,5}))?/?$', v, re.I)
+    if not m or not 0 < int(m.group(2) or r2robot.API_PORT) < 65536:
+        raise MirrorError('robot: %r should be R2\'s IP address, such as 192.168.2.103' % v)
+    return m.group(1), int(m.group(2) or r2robot.API_PORT)
+
+
 def load_options(path):
     try:
         with open(path) as f:
@@ -164,9 +176,7 @@ def load_options(path):
     for c in certs:
         if not CERT_RE.match(c):
             raise MirrorError('trusted_certs: %r is not a SHA-256 (64 hex digits)' % c)
-    robot = (o.get('robot') or '').strip()
-    if robot and not re.match(r'^[A-Za-z0-9.\-]{1,100}$', robot):
-        raise MirrorError('robot: %r should be R2\'s IP address, such as 192.168.2.103' % robot)
+    robot, robot_port = parse_robot(o.get('robot'))
     return {
         'repositories': repos or [DEFAULT_REPO],
         'check_hours': max(1, min(168, int(o.get('check_hours', 6)))),
@@ -175,7 +185,8 @@ def load_options(path):
         'trusted_certs': certs,
         'github_token': (o.get('github_token') or '').strip(),
         'port': int(o.get('port', 8765)),
-        'robot': (o.get('robot') or '').strip(),
+        'robot': robot,
+        'robot_port': robot_port,
         'robot_token': (o.get('robot_token') or '').strip(),
         'ha_entities': bool(o.get('ha_entities', True)),
         'backup_settings': bool(o.get('backup_settings', False)),
@@ -360,7 +371,7 @@ class App:
     def __init__(self, mirror, opts, data_dir, action_ips=None):
         self.mirror = mirror
         self.opts = opts
-        self.robot = r2robot.Robot(opts['robot'], opts['robot_token']) if opts['robot'] else None
+        self.robot = r2robot.Robot(opts['robot'], opts['robot_token'], port=opts['robot_port']) if opts['robot'] else None
         self.health = {}
         self.update_info = {}
         self.in_progress = False
