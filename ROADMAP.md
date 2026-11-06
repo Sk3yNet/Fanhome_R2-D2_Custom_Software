@@ -211,6 +211,10 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       reach GitHub, so the releases come through a local mirror: a Home Assistant add-on or the PC tool
       downloads them and `update-mirror` points R2 at it ([docs/update-mirror.md](docs/update-mirror.md)).
       *Built, not yet tested on the robot.* Or `push-main`/`push-agent` from a PC, checked the same way.
+- [ ] Update from a PC instead: `update-push` (a release or your builds), `update-build` (git pull, build, push),
+      `update-fetch` + `update-serve` (an update mirror on the PC that R2 downloads from), in r2.ps1 and r2.py
+      (docs/releases.md, "Updating from a PC"). *Built, not yet tested on the robot.* The Home Assistant add-on
+      serves the same mirror.
 
 ## 6. Scripted movement routines
 - [ ] Routine format (e.g. JSON): steps of `cmd` (any controller command), `wait`, `wait_until`

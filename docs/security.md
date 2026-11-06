@@ -148,9 +148,9 @@ It installs only APKs that pass the checks above and have a newer versionCode th
 R2 Main goes on probation as with `push-main`, so a crash loop rolls it back. If the agent can't reach
 GitHub (Android 4.4's TLS stack and certificate store are old; the agent switches TLS 1.2 on, but GitHub's
 certificates aren't trusted), serve the releases on the local network: the Home Assistant add-on or the PC
-tool downloads them, and `update-mirror` points R2 at that copy ([update-mirror.md](update-mirror.md)). The
-mirror may be plain HTTP: the same checks apply. Or download the release on a PC and use `push-main` /
-`push-agent`, which are checked the same way.
+(`update-fetch` + `update-serve`) downloads them, and `update-mirror` points R2 at that copy ([update-mirror.md](update-mirror.md)).
+The mirror may be plain HTTP: the same checks apply. Or push from the PC with `update-push` / `update-build`
+(releases.md, "Updating from a PC"), which are checked the same way.
 
 ## Home Assistant
 

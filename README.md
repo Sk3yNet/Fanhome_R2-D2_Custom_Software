@@ -102,8 +102,9 @@ Other `tools\r2.ps1` commands: `action <name>` (`actions` lists them), `stop`, `
 `logcat [text]`, `dmesg [text]`, `adb [minutes]`, `adb-off`, `allow-subnets <list>`, `serial '<json>'`, `rollback`, `restart`, `push-agent`,
 `safe-on`/`safe-off`, `wifi-station`/`wifi-ap`, `hotspot`, `hotspot-password`, `stock-on`/`stock-off`, `reboot`, `shutdown`, `fetch-token`, `mqtt`,
 `assist off|robot|ha`, `assist-only <ip>`, and for keys and updates `pair`, `clients`, `client-add`, `client-revoke`,
-`rotate-owner`, `update`, `update-install`, `trust` ([docs/security.md](docs/security.md)), and `update-mirror` to
-update R2 through a Home Assistant add-on, as R2 can't reach GitHub itself ([docs/update-mirror.md](docs/update-mirror.md)).
+`rotate-owner`, `update`, `update-install`, `trust` ([docs/security.md](docs/security.md)). R2 can't reach GitHub
+itself, so update it from the PC with `update-push`, `update-build` or `update-serve` ([docs/releases.md](docs/releases.md#updating-from-a-pc)),
+or through a Home Assistant add-on with `update-mirror` ([docs/update-mirror.md](docs/update-mirror.md)).
 
 R2 also shows up in Home Assistant as a media player (DLNA), for music and announcements, and its camera can be added as an MJPEG camera (see [docs/architecture.md](docs/architecture.md)). *Not yet tested on the robot.*
 He can also be a voice assistant for Home Assistant's Assist, including AI conversation agents: say "hey R2-D2" and a question, and R2 speaks the answer

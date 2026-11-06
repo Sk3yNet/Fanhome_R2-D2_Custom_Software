@@ -111,6 +111,15 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
                            look for a newer GitHub release / download, verify and install it (R2 reboots)
   update-auto <on|off>     check every 6 hours and install while R2 is idle (off by default)
   update-source <owner/repo>   follow another repository's releases (also add its certificate: trust-add)
+  update-fetch [owner/repo | folder] [--tag v1.2.3]
+                           download a release on this PC (default: the one R2 follows), check its SHA256SUMS
+                           and put it in the update mirror (apps/out/mirror); a folder such as apps/out puts
+                           your own builds there (docs/releases.md: updating from a PC)
+  update-push [folder | owner/repo] [--tag v1.2.3]
+                           install R2 Main, then the agent, from a folder (default apps/out) or a release,
+                           skipping what R2 already has (R2 reboots for a new agent)
+  update-build             git pull, build both apps (apps/build.sh or build.ps1), then update-push apps/out
+  update-serve [port]      serve the update mirror over HTTP (default port 8780) for R2 to download from
   update-mirror <url|off>  read releases from a copy on the local network, e.g. the Home Assistant add-on
                            (http://<host>:8765, docs/update-mirror.md); off: straight from GitHub
   trust | trust-add <sha256> | trust-remove <sha256>
@@ -1114,7 +1123,7 @@ def get_source(spec, tag):
     import re
     if os.path.isdir(spec):
         d = os.path.abspath(spec)
-        return {'dir': d, 'label': d, 'repo': None, 'tag': None, 'note_cert': None}
+        return {'dir': d, 'label': d, 'repo': None, 'tag': None, 'note_cert': None, 'published': '', 'url': ''}
     if not re.match(r'^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$', spec):
         raise R2Error('not a folder or owner/repo: ' + spec)
     api = 'https://api.github.com/repos/%s/releases/%s' % (spec, 'tags/' + tag if tag else 'latest')
@@ -1141,7 +1150,8 @@ def get_source(spec, tag):
                     raise R2Error('%s does not match SHA256SUMS: the download is damaged or was changed' % m.group(2))
     m = re.search(r'certificate SHA-256:\s*`([0-9a-f]{64})`', rel.get('body') or '')
     return {'dir': d, 'label': '%s %s' % (spec, rel['tag_name']), 'repo': spec, 'tag': rel['tag_name'],
-            'note_cert': m.group(1) if m else None}
+            'note_cert': m.group(1) if m else None, 'published': rel.get('published_at') or '',
+            'url': rel.get('html_url') or ''}
 
 
 def stamp():
@@ -1298,6 +1308,230 @@ def cmd_switch_source(robot, a):
 
 
 # ---- serial console (capture-serial.ps1, serial-cmd.ps1) -------------------------------------------
+
+# ---- updating from this PC (update-fetch, update-push, update-build, update-serve). Plan: docs/releases.md ----
+# R2's Android 4.4 can't reach GitHub over TLS, so this PC fetches the release (or builds it from a git checkout)
+# and either pushes it to R2 or serves it as an update mirror that R2 downloads from (update-mirror).
+
+DEFAULT_REPO = 'Sk3yNet/Fanhome_R2-D2_Custom_Software'
+MIRROR = os.path.join(ROOT, 'apps', 'out', 'mirror')
+MIRROR_PORT = 8780
+
+
+def followed_repo():
+    """The repository whose releases R2 follows, as far as this PC knows (switch-source records it)."""
+    if os.path.isfile(SOURCE_FILE):
+        with open(SOURCE_FILE, encoding='utf-8-sig') as f:
+            repo = (json.load(f) or {}).get('repo')
+        if repo:
+            return repo
+    return DEFAULT_REPO
+
+
+def apk_pair(folder):
+    """R2Main.apk and R2Agent.apk in folder, with their signer and versionCode. Both must have the same signer."""
+    info = {}
+    for name in ('main', 'agent'):
+        f = os.path.join(folder, APPS[name]['apk'])
+        if not os.path.isfile(f):
+            raise R2Error('missing ' + f)
+        info[name] = {'file': f, 'cert': apk_cert(f), 'version': apk_version_code(f)}
+    if info['main']['cert'] != info['agent']['cert']:
+        raise R2Error('the two APKs in %s are signed with different keys' % folder)
+    return info
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 16), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def publish_mirror(info, repo, tag, published='', url=''):
+    """Copies the APKs into the update mirror (MIRROR/<owner>/<repo>/<tag>/) and points its latest.json at them.
+    The layout and fields are the ones the agent's update mirror reads (docs/releases.md)."""
+    import re
+    if not re.match(r'^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$', repo) or '..' in repo:
+        raise R2Error('not an owner/repo: ' + repo)
+    if not re.match(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$', tag) or '..' in tag:
+        raise R2Error('not a usable tag: ' + tag)
+    base = os.path.join(MIRROR, *repo.split('/'))
+    folder = os.path.join(base, tag)
+    os.makedirs(folder, exist_ok=True)
+    assets = {}
+    for name in ('main', 'agent'):
+        apk = APPS[name]['apk']
+        dst = os.path.join(folder, apk)
+        if os.path.abspath(info[name]['file']) != os.path.abspath(dst):
+            shutil.copyfile(info[name]['file'], dst)
+        assets[apk] = {'path': '%s/%s' % (tag, apk), 'sha256': sha256_file(dst), 'size': os.path.getsize(dst),
+                       'version_code': info[name]['version']}
+    manifest = {'repo': repo, 'tag': tag, 'version': tag[1:] if re.match(r'^v\d', tag) else tag,
+                'published': published or time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'url': url,
+                'cert': info['main']['cert'], 'assets': assets}
+    tmp = os.path.join(base, 'latest.json.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(manifest, f, indent=2)
+    os.replace(tmp, os.path.join(base, 'latest.json'))  # R2 never reads a half-written file
+    return os.path.join(base, 'latest.json')
+
+
+def installed_code(text):
+    """versionCode from the agent's "name (code)" text in GET /update, or None."""
+    import re
+    m = re.search(r'\((\d+)\)\s*$', text or '')
+    return int(m.group(1)) if m else None
+
+
+def push_pair(robot, folder, note_cert=None):
+    """Installs R2Main.apk, then R2Agent.apk from folder on R2 (the agent reboots R2), skipping what R2 already has.
+    The agent checks each APK again (trusted signer, package, docs/security.md)."""
+    info = apk_pair(folder)
+    cert = info['main']['cert']
+    if note_cert and note_cert != cert:
+        raise R2Error('the release notes name certificate %s, but the APKs are signed with %s' % (note_cert, cert))
+    try:
+        own = robot.call('GET', '/trust').get('own') or []
+    except R2Error as e:
+        if e.code != 404:
+            raise
+        own = None  # an agent from before signed updates: Android's own signer check still applies
+    if own is not None and cert not in own:
+        raise R2Error('these APKs are signed with %s, but R2\'s apps with %s. Android won\'t update across signers: '
+                      'use switch-source %s once (docs/releases.md)' % (cert, ', '.join(own) or '?', folder))
+    try:
+        status = robot.call('GET', '/update')
+    except R2Error as e:
+        if e.code != 404:
+            raise
+        status = {}
+    pushed = []
+    for name, path, key in (('main', '/main/install', 'main_installed'), ('agent', '/agent/install', 'agent_installed')):
+        have, new = installed_code(status.get(key)), info[name]['version']
+        label = 'R2 Main' if name == 'main' else 'R2 Agent'
+        if have is not None and new <= have:
+            print('%s: R2 already has versionCode %d (this one is %d), skipped' % (label, have, new))
+            continue
+        print('%s: installing versionCode %d%s' % (label, new, '' if have is None else ' over %d' % have))
+        show(robot.call('POST', path, in_file=info[name]['file'], timeout=300))
+        pushed.append(name)
+    if not pushed:
+        print('R2 is up to date')
+    elif 'agent' in pushed:
+        print('R2 reboots to load the new agent (about a minute); then: r2.py status')
+    return pushed
+
+
+def cmd_update_fetch(robot, a):
+    src = get_source(a.arg or followed_repo(), a.tag)
+    info = apk_pair(src['dir'])
+    if src['note_cert'] and src['note_cert'] != info['main']['cert']:
+        raise R2Error('the release notes name certificate %s, but the APKs are signed with %s'
+                      % (src['note_cert'], info['main']['cert']))
+    if src['repo']:
+        repo, tag = src['repo'], src['tag']
+    else:  # a folder of your own builds: offered under the repository R2 follows
+        repo, tag = followed_repo(), a.tag or 'local-' + stamp()
+    latest = publish_mirror(info, repo, tag, src['published'], src['url'])
+    print('%s %s in the update mirror: %s' % (repo, tag, latest))
+    print('  signed by %s; R2 Main versionCode %d, R2 Agent versionCode %d'
+          % (info['main']['cert'], info['main']['version'], info['agent']['version']))
+    print('Install it: r2.py update-push %s' % src['dir'])
+    print('Or let R2 fetch it: r2.py update-serve, then r2.py update-mirror http://<this PC>:%d and r2.py update-install'
+          % MIRROR_PORT)
+
+
+def cmd_update_push(robot, a):
+    src = get_source(a.arg or os.path.join(ROOT, 'apps', 'out'), a.tag)
+    print('installing from %s' % src['label'])
+    push_pair(robot, src['dir'], src['note_cert'])
+
+
+def run_step(args, cwd=ROOT):
+    print('> ' + ' '.join(args))
+    try:
+        return subprocess.run(args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              universal_newlines=True)
+    except OSError as e:
+        raise R2Error('cannot run %s: %s' % (args[0], e))
+
+
+def cmd_update_build(robot, a):
+    if os.path.isdir(os.path.join(ROOT, '.git')) and shutil.which('git'):
+        dirty = run_step(['git', 'status', '--porcelain', '--untracked-files=no']).stdout.strip()
+        if dirty:
+            print('local changes in the checkout: building them as they are, without git pull')
+        else:
+            r = run_step(['git', 'pull', '--ff-only'])
+            print(r.stdout.strip())
+            if r.returncode:
+                raise R2Error('git pull failed (see above); fix the checkout, or build and push it yourself '
+                              'with apps/build.sh and update-push')
+    else:
+        print('not a git checkout (or no git): building the files as they are')
+    if os.name == 'nt':
+        build = ['powershell', '-ExecutionPolicy', 'Bypass', '-File', os.path.join(ROOT, 'apps', 'build.ps1')]
+    else:
+        build = ['bash', os.path.join(ROOT, 'apps', 'build.sh'), 'all']
+    r = run_step(build)
+    print(r.stdout.rstrip())
+    if r.returncode:
+        raise R2Error('the build failed (see above)')
+    push_pair(robot, os.path.join(ROOT, 'apps', 'out'))
+
+
+def mirror_server(port, folder=None):
+    """A plain HTTP server for the update mirror folder. The APKs are checked on R2 (sha256 from latest.json,
+    then the trusted-signer check), so the transport needs no TLS, which R2 can't do with GitHub anyway."""
+    import functools
+    import http.server
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def list_directory(self, path):  # files only, no folder listings
+            self.send_error(404)
+            return None
+
+        def log_message(self, fmt, *args):
+            print('%s %s' % (self.address_string(), fmt % args))
+
+    return http.server.ThreadingHTTPServer(('', port), functools.partial(Handler, directory=folder or MIRROR))
+
+
+def lan_address():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('192.0.2.1', 9))  # no packet is sent: this only picks the interface with the default route
+        return s.getsockname()[0]
+    except OSError:
+        return '<this PC>'
+    finally:
+        s.close()
+
+
+def cmd_update_serve(robot, a):
+    if a.arg and not a.arg.isdigit():
+        raise R2Error('usage: r2.py update-serve [port]  (default %d)' % MIRROR_PORT)
+    port = int(a.arg) if a.arg else MIRROR_PORT
+    found = []
+    for dirpath, _, names in os.walk(MIRROR):
+        if 'latest.json' in names:
+            with open(os.path.join(dirpath, 'latest.json'), encoding='utf-8') as f:
+                m = json.load(f)
+            found.append('%s %s' % (m.get('repo'), m.get('tag')))
+    if not found:
+        raise R2Error('the update mirror is empty: run update-fetch (a release) or update-fetch apps/out first')
+    server = mirror_server(port)
+    print('serving %s on port %d: %s' % (MIRROR, port, ', '.join(sorted(found))))
+    print('Point R2 at it once: r2.py update-mirror http://%s:%d  (then update-check / update-install)'
+          % (lan_address(), port))
+    print('Ctrl+C stops it. Your firewall may ask to allow incoming connections.')
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+
 
 def open_serial(a):
     try:
@@ -1461,6 +1695,10 @@ COMMANDS = {
     'update-install': lambda robot, a: show(robot.call('POST', '/update/install', timeout=600)),
     'update-auto': cmd_update_auto,
     'update-source': cmd_update_source,
+    'update-fetch': cmd_update_fetch,
+    'update-push': cmd_update_push,
+    'update-build': cmd_update_build,
+    'update-serve': cmd_update_serve,
     'update-mirror': cmd_update_mirror,
     'trust': simple('GET', '/trust'),
     'trust-add': with_name('/trust?add=', 'trust-add <certificate sha256>'),
@@ -1494,7 +1732,7 @@ def parse(argv):
     p.add_argument('--plain', action='store_true', help='client-add: a plain token (Home Assistant)')
     p.add_argument('--lines', '-n', type=int, default=500, help='logcat/dmesg: how many lines (default 500)')
     p.add_argument('--at', help='watch-start/watch-resume: film position, e.g. 1:02:03')
-    p.add_argument('--tag', help='switch-source: a release tag instead of the latest release')
+    p.add_argument('--tag', help='switch-source/update-fetch/update-push: a release tag instead of the latest release')
     p.add_argument('--yes', action='store_true', help='switch-source: do not ask before switching')
     p.add_argument('--agent', action='store_true', help="restore-settings: also restore the agent's settings")
     p.add_argument('--port', help='serial-*: serial port, e.g. COM4 or /dev/ttyUSB0')
