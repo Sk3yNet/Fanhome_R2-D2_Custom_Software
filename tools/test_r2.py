@@ -10,6 +10,7 @@ import re
 import sys
 import threading
 import unittest
+import urllib.error
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -380,6 +381,120 @@ class R2CliTest(unittest.TestCase):
                          {'name': 'R2', 'uuid': 'abc-123', 'clients': [{'id': 'p1'}]})
         with self.assertRaises(r2.R2Error):
             r2.identity_body('cat: No such file or directory')
+
+    def fake_pair(self, folder, main=5, agent=5, cert='c' * 64):
+        os.makedirs(folder, exist_ok=True)
+        info = {}
+        for name, apk, code in (('main', 'R2Main.apk', main), ('agent', 'R2Agent.apk', agent)):
+            f = os.path.join(folder, apk)
+            with open(f, 'wb') as fh:
+                fh.write(apk.encode() * 10)
+            info[name] = {'file': f, 'cert': cert, 'version': code}
+        return info
+
+    def test_update_push_installs_main_then_agent(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        info = self.fake_pair(d, main=5, agent=7)
+        FakeAgent.replies['/trust'] = (200, 'application/json', {'own': ['c' * 64], 'added': []})
+        FakeAgent.replies['/update'] = (200, 'application/json', {'main_installed': '2026.11.06-1517 (4)',
+                                                                  'agent_installed': '2026.11.06-1517 (6)'})
+        with mock.patch.object(r2, 'apk_pair', lambda folder: info):
+            code, out, err = self.run_cli('update-push', d)
+        self.assertEqual(code, 0, err)
+        posts = [(x['path'], x['body']) for x in FakeAgent.requests if x['method'] == 'POST']
+        self.assertEqual([p for p, _ in posts], ['/main/install', '/agent/install'])
+        self.assertEqual(posts[0][1], b'R2Main.apk' * 10)
+        self.assertIn('reboots', out)
+
+    def test_update_push_skips_what_r2_has(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        info = self.fake_pair(d, main=5, agent=6)
+        FakeAgent.replies['/trust'] = (200, 'application/json', {'own': ['c' * 64], 'added': []})
+        FakeAgent.replies['/update'] = (200, 'application/json', {'main_installed': 'x (4)', 'agent_installed': 'x (6)'})
+        with mock.patch.object(r2, 'apk_pair', lambda folder: info):
+            code, out, err = self.run_cli('update-push', d)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([x['path'] for x in FakeAgent.requests if x['method'] == 'POST'], ['/main/install'])
+        self.assertNotIn('reboots', out)
+
+    def test_update_push_refuses_another_signer(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        info = self.fake_pair(d, cert='d' * 64)
+        FakeAgent.replies['/trust'] = (200, 'application/json', {'own': ['c' * 64], 'added': ['d' * 64]})
+        with mock.patch.object(r2, 'apk_pair', lambda folder: info):
+            code, _, err = self.run_cli('update-push', d)
+        self.assertEqual(code, 1)
+        self.assertIn('switch-source', err)
+        self.assertEqual([x for x in FakeAgent.requests if x['method'] == 'POST'], [])
+
+    def test_update_push_to_an_agent_without_trust_or_update(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        info = self.fake_pair(d)
+        FakeAgent.replies['/trust'] = (404, 'application/json', {'error': 'not found'})
+        FakeAgent.replies['/update'] = (404, 'application/json', {'error': 'not found'})
+        with mock.patch.object(r2, 'apk_pair', lambda folder: info):
+            code, _, err = self.run_cli('update-push', d)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([x['path'] for x in FakeAgent.requests if x['method'] == 'POST'], ['/main/install', '/agent/install'])
+
+    def test_update_fetch_folder_fills_the_mirror_and_update_serve_serves_it(self):
+        import hashlib
+        import tempfile
+        import urllib.request
+        builds, mirror = tempfile.mkdtemp(), tempfile.mkdtemp()
+        info = self.fake_pair(builds, main=11, agent=12)
+        with mock.patch.object(r2, 'apk_pair', lambda folder: info), mock.patch.object(r2, 'MIRROR', mirror), \
+                mock.patch.object(r2, 'followed_repo', lambda: 'someone/fork'):
+            code, out, err = self.run_cli('update-fetch', builds, '--tag', 'local-1')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(FakeAgent.requests, [])  # the robot isn't needed
+        with open(os.path.join(mirror, 'someone', 'fork', 'latest.json'), encoding='utf-8') as f:
+            m = json.load(f)
+        self.assertEqual((m['repo'], m['tag'], m['version'], m['cert']), ('someone/fork', 'local-1', 'local-1', 'c' * 64))
+        main = m['assets']['R2Main.apk']
+        self.assertEqual((main['path'], main['size'], main['version_code']), ('local-1/R2Main.apk', 100, 11))
+        self.assertEqual(main['sha256'], hashlib.sha256(b'R2Main.apk' * 10).hexdigest())
+        self.assertEqual(m['assets']['R2Agent.apk']['version_code'], 12)
+
+        server = r2.mirror_server(0, mirror)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        base = 'http://127.0.0.1:%d/someone/fork/' % server.server_address[1]
+        with contextlib.redirect_stdout(io.StringIO()):
+            with urllib.request.urlopen(base + 'latest.json') as r:
+                self.assertEqual(json.loads(r.read().decode())['tag'], 'local-1')
+            with urllib.request.urlopen(base + main['path']) as r:
+                self.assertEqual(hashlib.sha256(r.read()).hexdigest(), main['sha256'])
+            for bad in ('', '../../../etc/passwd'):
+                with self.assertRaises(urllib.error.HTTPError):
+                    urllib.request.urlopen(base + bad)
+
+    def test_update_fetch_checks_tags_and_repos(self):
+        info = {'main': {'file': 'x', 'cert': 'c', 'version': 1}, 'agent': {'file': 'y', 'cert': 'c', 'version': 1}}
+        for repo, tag in (('someone/fork', '../x'), ('someone/fork', 'a/b'), ('../x', 'v1'), ('nope', 'v1')):
+            with self.assertRaises(r2.R2Error):
+                r2.publish_mirror(info, repo, tag)
+        self.assertEqual(r2.installed_code('2026.11.06-1517 (1234)'), 1234)
+        self.assertIsNone(r2.installed_code('not installed'))
+
+    def test_update_build_stops_when_git_pull_fails(self):
+        calls = []
+
+        def fake_run(args, cwd=r2.ROOT):
+            calls.append(args)
+            return mock.Mock(stdout='' if args[:2] == ['git', 'status'] else 'diverged', returncode=1 if 'pull' in args else 0)
+
+        with mock.patch.object(r2, 'run_step', fake_run), mock.patch.object(r2.os.path, 'isdir', lambda p: True), \
+                mock.patch.object(r2.shutil, 'which', lambda n: '/usr/bin/git'):
+            code, _, err = self.run_cli('update-build')
+        self.assertEqual(code, 1)
+        self.assertIn('git pull failed', err)
+        self.assertEqual([c[:2] for c in calls], [['git', 'status'], ['git', 'pull']])
 
     def test_every_r2_ps1_command_exists(self):
         with open(os.path.join(r2.TOOLS, 'r2.ps1'), encoding='utf-8') as f:

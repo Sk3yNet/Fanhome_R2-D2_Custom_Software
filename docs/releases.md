@@ -63,6 +63,74 @@ To check a download: `sha256sum -c SHA256SUMS`, or `Get-FileHash R2Main.apk` on 
 in the notes can be compared with `keytool -list -v -keystore secrets\r2hack.keystore` (the SHA256 line,
 without the colons) or with `apksigner verify --print-certs R2Main.apk`.
 
+## Updating from a PC
+
+R2's Android 4.4 can't open a TLS connection to GitHub, so the agent's own self-update (docs/security.md) can't
+download a release. A PC on the same network does it instead, in one of three ways. *Built, not yet tested
+on the robot.* (`r2.py` has the same commands, with `--tag` for `-Tag`.)
+
+**Push a release.** The PC downloads the release, checks it against its `SHA256SUMS` and the certificate in
+its notes, and installs R2 Main and then the agent over the API, as `push-main` and `push-agent` do:
+
+```
+tools\r2.ps1 update-push Sk3yNet/Fanhome_R2-D2_Custom_Software            # latest release
+tools\r2.ps1 update-push Sk3yNet/Fanhome_R2-D2_Custom_Software -Tag v0.3.0
+tools\r2.ps1 update-push                                                   # your own builds in apps\out
+```
+
+**Build from your git checkout.** `update-build` runs `git pull --ff-only`, builds both apps with
+`apps\build.ps1` (`apps/build.sh` from `r2.py` on Mac or Linux) and pushes them. With uncommitted changes in the
+checkout it skips the pull and builds what is there. These are your local builds, signed with
+`secrets\r2hack.keystore` and with the development token built in, as before.
+
+**Let R2 download it from the PC.** `update-fetch` puts a release (or a folder of builds) into an update
+mirror, `apps\out\mirror\`, and `update-serve` serves that folder over plain HTTP. Point R2 at it once with
+`update-mirror`, and from then on `update-check`, `update-install` and automatic updates use the PC instead of
+GitHub:
+
+```
+tools\r2.ps1 update-fetch                       # the latest release of the repository R2 follows
+tools\r2.ps1 update-fetch apps\out              # or your own builds (tag local-<date>, or -Tag name)
+tools\r2.ps1 update-serve                       # port 8780; leave it running, Ctrl+C stops it
+tools\r2.ps1 update-mirror http://<this PC>:8780
+tools\r2.ps1 update-install
+```
+
+The Home Assistant add-on serves the same mirror layout, so R2 can follow it instead of a PC that has to be
+switched on. `update-mirror off` goes back to GitHub. (`update-mirror` comes with the agent's mirror support,
+which the add-on work adds.)
+
+Each check and install still happens on R2: an APK must match the sha256 and size in `latest.json`, be signed by
+a certificate R2 trusts with the right package name, and have a newer versionCode than the installed build.
+`update-push` also stops before installing anything if the APKs are signed with another key than R2's
+apps; that needs [`switch-source`](#switching-between-builds) once. It skips an app whose versionCode R2 already
+has. A new agent reboots R2.
+
+The mirror layout, for anything else that wants to serve it:
+
+```
+<mirror>/<owner>/<repo>/latest.json
+<mirror>/<owner>/<repo>/<tag>/R2Main.apk
+<mirror>/<owner>/<repo>/<tag>/R2Agent.apk
+```
+
+`<owner>/<repo>` is the repository R2 follows (`update-source`). `latest.json`:
+
+```
+{
+  "repo": "Sk3yNet/Fanhome_R2-D2_Custom_Software", "tag": "v0.3.0", "version": "0.3.0",
+  "published": "2026-11-06T20:00:00Z", "url": "<the release page>", "cert": "<signing certificate sha256>",
+  "assets": {
+    "R2Main.apk":  { "path": "v0.3.0/R2Main.apk",  "sha256": "...", "size": 123, "version_code": 1234 },
+    "R2Agent.apk": { "path": "v0.3.0/R2Agent.apk", "sha256": "...", "size": 456, "version_code": 1234 }
+  }
+}
+```
+
+`path` is relative to the folder of `latest.json`. `update-fetch` writes into the folder of the repository R2
+follows as far as this PC knows: the one `switch-source` recorded, otherwise this repository. If R2 follows
+another one, pass it (`update-fetch owner/repo`).
+
 ## Forks
 
 A fork builds and releases with its own key and never sees the upstream key:

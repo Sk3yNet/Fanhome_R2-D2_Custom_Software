@@ -108,6 +108,15 @@
 #                            look for a newer GitHub release / download, verify and install it (R2 reboots)
 #   update-auto <on|off>     check every 6 hours and install while R2 is idle (off by default)
 #   update-source <owner/repo>   follow another repository's releases (also add its certificate: trust-add)
+#   update-fetch [owner/repo | folder] [-Tag v1.2.3]
+#                            download a release on this PC (default: the one R2 follows), check its SHA256SUMS
+#                            and put it in the update mirror (apps\out\mirror); a folder such as apps\out puts
+#                            your own builds there (docs/releases.md: updating from a PC)
+#   update-push [folder | owner/repo] [-Tag v1.2.3]
+#                            install R2 Main, then the agent, from a folder (default apps\out) or a release,
+#                            skipping what R2 already has (R2 reboots for a new agent)
+#   update-build             git pull, build both apps (apps\build.ps1), then update-push apps\out
+#   update-serve [port]      serve the update mirror over HTTP (default port 8780) for R2 to download from
 #   trust | trust-add <sha256> | trust-remove <sha256>
 #                            signing certificates whose APKs R2 installs (its own is always trusted)
 #   reboot | shutdown
@@ -361,7 +370,7 @@ function Wait-Robot([int]$Seconds) {
 function Get-Source([string]$Spec, [string]$ReleaseTag) {
     if (Test-Path $Spec -PathType Container) {
         $dir = (Resolve-Path $Spec).Path
-        return @{ dir = $dir; label = $dir; repo = $null; tag = $null; noteCert = $null }
+        return @{ dir = $dir; label = $dir; repo = $null; tag = $null; noteCert = $null; published = ''; url = '' }
     }
     if ($Spec -notmatch '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$') { throw "not a folder or owner/repo: $Spec" }
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -383,12 +392,157 @@ function Get-Source([string]$Spec, [string]$ReleaseTag) {
         if ($actual -ne $Matches[1]) { throw "$($Matches[2]) does not match SHA256SUMS: the download is damaged or was changed" }
     }
     $noteCert = if ($rel.body -match 'certificate SHA-256:\s*`([0-9a-f]{64})`') { $Matches[1] } else { $null }
-    return @{ dir = $dir; label = "$Spec $($rel.tag_name)"; repo = $Spec; tag = $rel.tag_name; noteCert = $noteCert }
+    return @{ dir = $dir; label = "$Spec $($rel.tag_name)"; repo = $Spec; tag = $rel.tag_name; noteCert = $noteCert
+        published = "$($rel.published_at)"; url = "$($rel.html_url)" }
 }
 
 function Save-Secret([string]$File, [string]$Text) {
     New-Item -ItemType Directory -Force (Join-Path $root 'secrets') | Out-Null
     Set-Content $File $Text -NoNewline -Encoding ascii
+}
+
+# ---- Updating from this PC (update-fetch, update-push, update-build, update-serve). Plan: docs/releases.md ----
+# R2's Android 4.4 can't reach GitHub over TLS, so this PC fetches the release (or builds it from a git checkout)
+# and either pushes it to R2 or serves it as an update mirror that R2 downloads from (update-mirror).
+$defaultRepo = 'Sk3yNet/Fanhome_R2-D2_Custom_Software'
+$mirror = Join-Path (Join-Path (Join-Path $root 'apps') 'out') 'mirror'
+$mirrorPort = 8780
+
+function Get-HttpCode($ErrorRecord) {
+    try { return [int]$ErrorRecord.Exception.Response.StatusCode } catch { return 0 }
+}
+
+# The repository whose releases R2 follows, as far as this PC knows (switch-source records it).
+function Get-FollowedRepo {
+    if (Test-Path $sourceFile) {
+        $repo = (Get-Content $sourceFile -Raw | ConvertFrom-Json).repo
+        if ($repo) { return $repo }
+    }
+    return $defaultRepo
+}
+
+# R2Main.apk and R2Agent.apk in $Dir, with their signer and versionCode. Both must have the same signer.
+function Get-ApkPair([string]$Dir) {
+    . (Join-Path $PSScriptRoot 'apk-info.ps1')
+    $info = @{}
+    foreach ($name in 'main', 'agent') {
+        $f = Join-Path $Dir $apps[$name].apk
+        if (-not (Test-Path $f)) { throw "missing $f" }
+        $info[$name] = @{ file = (Resolve-Path $f).Path; cert = (Get-ApkCert $f); version = [long](Get-ApkVersionCode $f) }
+    }
+    if ($info.main.cert -ne $info.agent.cert) { throw "the two APKs in $Dir are signed with different keys" }
+    return $info
+}
+
+# Copies the APKs into the update mirror (apps\out\mirror\<owner>\<repo>\<tag>\) and points its latest.json at
+# them. The layout and fields are the ones the agent's update mirror reads (docs/releases.md).
+function Publish-Mirror($Info, [string]$Repo, [string]$ReleaseTag, [string]$Published, [string]$Url) {
+    if ($Repo -notmatch '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$' -or $Repo.Contains('..')) { throw "not an owner/repo: $Repo" }
+    if ($ReleaseTag -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$' -or $ReleaseTag.Contains('..')) { throw "not a usable tag: $ReleaseTag" }
+    $owner, $name = $Repo -split '/', 2
+    $base = Join-Path (Join-Path $mirror $owner) $name
+    $dir = Join-Path $base $ReleaseTag
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    $assets = [ordered]@{}
+    foreach ($app in 'main', 'agent') {
+        $apk = $apps[$app].apk
+        $dst = Join-Path $dir $apk
+        if ($Info[$app].file -ne [IO.Path]::GetFullPath($dst)) { Copy-Item $Info[$app].file $dst -Force }
+        $assets[$apk] = [ordered]@{ path = "$ReleaseTag/$apk"; sha256 = (Get-FileHash $dst -Algorithm SHA256).Hash.ToLowerInvariant()
+            size = (Get-Item $dst).Length; version_code = $Info[$app].version }
+    }
+    $manifest = [ordered]@{ repo = $Repo; tag = $ReleaseTag; version = $(if ($ReleaseTag -match '^v\d') { $ReleaseTag.Substring(1) } else { $ReleaseTag })
+        published = $(if ($Published) { $Published } else { (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }); url = $Url
+        cert = $Info.main.cert; assets = $assets }
+    $tmp = Join-Path $base 'latest.json.tmp'
+    [IO.File]::WriteAllText($tmp, ($manifest | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding $false))
+    Move-Item $tmp (Join-Path $base 'latest.json') -Force   # R2 never reads a half-written file
+    return (Join-Path $base 'latest.json')
+}
+
+# versionCode from the agent's "name (code)" text in GET /update, or $null.
+function Get-InstalledCode([string]$Text) {
+    if ($Text -match '\((\d+)\)\s*$') { return [long]$Matches[1] }
+    return $null
+}
+
+# Installs R2Main.apk, then R2Agent.apk from $Dir on R2 (the agent reboots R2), skipping what R2 already has.
+# The agent checks each APK again (trusted signer, package; docs/security.md).
+function Push-ApkPair([string]$Dir, [string]$NoteCert) {
+    $info = Get-ApkPair $Dir
+    $cert = $info.main.cert
+    if ($NoteCert -and $NoteCert -ne $cert) { throw "the release notes name certificate $NoteCert, but the APKs are signed with $cert" }
+    $own = $null
+    try { $own = @((Call GET /trust).own) }
+    catch { if ((Get-HttpCode $_) -ne 404) { throw } }   # an agent from before signed updates: Android still checks the signer
+    if ($null -ne $own -and $cert -notin $own) {
+        throw "these APKs are signed with $cert, but R2's apps with $($own -join ', '). Android won't update across signers: use switch-source $Dir once (docs/releases.md)"
+    }
+    $status = $null
+    try { $status = Call GET /update } catch { if ((Get-HttpCode $_) -ne 404) { throw } }
+    $pushed = @()
+    foreach ($step in @(@('main', '/main/install', 'main_installed', 'R2 Main'), @('agent', '/agent/install', 'agent_installed', 'R2 Agent'))) {
+        $name, $path, $key, $label = $step
+        $have = if ($status) { Get-InstalledCode $status.$key } else { $null }
+        $new = $info[$name].version
+        if ($null -ne $have -and $new -le $have) { "${label}: R2 already has versionCode $have (this one is $new), skipped"; continue }
+        "${label}: installing versionCode $new$(if ($null -ne $have) { " over $have" })"
+        $r = Call POST $path -InFile $info[$name].file -Timeout 300
+        if ($r.result) { $r.result } else { $r }
+        $pushed += $name
+    }
+    if (-not $pushed) { 'R2 is up to date' }
+    elseif ($pushed -contains 'agent') { 'R2 reboots to load the new agent (about a minute); then: r2.ps1 status' }
+}
+
+# The address other devices reach this PC on (the interface with the default route; no packet is sent).
+function Get-LanAddress {
+    $u = New-Object Net.Sockets.UdpClient
+    try { $u.Connect('192.0.2.1', 9); return $u.Client.LocalEndPoint.Address.ToString() }
+    catch { return '<this PC>' }
+    finally { $u.Close() }
+}
+
+# A plain HTTP server for the update mirror folder: GET and HEAD of files only, no folder listings. The APKs are
+# checked on R2 (sha256 from latest.json, then the trusted-signer check), so it needs no TLS, which R2 can't do
+# with GitHub anyway. A TcpListener, because HttpListener needs an admin URL reservation on Windows.
+function Start-MirrorServer([int]$Port, [string]$Dir) {
+    $full = [IO.Path]::GetFullPath($Dir).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    $listener = New-Object Net.Sockets.TcpListener ([Net.IPAddress]::Any, $Port)
+    $listener.Start()
+    try {
+        while ($true) {
+            while (-not $listener.Pending()) { Start-Sleep -Milliseconds 200 }   # so Ctrl+C gets through
+            $client = $listener.AcceptTcpClient()
+            try {
+                $client.ReceiveTimeout = 10000
+                $stream = $client.GetStream()
+                $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::ASCII, $false, 1024, $true)
+                $request = $reader.ReadLine()
+                while ($true) { $h = $reader.ReadLine(); if (-not $h) { break } }   # headers: not needed
+                $code = 404; $file = $null
+                if ($request -match '^(GET|HEAD) (/[^ ?#]*)\S* HTTP/1\.[01]$') {
+                    $method = $Matches[1]
+                    $rel = [Uri]::UnescapeDataString($Matches[2]).TrimStart('/')
+                    $candidate = [IO.Path]::GetFullPath((Join-Path $full $rel))
+                    if ($rel -and -not $rel.Contains('..') -and $candidate.StartsWith($full, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path $candidate -PathType Leaf)) {
+                        $code = 200; $file = $candidate
+                    }
+                } else { $code = 400; $method = 'GET' }
+                $type = if ($file -like '*.json') { 'application/json' } elseif ($file -like '*.apk') { 'application/vnd.android.package-archive' } else { 'text/plain' }
+                $length = if ($file) { (Get-Item $file).Length } else { 0 }
+                $head = "HTTP/1.0 $code $(if ($code -eq 200) { 'OK' } elseif ($code -eq 400) { 'Bad Request' } else { 'Not Found' })`r`nContent-Type: $type`r`nContent-Length: $length`r`nConnection: close`r`n`r`n"
+                $bytes = [Text.Encoding]::ASCII.GetBytes($head)
+                $stream.Write($bytes, 0, $bytes.Length)
+                if ($file -and $method -eq 'GET') {
+                    $in = [IO.File]::OpenRead($file)
+                    try { $in.CopyTo($stream) } finally { $in.Close() }
+                }
+                '{0} {1} "{2}" {3}' -f (Get-Date -Format 'HH:mm:ss'), $client.Client.RemoteEndPoint.Address, $request, $code | Write-Host
+            } catch { Write-Host "request failed: $($_.Exception.Message)" }
+            finally { $client.Close() }
+        }
+    } finally { $listener.Stop() }
 }
 
 switch ($Command) {
@@ -578,6 +732,53 @@ switch ($Command) {
     'update-install' { Call POST /update/install -Timeout 600 }
     'update-auto'  { if ($Arg -notin 'on', 'off') { throw 'usage: r2.ps1 update-auto <on|off>' }; Call POST "/update/auto?on=$(if ($Arg -eq 'on') { 1 } else { 0 })" }
     'update-source' { if ($Arg -notmatch '^[\w.-]+/[\w.-]+$') { throw 'usage: r2.ps1 update-source <owner/repo>' }; Call POST "/update/source?repo=$([uri]::EscapeDataString($Arg))" }
+    'update-fetch' {
+        $src = Get-Source $(if ($Arg) { $Arg } else { Get-FollowedRepo }) $Tag
+        $info = Get-ApkPair $src.dir
+        if ($src.noteCert -and $src.noteCert -ne $info.main.cert) { throw "the release notes name certificate $($src.noteCert), but the APKs are signed with $($info.main.cert)" }
+        # A folder of your own builds is offered under the repository R2 follows.
+        $repo = if ($src.repo) { $src.repo } else { Get-FollowedRepo }
+        $relTag = if ($src.tag) { $src.tag } elseif ($Tag) { $Tag } else { 'local-' + (Get-Date -Format 'yyyyMMdd-HHmmss') }
+        $latest = Publish-Mirror $info $repo $relTag $src.published $src.url
+        "$repo $relTag in the update mirror: $latest"
+        "  signed by $($info.main.cert); R2 Main versionCode $($info.main.version), R2 Agent versionCode $($info.agent.version)"
+        "Install it: r2.ps1 update-push $($src.dir)"
+        "Or let R2 fetch it: r2.ps1 update-serve, then r2.ps1 update-mirror http://<this PC>:$mirrorPort and r2.ps1 update-install"
+    }
+    'update-push'  {
+        $src = Get-Source $(if ($Arg) { $Arg } else { Join-Path $root 'apps\out' }) $Tag
+        "installing from $($src.label)"
+        Push-ApkPair $src.dir $src.noteCert
+    }
+    'update-build' {
+        Push-Location $root
+        try {
+            if ((Test-Path (Join-Path $root '.git')) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+                if (git status --porcelain --untracked-files=no) { 'local changes in the checkout: building them as they are, without git pull' }
+                else {
+                    '> git pull --ff-only'
+                    git pull --ff-only
+                    if ($LASTEXITCODE) { throw 'git pull failed (see above); fix the checkout, or build and push it yourself with apps\build.ps1 and update-push' }
+                }
+            } else { 'not a git checkout (or no git): building the files as they are' }
+            '> apps\build.ps1'
+            $global:LASTEXITCODE = 0
+            & (Join-Path $root 'apps\build.ps1')
+            if ($LASTEXITCODE) { throw 'the build failed (see above)' }
+        } finally { Pop-Location }
+        Push-ApkPair (Join-Path $root 'apps\out')
+    }
+    'update-serve' {
+        if ($Arg -and $Arg -notmatch '^\d+$') { throw "usage: r2.ps1 update-serve [port]  (default $mirrorPort)" }
+        $port = if ($Arg) { [int]$Arg } else { $mirrorPort }
+        $found = @(Get-ChildItem $mirror -Recurse -Filter latest.json -ErrorAction SilentlyContinue | ForEach-Object {
+            $m = Get-Content $_.FullName -Raw | ConvertFrom-Json; "$($m.repo) $($m.tag)" })
+        if (-not $found) { throw 'the update mirror is empty: run update-fetch (a release) or update-fetch apps\out first' }
+        "serving $mirror on port ${port}: $(($found | Sort-Object) -join ', ')"
+        "Point R2 at it once: r2.ps1 update-mirror http://$(Get-LanAddress):$port  (then update-check / update-install)"
+        'Ctrl+C stops it. Windows Firewall may ask to allow incoming connections.'
+        Start-MirrorServer $port $mirror
+    }
     'trust'        { Call GET /trust | ConvertTo-Json }
     'trust-add'    { if (-not $Arg) { throw 'usage: r2.ps1 trust-add <certificate sha256>' }; Call POST "/trust?add=$([uri]::EscapeDataString($Arg))" | ConvertTo-Json }
     'trust-remove' { if (-not $Arg) { throw 'usage: r2.ps1 trust-remove <certificate sha256>' }; Call POST "/trust?remove=$([uri]::EscapeDataString($Arg))" | ConvertTo-Json }

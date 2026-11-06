@@ -146,8 +146,9 @@ tools\r2.ps1 update-source owner/repo   # follow a fork; also trust-add its cert
 It installs only APKs that pass the checks above and have a newer versionCode than the installed build.
 R2 Main goes on probation as with `push-main`, so a crash loop rolls it back. If the agent can't reach
 GitHub (Android 4.4's TLS stack and certificate store are old; the agent switches TLS 1.2 on, but GitHub's
-certificates may still not be trusted), download the release on a PC and use `push-main` / `push-agent`,
-which are checked the same way.
+certificates may still not be trusted, which is the case on R2), update from a PC instead: `update-push`,
+`update-build`, or an update mirror on the PC or in Home Assistant (docs/releases.md, "Updating from a PC").
+Those APKs are checked the same way.
 
 ## Home Assistant
 

@@ -100,6 +100,40 @@ jobs:
             [ "$got" = "cert $cert  versionCode $code" ]
           done
 
+      # Updating from a PC (docs/releases.md): both PC tools put the same builds into the update mirror the
+      # agent reads, with the same latest.json, and serve it so that the files come back unchanged.
+      - name: PC tools fill and serve the update mirror
+        run: |
+          m=apps/out/mirror/Sk3yNet/Fanhome_R2-D2_Custom_Software
+          python3 tools/r2.py update-fetch apps/out --tag ci-1
+          cp "$m/latest.json" "$RUNNER_TEMP/py.json"
+          pwsh -NoProfile -File tools/r2.ps1 update-fetch apps/out -Tag ci-1
+          python3 - "$RUNNER_TEMP/py.json" "$m/latest.json" <<'EOF'
+          import json, sys
+          py, ps = (json.load(open(f)) for f in sys.argv[1:])
+          for x in (py, ps):
+              x.pop('published')
+          assert py == ps, (py, ps)
+          assert set(py['assets']) == {'R2Main.apk', 'R2Agent.apk'}, py
+          EOF
+          python3 tools/r2.py update-serve 18780 > "$RUNNER_TEMP/py-serve.log" 2>&1 &
+          pids=$!
+          pwsh -NoProfile -File tools/r2.ps1 update-serve 18781 > "$RUNNER_TEMP/ps-serve.log" 2>&1 &
+          pids="$pids $!"
+          trap 'kill $pids; cat "$RUNNER_TEMP"/*-serve.log' EXIT
+          for port in 18780 18781; do
+            base=http://127.0.0.1:$port/Sk3yNet/Fanhome_R2-D2_Custom_Software
+            for i in $(seq 30); do curl -sf -o /dev/null "$base/latest.json" && break; sleep 1; done
+            curl -sf "$base/latest.json" -o "$RUNNER_TEMP/latest.json"
+            for apk in R2Main.apk R2Agent.apk; do
+              want=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['assets'][sys.argv[2]]['sha256'])" "$RUNNER_TEMP/latest.json" $apk)
+              got=$(curl -sf "$base/ci-1/$apk" | sha256sum | cut -d' ' -f1)
+              echo "port $port $apk $got"
+              [ "$got" = "$want" ]
+            done
+            [ "$(curl -s --path-as-is -o /dev/null -w '%{http_code}' "$base/../../../../tools/r2.py")" = 404 ]
+          done
+
       # The release workflow's path: a keystore handed in through R2_KEYSTORE, and a version name from a tag.
       # Uses a throwaway key with a different alias, so it can't fall back to the one in secrets/ by accident.
       - name: Build with an outside key, as releases do
