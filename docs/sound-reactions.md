@@ -32,6 +32,8 @@ He doesn't react:
 - while he is playing a sound or driving, and for 0.7 s after, so he doesn't react to himself;
 - while he is listening for a voice command or talking with Home Assistant;
 - during projector clips and music (the microphone is closed then anyway);
+- while the room is noisy (music or a TV nearby, many sounds close together) or TV mode is on, and for a
+  minute after: see [noisy-room.md](noisy-room.md);
 - while watch-with-me follows a film (the cue file does the reacting then);
 - more than once every 5 seconds.
 

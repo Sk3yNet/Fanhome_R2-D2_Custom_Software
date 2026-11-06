@@ -182,6 +182,7 @@
       <label class="sw"><input type="checkbox" id="swVoice" data-on="voice-on" data-off="voice-off"><span></span>Voice commands</label>
       <label class="sw"><input type="checkbox" id="swFace" data-on="face-on" data-off="face-off"><span></span>Face tracking</label>
       <label class="sw"><input type="checkbox" id="swReact" data-on="reactions-on" data-off="reactions-off"><span></span>Sound reactions</label>
+      <label class="sw" title="No sound reactions, and drive commands by voice must be said twice. Comes on by itself while R2 hears music or a TV."><input type="checkbox" id="swTv" data-on="tv-mode-on" data-off="tv-mode-off"><span></span>TV mode<span id="noisyNote"></span></label>
       <label class="sw"><input type="checkbox" id="swChirps" data-on="chirps-on" data-off="chirps-off"><span></span>New beeps each time</label>
       <label class="sw"><input type="checkbox" id="swBeeps" data-on="beeps-on" data-off="beeps-off"><span></span>Answer in beeps</label>
       <label class="sw"><input type="checkbox" id="swDriveLock" disabled><span></span>Require enabling to drive</label>
@@ -433,6 +434,7 @@ for (const a of ACTIONS) {
 
 let volTouched = 0; // the controls follow /status, except right after you change them
 const SWITCHES = { swSound: s => s.muted == null ? null : !s.muted, swVoice: s => s.voice, swFace: s => s.face_tracking, swChirps: s => s.chirps, swReact: s => s.sound_reactions,
+  swTv: s => s.tv_mode,
   swBeeps: s => s.assist_reply == null ? null : s.assist_reply === "beeps" };
 for (const id in SWITCHES) {
   $(id).disabled = true; // until R2 reports the setting
@@ -533,6 +535,8 @@ async function refresh() {
       $("subtitleWho").textContent = s.subtitle_beeps ? "R2 beeps (translated):" : "R2 says:";
       $("subtitleText").textContent = s.subtitle;
     }
+    // Noisy room (docs/noisy-room.md): R2 is careful by himself while he hears music or a TV.
+    $("noisyNote").textContent = s.noisy_room && !s.tv_mode ? " (hearing music or a TV: careful anyway)" : "";
     if (s.volume != null && Date.now() - volTouched > 3000) {
       $("vol").value = s.volume;
       $("volOut").textContent = s.muted ? "muted" : s.volume + "%";

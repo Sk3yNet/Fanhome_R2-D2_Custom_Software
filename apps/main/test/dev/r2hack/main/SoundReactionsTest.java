@@ -125,8 +125,51 @@ public final class SoundReactionsTest {
         if (Math.abs(f - -40) < 4) pass("noise floor settles near the room level");
         else fail("noise floor settles near the room level", "floor " + f);
 
+        // Noisy room (docs/noisy-room.md): music's drum hits look like claps, many of them.
+        SoundReactions n = quietDetector();
+        Audio music = new Audio().noise(2000, room);
+        for (int i = 0; i < 25; i++) music.clap(-10, room).noise(480, room); // a beat every 0.6 s for 15 s
+        music.feedInto(n, false);
+        checkTrue("music with a beat: a noisy room", n.noisy());
+        new Audio().noise(30_000, room).feedInto(n, false);
+        checkTrue("still noisy 30 s after the music stops", n.noisy());
+        new Audio().noise(35_000, room).feedInto(n, false);
+        checkTrue("quiet again a minute after", !n.noisy());
+
+        SoundReactions few = quietDetector();
+        Audio claps = new Audio().noise(2000, room);
+        for (int i = 0; i < 5; i++) claps.clap(-6, room).noise(1500, room); // someone clapping a few times
+        claps.noise(2000, room).feedInto(few, false);
+        checkTrue("a few claps: not a noisy room", !few.noisy());
+
+        SoundReactions spread = quietDetector();
+        Audio slow = new Audio().noise(2000, room);
+        for (int i = 0; i < 12; i++) slow.clap(-6, room).noise(4000, room); // a clap every 4 s for most of a minute
+        slow.feedInto(spread, false);
+        checkTrue("claps spread out over a minute: not a noisy room", !spread.noisy());
+
+        SoundReactions loudRoom = quietDetector();
+        new Audio().noise(10_000, -32).feedInto(loudRoom, false);
+        checkTrue("a loud room (TV turned up): a noisy room", loudRoom.noisy());
+
+        SoundReactions own = quietDetector();
+        music.feedInto(own, true);
+        checkTrue("R2's own noise doesn't make the room noisy", !own.noisy());
+
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    private static SoundReactions quietDetector() {
+        return new SoundReactions(new SoundReactions.Listener() {
+            public void onSound(String kind, double peakDb) {
+            }
+        });
+    }
+
+    private static void checkTrue(String name, boolean ok) {
+        if (ok) pass(name);
+        else fail(name, "no");
     }
 
     private static void check(String name, List<String> got, String... want) {

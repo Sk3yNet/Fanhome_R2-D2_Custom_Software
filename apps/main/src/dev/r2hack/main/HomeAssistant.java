@@ -31,7 +31,7 @@ final class HomeAssistant {
         /**
          * The robot's state: battery (int, -1 unknown), charging (0/1/2), lightsaber, arm, lcd_s, lcd_l
          * (booleans), projector (0/1/2), mode (string), action (string), error (string), muted, voice,
-         * face, beeps (booleans), volume (0-100), liveliness (one of LIVELINESS, the activity preset),
+         * face, beeps, tv_mode, noisy (booleans), volume (0-100), liveliness (one of LIVELINESS, the activity preset),
          * reply (string: R2's last voice answer), name, uuid, version, location (strings), watch (WatchWithMe.status()).
          */
         JSONObject haState();
@@ -101,6 +101,7 @@ final class HomeAssistant {
             {"face", "Face tracking", "mdi:face-recognition"},
             {"watch", "Watch with me", "mdi:movie-open-play"},
             {"reactions", "Sound reactions", "mdi:hand-clap"},
+            {"tv-mode", "TV mode", "mdi:television-classic"},
             {"beeps", "Answer in beeps", "mdi:message-processing"},
             {"drive", "Driving enabled", "mdi:steering"},
             {"drive-lock", "Require enabling to drive", "mdi:lock"},
@@ -502,6 +503,9 @@ final class HomeAssistant {
             case "reactions":
                 host.action(on ? "reactions-on" : "reactions-off");
                 break;
+            case "tv-mode":
+                host.action(on ? "tv-mode-on" : "tv-mode-off");
+                break;
             case "beeps":
                 host.action(on ? "beeps-on" : "beeps-off");
                 break;
@@ -533,6 +537,7 @@ final class HomeAssistant {
                 return w != null && w.optBoolean("enabled");
             }
             case "reactions": return st.optBoolean("reactions");
+            case "tv-mode": return st.optBoolean("tv_mode");
             case "beeps": return st.optBoolean("beeps");
             case "drive": return st.optBoolean("drive_enabled");
             case "drive-lock": return st.optBoolean("drive_lock");
@@ -614,6 +619,7 @@ final class HomeAssistant {
         int batt = st.optInt("battery", -1);
         if (batt >= 0) m.put(b + "/battery", String.valueOf(batt));
         m.put(b + "/charging", st.optInt("charging") == 1 ? "ON" : "OFF");
+        m.put(b + "/noisy", st.optBoolean("noisy") ? "ON" : "OFF");
         m.put(b + "/mode", st.optString("mode", "ready"));
         m.put(b + "/action", st.optString("action", "idle"));
         String err = st.optString("error", "");
@@ -659,6 +665,9 @@ final class HomeAssistant {
                 .put("unit_of_measurement", "%").put("state_class", "measurement"));
         m.put(p + "/binary_sensor/" + node + "/charging/config", entity("Charging", node, "charging", device, origin)
                 .put("state_topic", b + "/charging").put("device_class", "battery_charging"));
+        // Music or a TV heard: R2 is careful (docs/noisy-room.md).
+        m.put(p + "/binary_sensor/" + node + "/noisy/config", entity("Noisy room", node, "noisy", device, origin)
+                .put("state_topic", b + "/noisy").put("device_class", "sound"));
         JSONArray modes = new JSONArray();
         for (String mode : MODES) modes.put(mode);
         m.put(p + "/sensor/" + node + "/mode/config", entity("Mode", node, "mode", device, origin)
