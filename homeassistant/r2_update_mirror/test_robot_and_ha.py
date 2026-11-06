@@ -270,6 +270,16 @@ class RobotAndHaTest(unittest.TestCase):
         self.assertEqual(e.exception.code, 403)
         self.assertNotIn('<button', urllib.request.urlopen(base + '/', timeout=5).read().decode())
         self.assertEqual(FakeAgent.installs, 0)
+        # The sidebar's own port: buttons shown and working, whatever the caller's address.
+        ing = mirror.Server(('127.0.0.1', 0), mirror.make_handler(a, ingress=True))
+        threading.Thread(target=ing.serve_forever, daemon=True).start()
+        self.addCleanup(ing.server_close)
+        self.addCleanup(ing.shutdown)
+        ibase = 'http://127.0.0.1:%d' % ing.server_address[1]
+        self.assertIn('<button', urllib.request.urlopen(ibase + '/', timeout=5).read().decode())
+        self.assertNotIn("Open this page from Home Assistant", urllib.request.urlopen(ibase + '/', timeout=5).read().decode())
+        urllib.request.urlopen(urllib.request.Request(ibase + '/action/check', data=b'', method='POST'), timeout=5)
+        self.assertIn('checking', a.last_action)
 
     def test_backup_and_restore(self):
         a = self.app(backup_settings=True, backup_keep=2)

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- Fix: the buttons didn't show on the sidebar page. The sidebar now has its own internal port (8099).
+
 ## 1.1.1
 
 - Help text for every option in the Configuration tab.
