@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.3
+
+- Fix: "bad gateway" on the sidebar page. Its server now always starts, and the add-on also finds Home
+  Assistant's token where the s6 init leaves it (MQTT entities and notifications depended on it too).
+
 ## 1.1.2
 
 - Fix: the buttons didn't show on the sidebar page. The sidebar now has its own internal port (8099).

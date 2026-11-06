@@ -39,7 +39,7 @@ import zipfile
 import hass
 import r2robot
 
-ADDON_VERSION = '1.1.2'
+ADDON_VERSION = '1.1.3'
 DEFAULT_REPO = 'Sk3yNet/Fanhome_R2-D2_Custom_Software'
 ASSETS = ('R2Main.apk', 'R2Agent.apk')
 MAX_APK = 64 * 1024 * 1024  # the agent's limit too
@@ -743,10 +743,13 @@ def main(argv=None):
         mirror.update_all()
         return 0 if all(s['ok'] for s in mirror.state.values()) else 1
     # Outside Home Assistant (no Supervisor) the buttons work from this machine only.
-    app = App(mirror, opts, a.data, None if os.environ.get('SUPERVISOR_TOKEN') else {'127.0.0.1', '::1'})
+    in_ha = hass.supervisor_token() is not None
+    app = App(mirror, opts, a.data, None if in_ha else {'127.0.0.1', '::1'})
     log('R2-D2 update mirror %s: %s, every %d h, port %d%s' % (
         ADDON_VERSION, ', '.join(opts['repositories']), opts['check_hours'], opts['port'],
         ', robot %s' % opts['robot'] if opts['robot'] else ''))
+    if not in_ha:
+        log('no Supervisor token: running outside Home Assistant (no MQTT entities or notifications)')
     app.mirror_url = hass.mirror_url()
     if opts['ha_entities'] and app.robot:
         broker = hass.mqtt_settings()
@@ -758,9 +761,15 @@ def main(argv=None):
                 'so there is no update entity; the page still works')
     threading.Thread(target=app.mirror_loop, name='mirror', daemon=True).start()
     threading.Thread(target=app.robot_loop, name='robot', daemon=True).start()
-    if os.environ.get('SUPERVISOR_TOKEN'):
+    # The sidebar page: always on, whatever the Supervisor token says, because Home Assistant opens it
+    # whenever the add-on runs (a missing listener is a "bad gateway" there). config.yaml doesn't publish
+    # this port on the network.
+    try:
         ing = Server(('', INGRESS_PORT), make_handler(app, ingress=True))
         threading.Thread(target=ing.serve_forever, name='ingress', daemon=True).start()
+        log('sidebar page on port %d' % INGRESS_PORT)
+    except OSError as e:
+        log('could not open the sidebar port %d: %s' % (INGRESS_PORT, e))
     Server(('', opts['port']), make_handler(app)).serve_forever()
     return 0
 

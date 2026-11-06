@@ -14,9 +14,22 @@ NODE = 'r2_update_mirror'
 SUPERVISOR = 'http://supervisor'
 
 
+def supervisor_token():
+    """The Supervisor's token. The s6 init in Home Assistant's base images may keep the container's
+    environment from the command it starts; it also leaves a copy here."""
+    token = os.environ.get('SUPERVISOR_TOKEN')
+    if not token:
+        try:
+            with open('/run/s6/container_environment/SUPERVISOR_TOKEN') as f:
+                token = f.read().strip()
+        except OSError:
+            token = None
+    return token or None
+
+
 def supervisor(path, method='GET', body=None, timeout=10):
     """Supervisor API call; None outside Home Assistant or on any error."""
-    token = os.environ.get('SUPERVISOR_TOKEN')
+    token = supervisor_token()
     if not token:
         return None
     data = json.dumps(body).encode() if body is not None else None

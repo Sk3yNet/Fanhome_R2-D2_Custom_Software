@@ -45,9 +45,10 @@ jobs:
           docker build --build-arg BUILD_FROM="$BASE" -t r2-update-mirror $ADDON
           mkdir -p "$RUNNER_TEMP/data"
           echo '{"repositories": ["Sk3yNet/Fanhome_R2-D2_Custom_Software"], "check_hours": 6}' > "$RUNNER_TEMP/data/options.json"
-          docker run -d --name mirror -p 8765:8765 -v "$RUNNER_TEMP/data:/data" r2-update-mirror
+          docker run -d --name mirror -p 8765:8765 -p 8099:8099 -v "$RUNNER_TEMP/data:/data" r2-update-mirror
           for i in $(seq 30); do curl -fsS http://127.0.0.1:8765/status.json && break; sleep 1; done
           curl -fsS http://127.0.0.1:8765/ | grep -q 'update-mirror http://127.0.0.1:8765'
+          curl -fsS http://127.0.0.1:8099/ | grep -q '<button'   # the sidebar page (ingress port), with its buttons
           docker logs mirror
           docker rm -f mirror
 
