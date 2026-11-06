@@ -49,6 +49,9 @@ word on R2's device page in Home Assistant.
 `tools\r2.ps1 status` shows the satellite under `assist`: mode, whether Home Assistant is connected, and what R2 last heard.
 `tools\r2.ps1 assist off` switches it off and closes the port.
 
+With the [update mirror add-on](update-mirror.md#voice-settings-on-the-page), Home Assistant's sidebar also has
+these settings: the mode, "only this Home Assistant", voice or beeps, volume and mute, and the status.
+
 R2 serves one Home Assistant connection at a time. Home Assistant reconnects by itself after R2 restarts.
 If Home Assistant is on a different subnet or VLAN, use `assist-only <its address>`. The pinned address is
 accepted from anywhere.

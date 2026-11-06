@@ -100,6 +100,25 @@ lists them with a **Restore** button that writes them back to R2 (ones with the 
 Not included: Wi-Fi, keys, MQTT and other agent settings, which need the owner key. For those, use
 `tools\r2.ps1 save-settings` on the PC.
 
+## Voice settings on the page
+
+With `robot` and `robot_token` set, the sidebar page has a **Voice** section for R2's side of the Home Assistant
+voice satellite ([home-assistant-voice.md](home-assistant-voice.md)). It shows the satellite's mode, whether Home
+Assistant is connected, who may connect, what R2 last heard and last answered, and has buttons for:
+
+| Setting | R2 API (control level) |
+| --- | --- |
+| Satellite: off, wake word on R2 ("hey R2-D2"), wake word in Home Assistant | `POST /assist?mode=` |
+| Who may connect: only this Home Assistant (its LAN address), or anyone on R2's subnet | `POST /assist?host=` |
+| Answers in the pipeline's voice, or beeps with subtitles | `beeps-off` / `beeps-on` actions |
+| Volume, mute | `POST /volume`, `mute` / `unmute` |
+| On-robot voice commands (off also stops listening for Home Assistant) | `voice-on` / `voice-off` |
+| Beep style: generated chirps or factory sounds | `chirps-on` / `chirps-off` |
+
+The Assist pipeline (speech to text, the conversation agent or AI, text to speech, and in `ha` mode the wake
+word) stays in Home Assistant: **Settings → Voice assistants**, then R2's device page under **Wyoming Protocol**.
+The page links there. Nothing in this section needs the owner key.
+
 ## Add-on options
 
 | Option | Default | What it does |
@@ -166,3 +185,5 @@ Still to do:
       (`tools\r2.ps1 adb`) shows it as open; the entities appear on R2's device in Home Assistant.
 - [ ] Install from Home Assistant's Updates page is refused before `update-control on` and works after it.
 - [ ] A settings backup, then deleting a routine and restoring it from the page.
+- [ ] Voice section: switching the mode, "Only this Home Assistant" (HA still connects), beeps, volume and mute
+      take effect on R2 and show on the page after the change.

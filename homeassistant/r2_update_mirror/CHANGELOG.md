@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+- A **Voice** section on the sidebar page for R2's side of the Home Assistant voice satellite: the satellite
+  mode (off, wake word on R2, wake word in Home Assistant), whether Home Assistant is connected, who may
+  connect (a button pins it to this Home Assistant), answers in voice or beeps, volume, mute, the on-robot
+  voice commands, the beep style, and R2's last reply. All of it works with the control token. The Assist
+  pipeline itself stays in Home Assistant's **Settings → Voice assistants**; the page links there.
+
 ## 1.1.3
 
 - Fix: "bad gateway" on the sidebar page. Its server now always starts, and the add-on also finds Home

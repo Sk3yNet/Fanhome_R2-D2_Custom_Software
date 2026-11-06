@@ -39,7 +39,7 @@ import zipfile
 import hass
 import r2robot
 
-ADDON_VERSION = '1.1.3'
+ADDON_VERSION = '1.2.0'
 DEFAULT_REPO = 'Sk3yNet/Fanhome_R2-D2_Custom_Software'
 ASSETS = ('R2Main.apk', 'R2Agent.apk')
 MAX_APK = 64 * 1024 * 1024  # the agent's limit too
@@ -380,6 +380,7 @@ class App:
         self.last_action = ''
         self.hass = None
         self.mirror_url = None
+        self.ha_address = None  # this machine's LAN address, for "accept only this Home Assistant"
         self.wake = threading.Event()
         self.lock = threading.Lock()
         self.backup_dir = os.path.join(os.path.abspath(data_dir), 'backups')
@@ -488,6 +489,45 @@ class App:
         except r2robot.RobotError as e:
             return 'restore failed: %s' % e
 
+    # ---- voice: R2's side of the Home Assistant voice satellite (all control level) -----------------------
+
+    VOICE_ACTIONS = {('reply', 'beeps'): 'beeps-on', ('reply', 'voice'): 'beeps-off', ('mute', 'on'): 'mute',
+                     ('mute', 'off'): 'unmute', ('commands', 'on'): 'voice-on', ('commands', 'off'): 'voice-off',
+                     ('chirps', 'on'): 'chirps-on', ('chirps', 'off'): 'chirps-off'}
+
+    def voice(self, what, value):
+        """One change from the page's Voice section. Returns what to show."""
+        if not self.robot:
+            return 'voice: set robot and robot_token first'
+        try:
+            if what == 'mode':
+                if value not in r2robot.ASSIST_MODES:
+                    return 'voice: mode must be off, robot or ha'
+                self.robot.set_assist(mode=value)
+            elif what == 'only':
+                if value == 'this':
+                    if not self.ha_address:
+                        return "voice: this machine's address isn't known (only inside Home Assistant)"
+                    value = self.ha_address
+                elif value != '':
+                    return 'voice: only takes this or nothing'
+                self.robot.set_assist(host=value)
+            elif what == 'volume':
+                if not re.match(r'^\d{1,3}$', value or '') or int(value) > 100:
+                    return 'voice: volume must be 0 to 100'
+                self.robot.set_volume(int(value))
+            elif (what, value) in self.VOICE_ACTIONS:
+                self.robot.action(self.VOICE_ACTIONS[(what, value)])
+            else:
+                return 'voice: unknown setting'
+        except r2robot.RobotError as e:
+            return 'voice: %s' % e
+        time.sleep(1.0)  # R2 Main applies it and tells the agent, which reports it in GET /status
+        self.refresh_robot()
+        names = {'mode': 'satellite mode', 'only': 'who may connect', 'volume': 'volume', 'reply': 'answer style',
+                 'mute': 'mute', 'commands': 'voice commands', 'chirps': 'beep style'}
+        return 'voice: %s sent to R2' % names[what]
+
     # ---- loops -------------------------------------------------------------------------------------
 
     def mirror_loop(self):
@@ -521,6 +561,8 @@ def run_action(app, action, form):
         app.last_action = app.backup_now()
     elif action == 'restore':
         app.last_action = app.restore(form.get('name', [''])[0])
+    elif action == 'voice':
+        app.last_action = app.voice(form.get('what', [''])[0], form.get('value', [''])[0])
     else:
         return False
     log('page: %s -> %s' % (action, app.last_action))
@@ -630,13 +672,14 @@ def status_page(app, host, can_act):
     if not url:
         url = 'http://%s' % (host if host and re.match(r'^[A-Za-z0-9.\-\[\]:]+$', host) else '<this machine>:%d' % port)
 
-    def button(action, label, enabled=True, why='', confirm=None, extra=''):
+    def button(action, label, enabled=True, why='', confirm=None, extra='', current=False):
         if not can_act:
             return ''
         js = ' onclick="return confirm(%s)"' % e(json.dumps(confirm)) if confirm else ''
         dis = '' if enabled else ' disabled title="%s"' % e(why)
-        return ('<form method="post" action="action/%s" class="inline">%s<button%s%s>%s</button></form>'
-                % (action, extra, dis, js, e(label)))
+        cls = ' class="on" aria-pressed="true"' if current else ''
+        return ('<form method="post" action="action/%s" class="inline">%s<button%s%s%s>%s</button></form>'
+                % (action, extra, cls, dis, js, e(label)))
 
     # R2
     if not app.robot:
@@ -674,6 +717,8 @@ def status_page(app, host, can_act):
     if not can_act:
         upd += '<p class="note">Open this page from Home Assistant\'s sidebar to use the buttons.</p>'
 
+    voice = voice_section(app, h.get('voice'), can_act, button) if app.robot else ''
+
     # Mirror
     rows = []
     for r in s['repositories']:
@@ -697,7 +742,7 @@ def status_page(app, host, can_act):
 
     cmd = 'tools\\r2.ps1 update-mirror %s' % url
     return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>R2-D2 updates</title><style>
+<title>R2-D2</title><style>
 :root{--fg:#222;--bg:#fff;--line:#ddd;--box:#f4f4f4;--bad:#b00;--muted:#666}
 @media (prefers-color-scheme: dark){:root{--fg:#ddd;--bg:#111;--line:#333;--box:#222;--bad:#f66;--muted:#999}}
 body{font:15px system-ui,sans-serif;margin:16px;max-width:900px;color:var(--fg);background:var(--bg)}
@@ -705,10 +750,12 @@ table{border-collapse:collapse;width:100%%}td,th{border-bottom:1px solid var(--l
 code{word-break:break-all;font-size:12px}.bad{color:var(--bad)}.note{color:var(--muted)}
 pre{background:var(--box);padding:8px;overflow-x:auto}form.inline{display:inline;margin-right:8px}
 button{font:inherit;padding:6px 14px;cursor:pointer}button[disabled]{cursor:not-allowed}
+button.on{background:#03a9f4;border:1px solid #03a9f4;color:#fff;opacity:1;cursor:default;font-weight:600}
 </style></head><body>
-<h1>R2-D2 updates</h1>
+<h1>R2-D2</h1>
 <h2>R2</h2>%s
 <h2>Updates</h2>%s
+%s
 <h2>Mirror</h2>
 <p>Copies R2's signed releases from GitHub every %d hours and serves them to R2 on this network. R2 installs only
 APKs signed by a certificate it trusts, so this mirror can't put anything else on it.</p>%s
@@ -719,7 +766,86 @@ tools\\r2.ps1 client-add home-assistant -Plain    # the robot_token for this add
 tools\\r2.ps1 update-control on                   # lets the Install button work</pre>
 <p class="note">Or <code>tools/r2.py</code> on Linux or macOS. Use this machine's IP address: R2 can't resolve names.</p>
 <p><small>Add-on %s &middot; <a href="status.json">status.json</a></small></p>
-</body></html>""" % (robot, upd, s['check_hours'], mirror, backups, e(cmd), ADDON_VERSION)
+</body></html>""" % (robot, upd, voice, s['check_hours'], mirror, backups, e(cmd), ADDON_VERSION)
+
+
+def voice_section(app, v, can_act, button):
+    """R2's side of the Home Assistant voice satellite. The Assist pipeline itself (speech to text, the
+    conversation agent or AI, text to speech) is chosen in Home Assistant, so this only links there."""
+    e = html.escape
+    out = ['<h2>Voice</h2>']
+    if not v:
+        out.append('<p class="note">Shown once R2 answers with robot_token.</p>')
+        return ''.join(out)
+    if v.get('mode') is None:
+        out.append('<p class="note">R2 Main isn\'t reporting its voice settings (not running, or too old for the '
+                   'Home Assistant voice satellite).</p>')
+        return ''.join(out)
+
+    def pick(what, current, choices):
+        """Buttons for a setting; the current one is shown pressed and can't be picked again."""
+        if not can_act:
+            return e(dict(choices).get(current, str(current)))
+        return ''.join(button('voice', label, current != value, 'the current setting', current=current == value,
+                              extra='<input type="hidden" name="what" value="%s"><input type="hidden" name="value" '
+                                    'value="%s">' % (what, value)) for value, label in choices)
+
+    mode_help = {'off': 'Off: "hey R2-D2" runs R2\'s own voice commands only.',
+                 'robot': 'Wake word "hey R2-D2" on the robot; only what you say after it goes to Home Assistant.',
+                 'ha': "Home Assistant's wake word (pick it on R2's device page); all microphone audio goes to "
+                       'Home Assistant while it is connected.'}
+    if v['mode'] == 'off':
+        conn = '-'
+    elif v.get('connected'):
+        conn = 'yes'
+    else:
+        conn = '<span class="bad">no</span> (add R2 under Settings &rarr; Devices &amp; services &rarr; Wyoming Protocol, port 10700)'
+    only = v.get('only') or ''
+    if only:
+        only_txt = 'only %s%s' % (e(only), ' (this Home Assistant)' if only == app.ha_address else '')
+    else:
+        only_txt = "anyone on R2's subnet"
+    only_btns = ''
+    if can_act:
+        if app.ha_address and only != app.ha_address:
+            only_btns += button('voice', 'Only this Home Assistant',
+                                extra='<input type="hidden" name="what" value="only"><input type="hidden" name="value" value="this">')
+        if only:
+            only_btns += button('voice', "Anyone on R2's subnet",
+                                extra='<input type="hidden" name="what" value="only"><input type="hidden" name="value" value="">')
+    vol = v.get('volume')
+    vol_form = ''
+    if can_act:
+        vol_form = ('<form method="post" action="action/voice" class="inline"><input type="hidden" name="what" value="volume">'
+                    '<input type="number" name="value" min="0" max="100" step="5" value="%s" style="width:5em"> '
+                    '<button>Set</button></form>' % e(str(vol if vol is not None else 50)))
+    else:
+        vol_form = '%s%%' % e(str(vol)) if vol is not None else '-'
+    onoff = (('on', 'On'), ('off', 'Off'))
+    rows = [
+        ('Satellite', pick('mode', v['mode'], (('off', 'Off'), ('robot', 'Wake word on R2'), ('ha', 'Wake word in HA')))
+         + '<br><small class="note">%s</small>' % e(mode_help[v['mode']])),
+        ('Connected to Home Assistant', conn),
+        ('Accepts connections from', only_txt + ('<br>' + only_btns if only_btns else '')),
+        ('Answers in', pick('reply', v.get('reply') or 'voice', (('voice', "The pipeline's voice"), ('beeps', 'Beeps with subtitles')))),
+        ('Volume', vol_form),
+        ('Muted', pick('mute', 'on' if v.get('muted') else 'off', onoff)),
+        ('Voice commands on the robot', pick('commands', 'on' if v.get('voice_commands') else 'off', onoff)
+         + '<br><small class="note">Off also stops R2 listening for Home Assistant.</small>'),
+    ]
+    if v.get('chirps') is not None:
+        rows.append(('Beeps', pick('chirps', 'on' if v['chirps'] else 'off',
+                                   (('on', 'Generated chirps'), ('off', 'Factory sounds')))))
+    if v.get('status'):
+        rows.append(('Status', '<small>%s</small>' % e(v['status'])))
+    if v.get('subtitle'):
+        rows.append(('Last reply', e(v['subtitle'])))
+    out.append('<table>%s</table>' % ''.join('<tr><th>%s</th><td>%s</td></tr>' % r for r in rows))
+    out.append('<p class="note">The Assist pipeline (speech to text, the conversation agent or AI, the voice) is set '
+               'in Home Assistant: <a href="/config/voice-assistants/assistants" target="_top">Settings &rarr; Voice '
+               'assistants</a>, then pick it on R2\'s device page under <a href="/config/integrations/integration/wyoming" '
+               'target="_top">Wyoming Protocol</a>.</p>')
+    return ''.join(out)
 
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -751,6 +877,7 @@ def main(argv=None):
     if not in_ha:
         log('no Supervisor token: running outside Home Assistant (no MQTT entities or notifications)')
     app.mirror_url = hass.mirror_url()
+    app.ha_address = hass.lan_address()
     if opts['ha_entities'] and app.robot:
         broker = hass.mqtt_settings()
         if broker:

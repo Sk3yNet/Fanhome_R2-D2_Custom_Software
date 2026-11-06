@@ -36,6 +36,8 @@ class FakeAgent(http.server.BaseHTTPRequestHandler):
     installs = 0
     store = {}
     posted = []
+    assist_mode = 'off'
+    assist_host = ''
 
     def log_message(self, *a):
         pass
@@ -83,6 +85,26 @@ class FakeAgent(http.server.BaseHTTPRequestHandler):
                 return self.reply(403, {'error': 'installing updates needs an admin client'})
             C.installs += 1
             return self.reply(200, {'result': '0.4.0: R2 Main: installed'})
+        q = dict(urllib.parse.parse_qsl(u.query, keep_blank_values=True))
+        if u.path in ('/assist', '/volume', '/action'):  # R2 Main's voice settings, as GET /status shows them
+            C.posted.append((u.path, q))
+            st = C.status
+            if u.path == '/assist':
+                mode = q.get('mode') or C.assist_mode
+                host = q['host'] if 'host' in q else C.assist_host
+                C.assist_mode, C.assist_host = mode, host
+                names = {'robot': 'wake word on the robot', 'ha': 'wake word in Home Assistant'}
+                st['assist'] = 'assist: off' if mode == 'off' else 'assist: %s%s, waiting for Home Assistant on port 10700' % (
+                    names[mode], ', only ' + host if host else '')
+            elif u.path == '/volume':
+                st['volume'] = int(q['percent'])
+            else:
+                flags = {'beeps-on': ('assist_reply', 'beeps'), 'beeps-off': ('assist_reply', 'voice'),
+                         'mute': ('muted', True), 'unmute': ('muted', False), 'voice-on': ('voice', True),
+                         'voice-off': ('voice', False), 'chirps-on': ('chirps', True), 'chirps-off': ('chirps', False)}
+                k, v = flags[q['name']]
+                st[k] = v
+            return self.reply(200, {'result': 'sent to the main app'})
         if u.path in ('/routine', '/place', '/cue'):
             C.posted.append((u.path, json.loads(body)))
             return self.reply(200, {'result': 'saved'})
@@ -186,6 +208,10 @@ class RobotAndHaTest(unittest.TestCase):
                            'places': {'kitchen': {'name': 'kitchen', 'there_seconds': 4}},
                            'cues': {'a-new-hope': {'name': 'a-new-hope', 'cues': []}}}
         FakeAgent.posted = []
+        FakeAgent.assist_mode, FakeAgent.assist_host = 'robot', ''
+        FakeAgent.status.update({'assist': 'assist: wake word on the robot, connected to 192.168.2.20, idle, last heard '
+                                           '"what time is it"', 'assist_reply': 'voice', 'volume': 60, 'muted': False,
+                                 'voice': True, 'chirps': True, 'subtitle': 'It is 3 PM.', 'subtitle_s_ago': 12})
 
     def robot(self, token=TOKEN, adb_port=1):
         return r2robot.Robot('127.0.0.1', token, port=self.agent.server_address[1], adb_port=adb_port)
@@ -339,6 +365,47 @@ class RobotAndHaTest(unittest.TestCase):
         self.assertTrue(wait_for(lambda: FakeAgent.installs == 1))
         # The last will: offline if the add-on drops off.
         self.assertIn(b'r2_update_mirror/availability', broker.connect_packet)
+
+    def test_voice_state(self):
+        v = r2robot.voice_state({'assist': 'assist: wake word in Home Assistant, only 192.168.2.20, answers in beeps, '
+                                           'waiting for Home Assistant on port 10700', 'volume': 40})
+        self.assertEqual((v['mode'], v['only'], v['connected'], v['volume']), ('ha', '192.168.2.20', False, 40))
+        self.assertEqual(r2robot.voice_state({'assist': 'assist: off'})['mode'], 'off')
+        self.assertIsNone(r2robot.voice_state({})['mode'])  # R2 Main not running or too old
+
+    def test_voice_settings_from_the_page(self):
+        a = self.app()
+        a.ha_address = '192.168.2.20'
+        a.refresh_robot()
+        srv, base = self.serve(a)
+        page = urllib.request.urlopen(base + '/', timeout=5).read().decode()
+        self.assertIn('<h2>Voice</h2>', page)
+        self.assertIn('Wake word &quot;hey R2-D2&quot; on the robot', page)
+        self.assertIn('It is 3 PM.', page)
+        self.assertIn('voice-assistants', page)
+
+        def press(what, value):
+            urllib.request.urlopen(urllib.request.Request(base + '/action/voice', method='POST', data=urllib.parse.urlencode(
+                {'what': what, 'value': value}).encode()), timeout=10)
+            return a.health['voice']
+
+        self.assertEqual(press('mode', 'ha')['mode'], 'ha')
+        self.assertEqual(press('only', 'this')['only'], '192.168.2.20')
+        self.assertIn('(this Home Assistant)', urllib.request.urlopen(base + '/', timeout=5).read().decode())
+        self.assertEqual(press('only', '')['only'], '')
+        self.assertEqual(press('reply', 'beeps')['reply'], 'beeps')
+        self.assertEqual(press('volume', '35')['volume'], 35)
+        self.assertTrue(press('mute', 'on')['muted'])
+        self.assertFalse(press('commands', 'off')['voice_commands'])
+        self.assertFalse(press('chirps', 'off')['chirps'])
+        n = len(FakeAgent.posted)
+        for what, value in (('mode', 'loud'), ('volume', '101'), ('only', '10.0.0.9'), ('reply', 'shout'), ('reboot', '')):
+            press(what, value)
+            self.assertIn('voice: ', a.last_action)
+        self.assertEqual(len(FakeAgent.posted), n)  # nothing invalid reached R2
+        # Without the sidebar, no buttons and no changes.
+        a.action_ips = set()
+        self.assertNotIn('action/voice', urllib.request.urlopen(base + '/', timeout=5).read().decode())
 
     def serve(self, app):
         srv = mirror.Server(('127.0.0.1', 0), mirror.make_handler(app))

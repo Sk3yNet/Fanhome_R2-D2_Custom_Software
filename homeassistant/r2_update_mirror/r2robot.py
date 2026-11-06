@@ -30,6 +30,30 @@ def version_name(installed):
     return re.sub(r'\s*\(\d+\)\s*$', '', installed).strip() or None
 
 
+ASSIST_MODES = ('off', 'robot', 'ha')
+
+
+def voice_state(st):
+    """The voice settings from R2's GET /status. assist is R2 Main's one-line satellite status, e.g.
+    'assist: wake word on the robot, only 192.168.2.20, connected to 192.168.2.20, idle'."""
+    a = st.get('assist') or ''
+    if a == 'assist: off':
+        mode = 'off'
+    elif 'wake word on the robot' in a:
+        mode = 'robot'
+    elif 'wake word in Home Assistant' in a:
+        mode = 'ha'
+    else:
+        mode = None  # R2 Main not running, or too old
+    m = re.search(r', only ([0-9a-fA-F.:]+)', a)
+    detail = a[len('assist: '):] if a.startswith('assist: ') else a
+    return {'mode': mode, 'only': m.group(1) if m else ('' if mode else None),
+            'connected': ', connected to ' in a, 'status': detail or None,
+            'reply': st.get('assist_reply'), 'volume': st.get('volume'), 'muted': st.get('muted'),
+            'voice_commands': st.get('voice'), 'chirps': st.get('chirps'),
+            'subtitle': st.get('subtitle') if (st.get('subtitle_s_ago') or 0) < 3600 else None}
+
+
 class Robot:
     def __init__(self, host, token, port=API_PORT, adb_port=ADB_PORT):
         self.host = host.strip()
@@ -102,6 +126,7 @@ class Robot:
             else:
                 h['problems'].append('status: %s' % e)
             return h
+        h['voice'] = voice_state(st)
         h['agent'] = st.get('agent')
         h['main'] = st.get('main_version')
         h['main_installed'] = up.get('main_installed')
@@ -134,6 +159,23 @@ class Robot:
             h['notes'].append('Installing from Home Assistant is off. Allow it once with '
                               '`tools\\r2.ps1 update-control on`.')
         return h
+
+    # ---- voice (docs/home-assistant-voice.md); all control level ----------------------------------------
+
+    def set_assist(self, mode=None, host=None):
+        """Wyoming satellite mode (off, robot, ha) and/or the one address allowed to connect ('' = R2's subnet)."""
+        q = {}
+        if mode is not None:
+            q['mode'] = mode
+        if host is not None:
+            q['host'] = host
+        return self.call('POST', '/assist?' + urllib.parse.urlencode(q))
+
+    def set_volume(self, percent):
+        return self.call('POST', '/volume?percent=%d' % percent)
+
+    def action(self, name):
+        return self.call('POST', '/action?name=' + urllib.parse.quote(name, safe=''))
 
     # ---- updates -----------------------------------------------------------------------------------
 

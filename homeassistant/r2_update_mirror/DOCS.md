@@ -15,6 +15,9 @@ R2 still installs only APKs signed by a certificate it trusts, so the mirror can
    - the update entity and health sensors need the MQTT integration (Mosquitto broker add-on).
 4. Optional: `backup_settings` saves R2's routines, rooms and cue files once a day, included in Home
    Assistant's backups, with a Restore button on the page.
+5. With `robot` and `robot_token` set, the page's **Voice** section shows R2's voice satellite and changes
+   R2's side of it (mode, who may connect, voice or beeps, volume, mute). The Assist pipeline is still picked
+   in **Settings → Voice assistants** and on R2's Wyoming device page.
 
 You don't need `github_token` for this public repository.
 
