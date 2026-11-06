@@ -51,7 +51,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     });
     private static final long ROUTINE_REPLY_MS = 5_000;
     /** Chirp.MOODS in the main app, plus "random". */
-    private static final String[] CHIRP_MOODS = {"random", "ack", "happy", "excited", "question", "sad", "worried", "chatter"};
+    private static final String[] CHIRP_MOODS = {"random", "ack", "happy", "excited", "question", "sad", "worried", "chatter", "whistle", "scream"};
 
     @Override
     public void onCreate() {

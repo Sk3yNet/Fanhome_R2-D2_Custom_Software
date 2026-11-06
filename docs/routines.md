@@ -46,7 +46,7 @@ Routines are kept in R2 Main's data (`files/routines/<name>.json`), so they surv
 A routine named like one of these built-in actions replaces it everywhere: voice commands, the
 robot's buttons, the phone app, the web page and `/action`:
 `wake`, `turn-left`, `turn-right`, `turn-around`, `forward`, `circle`, `dance`, `shake-head`,
-`who-are-you`, `noise`, `not-recognized`, `lightsaber`, `arm`, `short-lcd`, `long-lcd`, `flash-front`,
+`who-are-you`, `noise`, `not-recognized`, `whistle`, `freak-out`, `lightsaber`, `arm`, `short-lcd`, `long-lcd`, `flash-front`,
 `flash-back`, `leia`, `luke`, and the sound reactions `react-clap`, `react-double-clap` and `react-loud`
 ([sound-reactions.md](sound-reactions.md)). Delete the routine to get the built-in one back.
 [routines/shake-head.json](routines/shake-head.json) is the built-in shake-head written as a routine.
@@ -92,7 +92,7 @@ factory actions use 0.6 s between head moves). Unknown keys are refused, so typo
 |---|---|---|
 | `wait` | `{"wait": 1.5}` | Pause, in seconds (0–600). |
 | `sound` | `{"sound": 7}` · `{"sound": 1, "until_done": true}` | Play a droid sound by number (as `play_sound` numbers them; 100 and 101 are the projector clips). It interrupts the sound playing. With `until_done` the routine waits for it to end (up to 60 s). |
-| `chirp` | `{"chirp": "happy"}` · `{"chirp": "question", "until_done": true}` | Play a newly generated droid chirp (different every time): `ack`, `happy`, `excited`, `question`, `sad`, `worried`, `chatter` or `random`. See [chirps.md](chirps.md). Interrupts the sound playing; `until_done` waits for it to end. |
+| `chirp` | `{"chirp": "happy"}` · `{"chirp": "question", "until_done": true}` | Play a newly generated droid chirp (different every time): `ack`, `happy`, `excited`, `question`, `sad`, `worried`, `chatter`, `random`, or the set pieces `whistle` and `scream`. See [chirps.md](chirps.md). Interrupts the sound playing; `until_done` waits for it to end. |
 | `head` | `{"head": -45}` | Turn the head to an angle, −130 to 130 degrees from forward (positive to the right). |
 | `mode` | `{"mode": 3}` | A controller mode (0–20), e.g. 2 turn around, 3 left, 4 right, 5 forward, 12 circle, 0 stop. See [serial-protocol.md](serial-protocol.md). |
 | `drive` | `{"drive": {"power": 30, "angle": 0, "seconds": 2}}` | Drive for 0.1–60 s, then stop. `power` 0–100, `angle` −180 to 359 (0 forward, 180 reverse, 90 turns right on the spot, −90 left; 270 is *not* a left spin, the controller backs up instead). Drive steps in a row flow into each other without a stop in between. The move is repeated every 0.5 s, so the agent's motion watchdog keeps working. |

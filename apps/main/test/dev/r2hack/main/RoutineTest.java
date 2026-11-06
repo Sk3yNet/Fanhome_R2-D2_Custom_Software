@@ -429,6 +429,8 @@ public final class RoutineTest {
         contains("digits in phrase", triggerInvalid("[{\"voice\":\"party 2\"}]"), "2 to 6 plain words");
         contains("built-in phrase", triggerInvalid("[{\"voice\":\"turn left\"}]"), "overlaps the built-in");
         contains("phrase starting with a built-in", triggerInvalid("[{\"voice\":\"stop the music\"}]"), "overlaps the built-in");
+        contains("the wolf whistle question is built in", triggerInvalid("[{\"voice\":\"how pretty is the moon\"}]"), "overlaps the built-in");
+        contains("the freak-out question is built in", triggerInvalid("[{\"voice\":\"how scary are spiders\"}]"), "overlaps the built-in");
         contains("same button twice", triggerInvalid("[{\"button\":5},{\"button\":5}]"), "listed twice");
         contains("at and every", triggerInvalid("[{\"schedule\":{\"at\":\"07:00\",\"every\":10}}]"), "one of them");
         contains("bad time", triggerInvalid("[{\"schedule\":{\"at\":\"24:00\"}}]"), "not a time of day");

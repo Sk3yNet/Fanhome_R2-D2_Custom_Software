@@ -25,7 +25,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
 
     static final String[] ACTIONS = {
             "stop", "wake", "turn-left", "turn-right", "turn-around", "forward", "circle", "patrol", "follow",
-            "dance", "shake-head", "who-are-you", "noise", "not-recognized", "chirp",
+            "dance", "shake-head", "who-are-you", "noise", "not-recognized", "chirp", "whistle", "freak-out",
             "lightsaber", "arm", "short-lcd", "long-lcd", "flash-front", "flash-back", "leia", "luke",
             "mute", "unmute", "pair", "phone-app-on", "phone-app-off", "voice-on", "voice-off", "face-on", "face-off",
             "go-home", "tour",
@@ -680,6 +680,22 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     }
                 };
             case "not-recognized": return soundOnly(S_HUH);
+            case "whistle": // "how pretty is ...?": a look over, and a wolf whistle
+                return new Sequencer.Job() {
+                    public void run() throws Exception {
+                        head(30, 0);
+                        if (!sounds.chirp("whistle")) sounds.play(S_SING, true); // muted, or the chirp failed
+                        head(-10, 900);
+                        head(0, STEP_MS);
+                    }
+                };
+            case "freak-out": // "how scary is ...?": a scream and a frantic head shake (no wheels, so the drive lock doesn't matter)
+                return new Sequencer.Job() {
+                    public void run() throws Exception {
+                        if (!sounds.chirp("scream")) sounds.play(S_HUH, true);
+                        for (int a : new int[] {-45, 40, -40, 45, -35, 35, -20, 0}) head(a, 280);
+                    }
+                };
             case "lightsaber":
                 return new Sequencer.Job() {
                     public void run() throws Exception {
