@@ -7,6 +7,9 @@
 #   chirp [mood|'text']      a newly generated droid chirp: a mood (ack happy excited question sad worried
 #                            chatter whistle scream; default random), or droid sounds shaped like a sentence
 #                            (docs/chirps.md)
+#   sounds                   the soundboard (docs/soundboard.md): factory sounds, mood banks, chirps, reactions
+#   sound <number|mood|stop> play a factory sound by number, a random one from a mood bank (happy, random...),
+#                            or stop the sound playing
 #   stop                     emergency stop (the agent stops the robot itself, then cancels the action;
 #                            with the drive lock on, driving is locked again)
 #   drive                    drive lock state (docs/drive-lock.md)
@@ -390,6 +393,21 @@ switch ($Command) {
         if (-not $Arg) { Call POST '/chirp?mood=random' }
         elseif ($Arg -in $moods) { Call POST "/chirp?mood=$Arg" }
         else { Call POST /chirp $Arg }   # text: the body, so long sentences fit
+    }
+    'sounds'       {
+        $d = Call GET /sounds
+        if ($d.muted) { 'R2 is muted' } else { "volume $($d.volume)%" }
+        'factory sounds:'
+        $d.sounds | Format-Table number, label, @{ n = 'moods'; e = { $_.moods -join ', ' } } -AutoSize
+        'mood banks (r2.ps1 sound <mood>): ' + (($d.moods | ForEach-Object { $_.name }) -join ' ')
+        'chirps (r2.ps1 chirp <mood>): ' + (($d.chirps | ForEach-Object { $_.mood }) -join ' ')
+        'reactions (r2.ps1 action <name>): ' + (($d.reactions | ForEach-Object { $_.action + $(if ($_.custom) { ' (your routine)' } else { '' }) }) -join ', ')
+    }
+    'sound'        {
+        if (-not $Arg) { throw 'usage: r2.ps1 sound <number|mood|stop>  (see: r2.ps1 sounds)' }
+        if ($Arg -eq 'stop') { Call POST /sound/stop }
+        elseif ($Arg -match '^\d+$') { Call POST "/sound?number=$Arg" }
+        else { Call POST "/sound?mood=$([uri]::EscapeDataString("$Arg"))" }
     }
     'stop'         { Call POST /stop }
     'drive'        { Call GET /drive | ConvertTo-Json }

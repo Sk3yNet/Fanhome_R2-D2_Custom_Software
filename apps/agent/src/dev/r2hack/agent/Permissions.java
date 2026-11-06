@@ -24,11 +24,11 @@ final class Permissions {
         read("GET /status", "GET /log", "GET /camera.mjpg", "GET /camera.jpg", "GET /routines", "GET /routine",
                 "GET /wifi/last-join", "GET /mqtt", "GET /clients/allow", "GET /update", "GET /trust",
                 "GET /whoami", "GET /cues", "GET /cue", "GET /watch", "GET /plugins", "GET /hardening",
-                "GET /places", "GET /place", "GET /drive",
+                "GET /places", "GET /place", "GET /drive", "GET /sounds",
                 // Anyone who may look at the robot may also stop it.
                 "POST /stop");
         control("POST /action", "POST /routine", "POST /routine/delete", "POST /routine/run", "POST /routine/stop",
-                "POST /volume", "POST /assist", "POST /chirp", "POST /cue", "POST /cue/delete", "POST /watch",
+                "POST /volume", "POST /assist", "POST /chirp", "POST /sound", "POST /sound/stop", "POST /cue", "POST /cue/delete", "POST /watch",
                 // Rooms (docs/places.md): driving to a taught room, and teaching rooms.
                 "POST /goto", "POST /tour", "POST /place", "POST /place/delete", "POST /place/here", "POST /place/teach",
                 "POST /place/teach/save", "POST /place/teach/cancel", "POST /places/settings",

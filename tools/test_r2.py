@@ -105,8 +105,27 @@ class R2CliTest(unittest.TestCase):
         self.run_cli('sim-button', '3')
         self.assertEqual(self.last()['path'], '/sim/button?value=3')
 
+    def test_soundboard(self):
+        self.run_cli('sound', '8')
+        self.assertEqual((self.last()['method'], self.last()['path']), ('POST', '/sound?number=8'))
+        self.run_cli('sound', 'happy')
+        self.assertEqual(self.last()['path'], '/sound?mood=happy')
+        self.run_cli('sound', 'stop')
+        self.assertEqual(self.last()['path'], '/sound/stop')
+        FakeAgent.replies['/sounds'] = (200, 'application/json', {
+            'volume': 70, 'muted': False,
+            'sounds': [{'number': 8, 'label': 'Wake up', 'moods': ['happy'], 'step': {'sound': 8}}],
+            'moods': [{'name': 'happy', 'sounds': [8], 'step': {'sound': 'happy'}}],
+            'chirps': [{'mood': 'random', 'step': {'chirp': 'random'}}],
+            'reactions': [{'action': 'react-loud', 'label': 'Startled', 'custom': True, 'step': {'action': 'react-loud'}}]})
+        code, out, err = self.run_cli('sounds')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.last()['path'], '/sounds')
+        for text in ('volume 70%', 'Wake up', 'mood banks (r2.py sound <mood>): happy', 'react-loud (your routine)'):
+            self.assertIn(text, out)
+
     def test_usage_errors_send_nothing(self):
-        for args in (['action'], ['volume', 'loud'], ['assist', 'maybe'], ['routine-put', 'nope.json'],
+        for args in (['action'], ['sound'], ['volume', 'loud'], ['assist', 'maybe'], ['routine-put', 'nope.json'],
                      ['wifi-join'], ['serial']):
             with self.subTest(args):
                 code, _, err = self.run_cli(*args)

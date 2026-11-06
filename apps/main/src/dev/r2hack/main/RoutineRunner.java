@@ -23,6 +23,12 @@ final class RoutineRunner {
         /** Plays a newly generated chirp in this mood (Chirp.MOODS or "random"). */
         void playChirp(String mood);
 
+        /** Plays a random factory sound from this mood bank ("random": any bank); unknown banks play nothing. */
+        void playMood(String mood);
+
+        /** Plays droid sounds shaped like this text (Chirp.speak). */
+        void playBeeps(String text);
+
         boolean soundPlaying();
 
         void stopSound();
@@ -211,8 +217,15 @@ final class RoutineRunner {
                 break;
             case SOUND:
             case CHIRP:
-                if (s.kind == Routine.Kind.SOUND) host.playSound(s.number);
-                else host.playChirp(s.name);
+            case BEEPS:
+                if (s.kind == Routine.Kind.SOUND) {
+                    if (s.name != null) host.playMood(s.name);
+                    else host.playSound(s.number);
+                } else if (s.kind == Routine.Kind.CHIRP) {
+                    host.playChirp(s.name);
+                } else {
+                    host.playBeeps(s.name);
+                }
                 if (s.flag) {
                     long end = clock.now() + SOUND_WAIT_MAX_MS;
                     try {

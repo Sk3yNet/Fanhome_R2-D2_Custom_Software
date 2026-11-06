@@ -83,6 +83,10 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private final PluginManager plugins;
     private final RoutineStore routines;
     private final IdlePersonality idle;
+    /** Mood banks of factory sounds (assets/moods.json or the defaults): idle chatter and the soundboard. */
+    private final java.util.Map<String, int[]> moodBanks;
+    private final java.util.Random boardRandom = new java.util.Random();
+    private volatile int lastBoardSound = -1;
     private final SoundReactions ears;
     private volatile long lastReaction, ownNoiseUntil;
     private volatile String lastRoutine = "";   // how the last routine ended, for listings and /status
@@ -113,6 +117,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         this.sounds = new Sounds(io);
         this.robot = new Robot(io);
         robot.sounds = sounds;
+        this.moodBanks = loadMoods();
         this.idle = new IdlePersonality(new IdlePersonality.Host() {
             @Override
             public void playSound(int number) {
@@ -123,7 +128,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             public void head(int angle) {
                 send("head-angle", "angle", angle);
             }
-        }, new java.util.Random(), loadMoods());
+        }, new java.util.Random(), moodBanks);
         idle.setLevel(io.getSharedPreferences("settings", 0).getString("liveliness", IdlePersonality.DEFAULT_LEVEL));
         this.lights = new Lights(robot, new Lights.Output() {
             @Override
@@ -434,6 +439,26 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             return sounds.playPcm(Chirp.speak(text, mood, s), true);
         }
         return sounds.chirp(mood == null || mood.isEmpty() ? "random" : mood, s, true);
+    }
+
+    /**
+     * Plays a random factory sound from a mood bank ("random": any bank), for the soundboard and routines'
+     * {"sound": "happy"} steps. Returns the number played, or -1 (unknown bank, muted, or it couldn't play).
+     */
+    int playMood(String mood) {
+        int n = Soundboard.pick(moodBanks, mood, boardRandom, lastBoardSound);
+        if (n < 0) {
+            Log.w(TAG, "no mood bank " + mood + " (banks: " + moodBanks.keySet() + ")");
+            return -1;
+        }
+        lastBoardSound = n;
+        return sounds.play(n, true) ? n : -1;
+    }
+
+    /** The soundboard (docs/soundboard.md) for GET /sounds. */
+    private JSONObject soundboard() throws Exception {
+        return Soundboard.catalogue(sounds.numbers(), moodBanks, Arrays.asList(ACTIONS), routines.names())
+                .put("volume", sounds.volume()).put("muted", sounds.muted()).put("status", sounds.status());
     }
 
     private void onButton(int value) {
@@ -961,6 +986,16 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         }
 
         @Override
+        public void playMood(String mood) {
+            Brain.this.playMood(mood);
+        }
+
+        @Override
+        public void playBeeps(String text) {
+            sounds.speak(text, null);
+        }
+
+        @Override
         public boolean soundPlaying() {
             return sounds.isPlaying();
         }
@@ -1068,6 +1103,40 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     else reply.put("ok", false).put("error", err);
                     break;
                 }
+                case "sounds": // GET /sounds: the soundboard
+                    reply.put("ok", true);
+                    JSONObject board = soundboard();
+                    for (java.util.Iterator<?> it = board.keys(); it.hasNext(); ) {
+                        String k = (String) it.next();
+                        reply.put(k, board.get(k));
+                    }
+                    break;
+                case "sound": { // POST /sound?number=N or ?mood=happy: one factory sound, now
+                    wake();
+                    if (sounds.muted()) {
+                        reply.put("ok", false).put("error", "R2 is muted (unmute: action unmute, or the Sound switch)");
+                    } else if (msg.has("number")) {
+                        int n = msg.optInt("number", -1);
+                        if (!sounds.numbers().contains(n)) {
+                            reply.put("ok", false).put("error", "no sound " + n + " in this build (GET /sounds lists them)");
+                        } else if (sounds.play(n, true)) {
+                            reply.put("ok", true).put("result", "playing " + n + " (" + Soundboard.label(n) + ")").put("number", n);
+                        } else {
+                            reply.put("ok", false).put("error", "sound " + n + " could not play");
+                        }
+                    } else {
+                        String mood = msg.optString("mood");
+                        int n = playMood(mood);
+                        if (n >= 0) reply.put("ok", true).put("result", "playing " + n + " (" + Soundboard.label(n) + ") from " + mood).put("number", n);
+                        else reply.put("ok", false).put("error", Soundboard.ANY.equals(mood) || moodBanks.containsKey(mood)
+                                ? "the " + mood + " sounds could not play" : "no mood bank " + mood + " (banks: " + moodBanks.keySet() + ")");
+                    }
+                    break;
+                }
+                case "sound-stop": // POST /sound/stop: silence whatever plays (sounds, chirps, clips' audio)
+                    sounds.stop();
+                    reply.put("ok", true).put("result", "sound stopped");
+                    break;
                 case "stop": {
                     String was = seq.running();
                     seq.cancel();

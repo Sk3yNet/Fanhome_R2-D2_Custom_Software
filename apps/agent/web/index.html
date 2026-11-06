@@ -66,6 +66,14 @@
   .pads { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:13px; margin:8px 0 0; }
   .pads dt { color:var(--dim); } .pads dd { margin:0; }
   #gpState.on { color:var(--ok); }
+  .tabs { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin:0 0 12px; }
+  .tabs a { padding:10px; border:1px solid var(--line); border-radius:10px; background:#1d232c; color:var(--text); text-align:center; text-decoration:none; font-weight:600; }
+  .tabs a[aria-current=page] { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .board { display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px; }
+  .board button { min-height:52px; }
+  .board button small { display:block; color:var(--dim); font-size:11px; margin-top:2px; }
+  .board button.custom small { color:var(--warn); }
+  #stepOut { flex:1; font:13px ui-monospace,Menlo,Consolas,monospace; padding:8px; border-radius:8px; border:1px solid var(--line); background:#0b0e12; color:var(--text); min-width:0; }
 </style>
 </head>
 <body>
@@ -73,6 +81,43 @@
   <h1>R2 Control <span id="conn" class="pill">not connected</span></h1>
 
   <button id="stop">STOP</button>
+
+  <nav class="tabs" aria-label="Pages">
+    <a href="#" id="tabControl" aria-current="page">Control</a>
+    <a href="#sounds" id="tabSounds">Soundboard</a>
+  </nav>
+
+  <div id="pageSounds" hidden>
+  <section>
+    <div class="row"><button class="act" id="soundStop">Stop sound</button><span class="hint" id="boardNow">–</span></div>
+    <div class="hint">Tap anything to play it. The line below shows the same thing as a routine step, to copy into a routine (docs/routines.md).</div>
+    <div class="row"><input id="stepOut" type="text" readonly value="" placeholder="tap a sound" aria-label="Routine step"><button class="act" id="stepCopy">Copy</button></div>
+  </section>
+  <section>
+    <h2>Reactions</h2>
+    <div class="board" id="boardReactions"></div>
+  </section>
+  <section>
+    <h2>New beeps</h2>
+    <div class="hint">Generated on the spot, different every time.</div>
+    <div class="board" id="boardChirps"></div>
+  </section>
+  <section>
+    <h2>Say it in beeps</h2>
+    <div class="row"><input id="beepText" type="text" maxlength="500" placeholder="e.g. Hello there!" autocomplete="off"><button class="act" id="beepSay">Beep it</button></div>
+  </section>
+  <section>
+    <h2>Moods</h2>
+    <div class="hint">A random factory sound from each mood.</div>
+    <div class="board" id="boardMoods"></div>
+  </section>
+  <section>
+    <h2>Factory sounds</h2>
+    <div class="board" id="boardSounds"></div>
+  </section>
+  </div>
+
+  <div id="pageControl">
 
   <section>
     <h2>Status</h2>
@@ -180,6 +225,8 @@
       <div class="hint" id="hsNow"></div>
     </div>
   </section>
+
+  </div>
 
   <section>
     <details id="setup">
@@ -306,11 +353,74 @@ async function api(method, path, body, retried) {
 }
 const send = cmd => api("POST", "/serial", JSON.stringify(cmd));
 
+// Pages: Control (the default) and Soundboard (#sounds). Both share the connection and STOP.
+function showPage() {
+  const sounds = location.hash === "#sounds";
+  $("pageSounds").hidden = !sounds; $("pageControl").hidden = sounds;
+  $("tabSounds").setAttribute("aria-current", sounds ? "page" : "false");
+  $("tabControl").setAttribute("aria-current", sounds ? "false" : "page");
+  if (sounds) loadBoard();
+}
+window.addEventListener("hashchange", showPage);
+$("tabControl").onclick = e => { e.preventDefault(); history.replaceState(null, "", location.pathname + location.search); showPage(); };
+
+// Soundboard (docs/soundboard.md): GET /sounds lists what this R2 can play; each entry carries its routine step.
+let boardLoaded = false;
+function showStep(step) { $("stepOut").value = JSON.stringify(step); }
+function boardButton(box, label, sub, step, play, cls) {
+  const b = document.createElement("button");
+  b.className = "act" + (cls ? " " + cls : ""); b.textContent = label;
+  if (sub) { const sm = document.createElement("small"); sm.textContent = sub; b.appendChild(sm); }
+  b.title = "Routine step: " + JSON.stringify(step);
+  b.onclick = () => { showStep(step); play().then(d => say(d.result), e => say(e.message)); };
+  box.appendChild(b);
+}
+async function loadBoard(force) {
+  if (!token || (boardLoaded && !force)) return;
+  try {
+    const d = await api("GET", "/sounds");
+    boardLoaded = true;
+    $("boardNow").textContent = d.muted ? "R2 is muted" : "volume " + d.volume + "%";
+    const rx = $("boardReactions"); rx.textContent = "";
+    for (const r of d.reactions || []) {
+      boardButton(rx, r.label, r.custom ? "your routine" : "", r.step,
+        () => api("POST", "/action?name=" + encodeURIComponent(r.action)), r.custom ? "custom" : "");
+    }
+    const ch = $("boardChirps"); ch.textContent = "";
+    for (const c of d.chirps || []) boardButton(ch, c.mood, "", c.step, () => api("POST", "/chirp?mood=" + encodeURIComponent(c.mood)));
+    const md = $("boardMoods"); md.textContent = "";
+    for (const m of d.moods || []) {
+      boardButton(md, m.name, m.sounds.length ? m.sounds.length + " sounds" : "any mood", m.step,
+        () => api("POST", "/sound?mood=" + encodeURIComponent(m.name)));
+    }
+    if (!md.children.length) md.textContent = "No factory sounds in this build (apps/main/assets/sounds.json).";
+    const fs = $("boardSounds"); fs.textContent = "";
+    for (const s of d.sounds || []) {
+      boardButton(fs, s.number + " · " + s.label, s.moods.join(", "), s.step, () => api("POST", "/sound?number=" + s.number));
+    }
+    if (!fs.children.length) fs.textContent = d.status || "No factory sounds in this build.";
+  } catch (e) { $("boardNow").textContent = "soundboard: " + e.message; }
+}
+$("soundStop").onclick = () => api("POST", "/sound/stop").then(d => say(d.result), e => say(e.message));
+$("beepSay").onclick = () => {
+  const t = $("beepText").value.trim();
+  if (!t) { say("type something for R2 to beep"); return; }
+  showStep({ beeps: t });
+  api("POST", "/chirp", t).then(d => say(d.result), e => say(e.message));
+};
+$("beepText").onkeydown = e => { if (e.key === "Enter") $("beepSay").onclick(); };
+$("stepCopy").onclick = async () => {
+  const v = $("stepOut").value; if (!v) return;
+  try { await navigator.clipboard.writeText(v); say("copied " + v); }
+  catch (e) { $("stepOut").select(); try { document.execCommand("copy"); say("copied " + v); } catch (e2) { say("select the step and copy it"); } }
+};
+showPage();
+
 $("save").onclick = () => {
   const v = $("token").value.trim(), c = v.indexOf(":");
   if (v) saveCred(c > 0 ? { id: v.slice(0, c), key: v.slice(c + 1) } : { id: "owner", key: v });
   token = v;
-  $("setup").open = false; refresh(); loadRoutines();
+  $("setup").open = false; refresh(); loadRoutines(); boardLoaded = false; showPage();
 };
 $("stop").onclick = () => { driving = false; padDriving = false; padLatched = true; api("POST", "/stop").then(() => say("stopped"), e => say("stop failed: " + e.message)); };
 
@@ -546,7 +656,7 @@ getToken.onclick = async () => {
     // Its own key, so it can be revoked on its own later (tools\\r2.ps1 clients).
     const c = await api("POST", "/clients/pair?name=" + encodeURIComponent("web page " + navigator.platform));
     saveCred({ id: c.id, key: c.key }); token = c.key;
-    $("token").value = c.id + ":" + c.key; say("this device is paired as " + c.id); setupState(); refresh(); loadRoutines();
+    $("token").value = c.id + ":" + c.key; say("this device is paired as " + c.id); setupState(); refresh(); loadRoutines(); boardLoaded = false; showPage();
   } catch (e) { say("pairing failed: " + e.message); }
 };
 scan.onclick = async () => {

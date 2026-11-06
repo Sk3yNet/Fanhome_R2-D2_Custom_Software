@@ -64,6 +64,16 @@ public final class RoutineTest {
             soundUntil = now + 500;
         }
 
+        public void playMood(String mood) {
+            log.add(now + " mood " + mood);
+            soundUntil = now + 800;
+        }
+
+        public void playBeeps(String text) {
+            log.add(now + " beeps " + text);
+            soundUntil = now + 1500;
+        }
+
         public boolean soundPlaying() { return now < soundUntil; }
 
         public void stopSound() { log.add(now + " sound stop"); }
@@ -210,6 +220,18 @@ public final class RoutineTest {
         eq("chirp wait log", Arrays.asList("0 chirp happy", "500 chirp random", "500 head-angle angle=0"), h.log);
         contains("chirp mood", invalid("{\"name\":\"a\",\"steps\":[{\"chirp\":\"grumpy\"}]}"), "steps[0].chirp: one of random, ack");
         contains("chirp key", invalid("{\"name\":\"a\",\"steps\":[{\"chirp\":\"sad\",\"seed\":1}]}"), "unknown key \"seed\"");
+        // Soundboard (docs/soundboard.md): mood banks by name, and text said in beeps.
+        h = new FakeHost();
+        eq("mood and beeps", "finished", h.run(parse("{\"name\":\"a\",\"steps\":[{\"sound\":\"happy\",\"until_done\":true},"
+                + "{\"beeps\":\" Hello there! \",\"until_done\":true},{\"sound\":\"random\"},{\"sound\":8}]}")));
+        eq("mood and beeps log", Arrays.asList("0 mood happy", "800 beeps Hello there!", "2300 mood random", "2300 sound 8"), h.log);
+        contains("bad mood name", invalid("{\"name\":\"a\",\"steps\":[{\"sound\":\"Happy Days\"}]}"), "steps[0].sound: a sound number, or a mood bank");
+        contains("empty beeps", invalid("{\"name\":\"a\",\"steps\":[{\"beeps\":\"  \"}]}"), "steps[0].beeps: the text");
+        contains("beeps not text", invalid("{\"name\":\"a\",\"steps\":[{\"beeps\":5}]}"), "steps[0].beeps: the text");
+        StringBuilder longText = new StringBuilder();
+        for (int i = 0; i < 60; i++) longText.append("0123456789");
+        contains("long beeps", invalid("{\"name\":\"a\",\"steps\":[{\"beeps\":\"" + longText + "\"}]}"), "at most 500");
+        contains("beeps key", invalid("{\"name\":\"a\",\"steps\":[{\"beeps\":\"hi\",\"mood\":\"sad\"}]}"), "unknown key \"mood\"");
 
         h = new FakeHost();
         eq("sound wait", "finished", h.run(parse("{\"name\":\"a\",\"steps\":[{\"sound\":1,\"until_done\":true},{\"head\":0}]}")));

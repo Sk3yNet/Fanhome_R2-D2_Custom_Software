@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore, Triggers), places (Places),
 # watch-with-me (CueFile, CueStore, WatchWithMe), idle personality (IdlePersonality), sound reactions
-# (SoundReactions), "follow me"
+# (SoundReactions), the soundboard (Soundboard), "follow me"
 # (FollowTracker, FollowControl, Follower), Home Assistant link
 # (HomeAssistant, without a broker), the chirp generator (Chirp), Home Assistant voice replies (Assist, Beeps),
 # the plugin interface (PluginManager,
@@ -44,7 +44,8 @@ javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$J
     "$APPS_DIR/main/test/dev/r2hack/main/IdleTest.java" "$APPS_DIR/main/test/dev/r2hack/main/HomeAssistantTest.java" \
     "$APPS_DIR/main/test/dev/r2hack/main/ChirpTest.java" \
     "$APPS_DIR/main/test/dev/r2hack/main/SoundReactionsTest.java" \
-    "$APPS_DIR/main/test/dev/r2hack/main/FollowTest.java"
+    "$APPS_DIR/main/test/dev/r2hack/main/FollowTest.java" \
+    "$SRC/Soundboard.java" "$APPS_DIR/main/test/dev/r2hack/main/SoundboardTest.java"
 java -cp "$OUT:$JAR" dev.r2hack.main.RoutineTest "$ROOT/docs/routines"
 java -cp "$OUT:$JAR" dev.r2hack.main.PlacesTest
 java -cp "$OUT:$JAR" dev.r2hack.main.WatchTest "$ROOT/docs/watch-with-me"
@@ -53,6 +54,7 @@ java -cp "$OUT:$JAR" dev.r2hack.main.HomeAssistantTest
 java -cp "$OUT:$JAR" dev.r2hack.main.SoundReactionsTest
 java -cp "$OUT:$JAR" dev.r2hack.main.ChirpTest "$APPS_DIR/out/chirps"
 java -cp "$OUT:$JAR" dev.r2hack.main.FollowTest
+java -cp "$OUT:$JAR" dev.r2hack.main.SoundboardTest
 
 AGENT_SRC=$APPS_DIR/agent/src/dev/r2hack/agent
 javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \

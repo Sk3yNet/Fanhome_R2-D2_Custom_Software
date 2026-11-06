@@ -53,6 +53,7 @@ powershell -ExecutionPolicy Bypass -File tools\r2.ps1 status
 `GET /routines` · `GET /routine?name=` · `POST /routine` (JSON body) · `POST /routine/run?name=` · `POST /routine/stop` · `POST /routine/delete?name=` (see [routines.md](routines.md)) ·
 `GET /cues` · `GET /cue?name=` · `POST /cue` (JSON body) · `POST /cue/delete?name=` · `GET /watch` · `POST /watch` (`{"state","position","title","cue","enabled"}`; see [watch-with-me.md](watch-with-me.md)) ·
 `POST /chirp?mood=<mood>` or `POST /chirp` with text as the body (a generated droid chirp, see [chirps.md](chirps.md)) ·
+`GET /sounds` · `POST /sound?number=N|mood=<bank>` · `POST /sound/stop` (the soundboard, see [soundboard.md](soundboard.md)) ·
 `GET /mqtt` · `POST /mqtt` (`{"host","port","username","password","prefix","enabled"}`) ·
 `GET /places` · `GET /place?name=` · `POST /place` · `POST /place/delete?name=` · `POST /goto?place=` · `POST /tour` ·
 `POST /place/here?name=` · `POST /place/teach?name=&what=there|back|turn` · `POST /place/teach/save` · `POST /place/teach/cancel` ·
@@ -90,6 +91,8 @@ Open `http://<robot-ip>:7700/` on a phone or PC on the same network, press R2's 
 **Pair this device** (or paste a key under Connection). The page signs every request with its key. It shows
 battery, charging and movement; has a joystick (repeated `move` commands while held, so the motion
 watchdog stops R2 if the page or Wi-Fi goes away), a head slider, the actions, and a stop button.
+Its second tab, **Soundboard** (`/#sounds`), plays R2's reactions, new beeps, sentences in beeps, random
+sounds by mood and every factory sound, and shows each as a routine step: [soundboard.md](soundboard.md).
 
 A gamepad works too (browser Gamepad API, standard layout: Xbox, PlayStation and most USB or Bluetooth
 pads). The left stick drives through the same repeated `move` commands, the right trigger raises the power
