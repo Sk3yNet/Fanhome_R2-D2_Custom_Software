@@ -27,6 +27,14 @@ at any time; the agent stays installed.
       emergency stop, on low battery and after a restart. Enforced in the agent for every sender; routines and
       driving actions refuse cleanly. See [docs/drive-lock.md](docs/drive-lock.md). *Built, not yet tested on the robot.*
 - [ ] **Event log that survives reboots,** so you can see what happened before a crash or power loss. *Built, not yet tested on the robot.*
+- [ ] **Motor lock while charging:** the agent refuses to drive while the controller reports charging, so R2
+      can't pull against the cable. First check on the robot that `charging_status` in `gin` changes when he's plugged in.
+- [ ] **Charge-only boot:** powered on with the charger connected, the board starts only its charging service
+      (`on charger` in the board's init file): no Wi-Fi, hotspot, adb or agent. Confirm it on a spare,
+      near-factory board with the serial console (battery connected, charger plugged in at power-on, and check
+      whether a long press of the power button boots normally). Then, after backing up that board's eMMC, try a
+      small change to the charge-only mode: restart into a normal boot when the battery is above about 20%.
+      The same spare board is the test platform for the SD-card soft-mod.
 
 ## 2. Feature parity with the factory software
 Everything below is behavior the factory software has. All of it is now built; none of the newest
