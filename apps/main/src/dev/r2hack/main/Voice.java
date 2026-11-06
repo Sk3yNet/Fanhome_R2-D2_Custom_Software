@@ -94,6 +94,9 @@ final class Voice {
     private volatile Map<String, String> extra = new LinkedHashMap<>();
     private volatile boolean reload;
     private static final String EXTRA_THRESHOLD = "1e-20"; // moves R2, so as strict as the other drive commands
+    /** "Hey R2-D2" while being careful (a noisy room, TV mode): much stricter, so music doesn't wake him. */
+    static final String WAKE_CAREFUL_THRESHOLD = "1e-24";
+    private volatile boolean careful;
     private volatile File modelDir;
     private volatile boolean enabled = true;
     private volatile String problem = "starting";
@@ -112,6 +115,13 @@ final class Voice {
     void setExtraPhrases(Map<String, String> phrases) {
         if (phrases.equals(extra)) return;
         extra = new LinkedHashMap<>(phrases);
+        reload = true;
+    }
+
+    /** Careful (a noisy room, or TV mode; docs/noisy-room.md): a stricter wake phrase. Reloads between utterances. */
+    void setCareful(boolean on) {
+        if (on == careful) return;
+        careful = on;
         reload = true;
     }
 
@@ -235,7 +245,7 @@ final class Voice {
                         PocketSphinxJNI.Decoder_endUtt(decoder, null);
                         PocketSphinxJNI.Decoder_startUtt(decoder, null);
                     }
-                    if (reload) { // new place phrases: swap the keyword list between utterances
+                    if (reload) { // new place phrases, or careful mode: swap the keyword list between utterances
                         reload = false;
                         PocketSphinxJNI.Decoder_endUtt(decoder, null);
                         PocketSphinxJNI.Decoder_setKws(decoder, null, "command", keywordsFile().getPath());
@@ -314,7 +324,11 @@ final class Voice {
         }
         File f = new File(ctx.getFilesDir(), "voice/r2-keywords");
         StringBuilder sb = new StringBuilder();
-        for (Object[] p : PHRASES) sb.append(p[0]).append(" /").append(p[2]).append("/\n");
+        boolean strict = careful;
+        for (Object[] p : PHRASES) {
+            sb.append(p[0]).append(" /").append(strict && WAKE.equals(p[1]) ? WAKE_CAREFUL_THRESHOLD : p[2]).append("/\n");
+        }
+        if (strict) Log.i(TAG, "careful: stricter wake phrase");
         // Runtime phrases, if every word is in the speech model's dictionary (an unknown word breaks the list).
         Map<String, String> ex = extra;
         java.util.Set<String> known = knownWords(ex.keySet());

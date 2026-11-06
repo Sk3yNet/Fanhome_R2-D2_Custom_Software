@@ -84,6 +84,18 @@ public final class HomeAssistantTest {
         ha.onCommand(b + "/liveliness/set", "off; reboot");
         check("unknown presets are ignored", h.actions.isEmpty());
 
+        // TV mode and the noisy-room sensor (docs/noisy-room.md).
+        check("TV mode switch discovered", d.containsKey("homeassistant/switch/" + ha.nodeId() + "/tv_mode/config"));
+        check("noisy room sensor discovered", d.containsKey("homeassistant/binary_sensor/" + ha.nodeId() + "/noisy/config"));
+        h.actions.clear();
+        ha.onCommand(b + "/switch/tv-mode/set", "ON");
+        check("TV mode switch runs tv-mode-on", h.actions.equals(java.util.Arrays.asList("tv-mode-on")));
+        h.state.put("tv_mode", true).put("noisy", true);
+        check("TV mode state on", "ON".equals(ha.states(h.state).get(b + "/switch/tv-mode")));
+        check("noisy room state on", "ON".equals(ha.states(h.state).get(b + "/noisy")));
+        h.state.put("tv_mode", false).put("noisy", false);
+        h.actions.clear();
+
         // Drive lock switches (docs/drive-lock.md).
         check("drive switch discovered", d.containsKey("homeassistant/switch/" + ha.nodeId() + "/drive/config"));
         JSONObject lockCfg = d.get("homeassistant/switch/" + ha.nodeId() + "/drive_lock/config");

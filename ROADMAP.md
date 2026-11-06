@@ -80,6 +80,10 @@ routine engine in section 6.
       wakes R2), a loud sound a startled one, with head moves at full liveliness. Follows the shared
       liveliness setting and has its own on/off switch. See [docs/sound-reactions.md](docs/sound-reactions.md).
       *Built, not yet tested on the robot.* The detection thresholds need tuning on the real microphone.
+- [ ] **Noisy room and TV mode:** while R2 hears music or a TV (or TV mode is on) he ignores claps, needs a
+      clearer "hey R2-D2", and a voice command that drives him must be said twice. TV mode switch on the web
+      page and in Home Assistant, plus a "Noisy room" sensor. See [docs/noisy-room.md](docs/noisy-room.md).
+      *Built, not yet tested on the robot.*
 
 ### Voice commands
 - [x] Offline voice commands for the actions and toggles above, including "Princess Leia" and

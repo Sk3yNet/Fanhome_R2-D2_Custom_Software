@@ -176,7 +176,7 @@ ACTIONS = ('stop wake turn-left turn-right turn-around forward circle patrol fol
            'not-recognized chirp whistle freak-out lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair '
            'phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty '
            'liveliness-full chirps-on chirps-off beeps-on beeps-off react-clap react-double-clap react-loud reactions-on '
-           'reactions-off').split()
+           'reactions-off tv-mode-on tv-mode-off').split()
 CHIRP_MOODS = ('random', 'ack', 'happy', 'excited', 'question', 'sad', 'worried', 'chatter', 'whistle', 'scream')
 
 

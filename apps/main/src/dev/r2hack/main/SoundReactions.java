@@ -13,6 +13,10 @@ package dev.r2hack.main;
  * <li><b>loud</b>: a sound that stays loud for about a quarter second (a shout, a door slam, something dropped).
  * This one is reported as soon as it is recognised, not at the end.</li>
  * </ul>
+ * It also notices a <b>noisy room</b>: music or a TV makes many sound events in a short time (each
+ * drum hit looks like a clap), or keeps the room itself loud. noisy() is true then, and for a minute
+ * after; R2 Main stops reacting to sounds and is stricter with voice commands meanwhile
+ * (docs/noisy-room.md).
  * All thresholds are first guesses that need tuning on the robot (see status() and the log).
  */
 final class SoundReactions {
@@ -39,10 +43,15 @@ final class SoundReactions {
     static final int DOUBLE_MIN_GAP_MS = 150, DOUBLE_MAX_GAP_MS = 800;
     static final int LONG_EVENT_MS = 3000;          // longer than this: the room is louder now
     static final double FLOOR_START_DB = -60, FLOOR_MIN_DB = -90, FLOOR_MAX_DB = -25;
+    // Noisy room (music, a TV): this many sound events...
+    static final int NOISY_EVENTS = 10;
+    static final int NOISY_WINDOW_MS = 20_000;      // ...within this long; people rarely clap or bang that often
+    static final double NOISY_FLOOR_DB = -40;       // or the room's own level (the floor) is at least this loud
+    static final int NOISY_HOLD_MS = 60_000;        // and it stays "noisy" this long after the last sign of it
 
     private final Listener listener;
 
-    private long clockMs;              // audio time, from the number of samples seen
+    private volatile long clockMs;     // audio time, from the number of samples seen
     private double floorDb = FLOOR_START_DB;
     private boolean floorSet;
     private final short[] frame = new short[FRAME];
@@ -58,12 +67,18 @@ final class SoundReactions {
     private long pendingClapAt = -1;
     private double pendingClapDb;
 
+    // Noisy room: when the last NOISY_EVENTS events started (a ring), and until when the room counts as noisy.
+    private final long[] onsets = new long[NOISY_EVENTS];
+    private int onsetPos;
+    private volatile long noisyUntil = -1;
+
     // For status().
     private volatile String last = "nothing yet";
     private volatile long lastAtMs = -1;
 
     SoundReactions(Listener listener) {
         this.listener = listener;
+        java.util.Arrays.fill(onsets, Long.MIN_VALUE / 2);
     }
 
     /**
@@ -86,9 +101,19 @@ final class SoundReactions {
         return floorDb;
     }
 
+    /** True while the room is noisy (music, a TV), and for NOISY_HOLD_MS after. */
+    boolean noisy() {
+        return clockMs < noisyUntil;
+    }
+
     String status() {
-        return String.format(java.util.Locale.US, "noise floor %.0f dB, last heard: %s", floorDb,
+        return String.format(java.util.Locale.US, "noise floor %.0f dB%s, last heard: %s", floorDb,
+                noisy() ? " (noisy room)" : "",
                 lastAtMs < 0 ? last : last + " " + (clockMs - lastAtMs) / 1000 + " s ago");
+    }
+
+    private void markNoisy() {
+        noisyUntil = clockMs + NOISY_HOLD_MS;
     }
 
     private void reset() {
@@ -118,8 +143,14 @@ final class SoundReactions {
             report(CLAP, pendingClapDb);
         }
 
+        if (floorDb >= NOISY_FLOOR_DB) markNoisy();
+
         if (!inEvent) {
             if (peakDb >= Math.max(floorDb + START_ABOVE_FLOOR_DB, START_MIN_DB)) {
+                // Many events close together: music or a TV, not people.
+                onsets[onsetPos] = clockMs;
+                onsetPos = (onsetPos + 1) % NOISY_EVENTS;
+                if (clockMs - onsets[onsetPos] <= NOISY_WINDOW_MS) markNoisy(); // the oldest of the last NOISY_EVENTS
                 inEvent = true;
                 eventFrames = 0;
                 quietFrames = 0;

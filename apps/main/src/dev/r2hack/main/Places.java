@@ -419,7 +419,7 @@ final class Places {
         return moves(r.steps);
     }
 
-    private static boolean moves(List<Routine.Step> steps) {
+    static boolean moves(List<Routine.Step> steps) {
         for (Routine.Step s : steps) {
             switch (s.kind) {
                 case DRIVE:

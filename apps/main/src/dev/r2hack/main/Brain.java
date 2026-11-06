@@ -31,6 +31,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
             "go-home", "tour",
             "liveliness-off", "liveliness-quiet", "liveliness-chatty", "liveliness-full",
             "react-clap", "react-double-clap", "react-loud", "reactions-on", "reactions-off",
+            "tv-mode-on", "tv-mode-off",
             "chirps-on", "chirps-off",
             "beeps-on", "beeps-off",
     };
@@ -89,6 +90,9 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private volatile int lastBoardSound = -1;
     private final SoundReactions ears;
     private volatile long lastReaction, ownNoiseUntil;
+    // Noisy room / TV mode (docs/noisy-room.md): drive commands by voice must be said twice.
+    private final VoiceGuard voiceGuard = new VoiceGuard();
+    private volatile boolean wasCareful;
     private volatile String lastRoutine = "";   // how the last routine ended, for listings and /status
     private final Places.Store places;
     /** While a route is being taught: the recording, and what it is for ("kitchen", "kitchen back", "turn-around"). */
@@ -241,7 +245,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         String[] modes = {"?", "ready", "sleeping", "pairing", "patrol", "phone control"};
         return "mode: " + modes[robot.mode] + ", action: " + seq.running() + "\n" + sounds.status() + "\n"
                 + dlna.status() + "\n" + camera.status() + "\n" + phone.status() + "\n" + voice.status()
-                + "\n" + assist.status() + "\n" + reactionsStatus()
+                + "\n" + assist.status() + "\n" + reactionsStatus() + "\n" + carefulStatus()
                 + "\nface: " + (face.tracking() ? "tracking a face" : faceActive ? "looking" : "off")
                 + "\nfollow me: " + follower.status() + "\nname: " + robot.name()
                 + "\nbattery: " + (robot.battery < 0 ? "?" : robot.battery + "%")
@@ -329,7 +333,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     .put("assist", assist.status()).put("assist_reply", assist.beepReplies() ? "beeps" : "voice")
                     .put("subtitle", subtitle).put("subtitle_at", subtitleAt).put("subtitle_beeps", subtitleBeeps)
                     .put("liveliness", idle.level())
-                    .put("reactions", reactionsOn()));
+                    .put("reactions", reactionsOn())
+                    .put("tv_mode", tvMode()).put("noisy", roomNoisy()));
         } catch (Exception ignored) {
         }
     }
@@ -546,6 +551,12 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                 io.getSharedPreferences("settings", 0).edit().putBoolean("sound_reactions", name.endsWith("on")).apply();
                 reportSettings();
                 if (plugins != null) plugins.event(Plugin.EVENT_STATE, null);
+                return;
+            case "tv-mode-on": // no sound reactions, and voice drive commands must be said twice (docs/noisy-room.md)
+            case "tv-mode-off":
+                io.getSharedPreferences("settings", 0).edit().putBoolean("tv_mode", name.endsWith("on")).apply();
+                sounds.ack(S_ACK);
+                carefulChanged();
                 return;
             case "beeps-on": // Home Assistant voice replies: droid beeps with subtitles, or the pipeline's voice
             case "beeps-off":
@@ -1563,6 +1574,8 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     private void onLoudSound(String kind, double peakDb) {
         Log.i(TAG, "heard " + kind + String.format(java.util.Locale.US, " (%.0f dB, floor %.0f dB)", peakDb, ears.floorDb()));
         if (!reactionsWanted()) return;
+        // Music or a TV: its drum hits sound like claps, so no reactions at all until it has been quiet a while.
+        if (careful()) return;
         String lv = liveliness();
         if ("quiet".equals(lv) && !(SoundReactions.LOUD.equals(kind) && peakDb >= VERY_LOUD_DB)) return;
         int m = robot.mode;
@@ -1573,6 +1586,55 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
         if (now - lastReaction < REACT_GAP_MS) return;
         lastReaction = now;
         action("react-" + kind);
+    }
+
+    // ---- noisy room and TV mode (docs/noisy-room.md) --------------------------------------------
+
+    private boolean tvMode() {
+        return io.getSharedPreferences("settings", 0).getBoolean("tv_mode", false);
+    }
+
+    /** Careful: TV mode is on, or the room sounds like music or a TV is playing. */
+    private boolean careful() {
+        return tvMode() || roomNoisy();
+    }
+
+    private boolean roomNoisy() {
+        SoundReactions e = ears; // null for a moment while starting up
+        return e != null && e.noisy();
+    }
+
+    /** Applies careful() to voice commands, and tells the web page and Home Assistant when it changes. */
+    private void carefulChanged() {
+        boolean c = careful();
+        voice.setCareful(c);
+        if (c != wasCareful) {
+            wasCareful = c;
+            Log.i(TAG, c ? "careful: " + (tvMode() ? "TV mode" : "noisy room") + "; no sound reactions, drive commands by voice must be said twice"
+                    : "careful mode over");
+        }
+        reportSettings();
+        if (plugins != null) plugins.event(Plugin.EVENT_STATE, null);
+    }
+
+    private String carefulStatus() {
+        String p = voiceGuard.pending(System.currentTimeMillis());
+        return "TV mode: " + (tvMode() ? "on" : "off") + ", room: " + (roomNoisy() ? "noisy" : "quiet")
+                + (p != null ? ", waiting for \"" + p + "\" again" : "");
+    }
+
+    /** True if a voice command drives the wheels: a drive action, follow me, going to a place, or a routine that moves. */
+    private boolean voiceMoves(String action) {
+        if (action.startsWith("goto:")) return true;
+        String routine = action.startsWith("routine:") ? action.substring(8) : routines.exists(action) ? action : null;
+        if (routine != null) {
+            try {
+                return Places.moves(routines.load(routine).steps);
+            } catch (Exception e) {
+                return true; // can't tell: be careful
+            }
+        }
+        return drivesWheels(action);
     }
 
     private String reactionsStatus() {
@@ -1637,6 +1699,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                     watch.tick(android.os.SystemClock.elapsedRealtime());
                     if (watch.active()) lastActivity = now; // watching a film together: stay awake
                     voice.setEnabled(robot.voiceRecognition());
+                    if (careful() != wasCareful) carefulChanged();
                     // Idle chatter only while awake and nothing else is going on (it doesn't keep R2 awake).
                     boolean idleNow = robot.mode == Robot.READY && "idle".equals(seq.running()) && !driveSounds
                             && now - lastManual > 5_000 && !dlna.playing() && !assist.speaking()
@@ -1867,6 +1930,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
                         .put("muted", sounds.muted()).put("volume", sounds.volume())
                         .put("voice", robot.voiceRecognition()).put("face", robot.faceDetection())
                         .put("reactions", reactionsOn())
+                        .put("tv_mode", tvMode()).put("noisy", roomNoisy())
                         .put("liveliness", liveliness())
                         .put("beeps", assist.beepReplies()).put("reply", subtitle)
                         .put("name", robot.name()).put("uuid", robot.uuid()).put("version", BuildInfo.VERSION)
@@ -2000,6 +2064,12 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
 
     @Override
     public void onVoiceCommand(String action) {
+        // In a noisy room or TV mode, a command that moves R2 must be heard twice: the first time he asks "hm?".
+        if (voiceGuard.check(action, voiceMoves(action), careful(), System.currentTimeMillis()) == VoiceGuard.Verdict.ASK) {
+            Log.i(TAG, "voice " + action + ": careful, say it again within " + VoiceGuard.CONFIRM_MS / 1000 + " s");
+            sounds.play(S_REPLY, true);
+            return;
+        }
         if (action.startsWith("routine:")) { // a routine's voice trigger
             startTriggered(new Triggers.Hit(action.substring(8), true), "voice");
             return;
