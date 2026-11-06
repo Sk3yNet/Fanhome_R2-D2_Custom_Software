@@ -9,9 +9,11 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.URL;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -28,6 +30,8 @@ import org.json.JSONObject;
  * certificate (ApkTrust) and carry the right package name and a newer versionCode, then installs R2 Main
  * (on probation, so a crash loop rolls it back) and then the agent (which reboots the robot).
  * Off by default; POST /update/auto?on=1 checks every few hours and installs only while the robot is idle.
+ * With a mirror set (POST /update/mirror, docs/update-mirror.md) it reads the same releases from a copy on
+ * the local network instead, for robots whose old TLS can't reach GitHub; the checks are the same.
  */
 final class Updater {
     interface Host {
@@ -74,6 +78,17 @@ final class Updater {
         EventLog.i("update: following releases of " + repo);
     }
 
+    /** The local release mirror (UpdateMirror), or "" to ask GitHub. */
+    String mirror() {
+        return prefs.getString("mirror", "");
+    }
+
+    void setMirror(String url) {
+        prefs.edit().putString("mirror", url).commit();
+        latest = null;
+        EventLog.i("update: " + (url.isEmpty() ? "asking GitHub for releases" : "reading releases from the mirror " + url));
+    }
+
     boolean auto() {
         return prefs.getBoolean("auto", false);
     }
@@ -84,7 +99,7 @@ final class Updater {
     }
 
     JSONObject status() throws Exception {
-        JSONObject s = new JSONObject().put("repo", repo()).put("auto", auto()).put("busy", busy)
+        JSONObject s = new JSONObject().put("repo", repo()).put("mirror", mirror()).put("auto", auto()).put("busy", busy)
                 .put("last_check", lastCheck / 1000).put("last_result", lastResult)
                 .put("main_installed", supervisor.mainVersion()).put("agent_installed", supervisor.version(ctx.getPackageName()));
         JSONObject l = latest;
@@ -121,11 +136,30 @@ final class Updater {
         t.start();
     }
 
-    /** Asks GitHub for the latest release and says what would be installed. */
+    /** Asks GitHub (or the mirror) for the latest release and says what would be installed. */
     synchronized JSONObject check() throws Exception {
         lastCheck = System.currentTimeMillis();
+        String mirror = mirror();
+        if (!mirror.isEmpty()) {
+            String url = UpdateMirror.manifestUrl(mirror, repo());
+            JSONObject out;
+            try {
+                out = UpdateMirror.parse(new String(get(url, 1024 * 1024, null, true), "UTF-8"), url, repo(), MAX_APK);
+            } catch (Exception e) {
+                throw new Exception("mirror " + mirror + ": " + e.getMessage());
+            }
+            boolean newerMain = UpdateMirror.newer(out, "main", versionName(Config.MAIN_PACKAGE), versionCode(Config.MAIN_PACKAGE));
+            boolean newerAgent = UpdateMirror.newer(out, "agent", versionName(ctx.getPackageName()), versionCode(ctx.getPackageName()));
+            if (!newerMain) out.put("main_url", "");
+            if (!newerAgent) out.put("agent_url", "");
+            String version = out.optString("version");
+            out.put("update_available", newerMain || newerAgent);
+            latest = out;
+            lastResult = (newerMain || newerAgent) ? "release " + version + " available on the mirror" : "up to date (" + version + ", from the mirror)";
+            return out;
+        }
         JSONObject rel = new JSONObject(new String(get("https://api.github.com/repos/" + repo() + "/releases/latest",
-                1024 * 1024, null), "UTF-8"));
+                1024 * 1024, null, false), "UTF-8"));
         JSONObject out = new JSONObject().put("tag", rel.optString("tag_name")).put("published", rel.optString("published_at"))
                 .put("url", rel.optString("html_url"));
         JSONArray assets = rel.optJSONArray("assets");
@@ -157,16 +191,16 @@ final class Updater {
             File agentApk = null;
             if (!l.optString("main_url").isEmpty()) {
                 File f = new File(supervisor.uploadDir(), "update-main.apk");
-                download(l.optString("main_url"), f);
-                String why = verify(f, Config.MAIN_PACKAGE, true);
+                String why = download(l, "main", f);
+                if (why == null) why = verify(f, Config.MAIN_PACKAGE, true);
                 if (why != null) done.add("R2 Main: " + why);
                 else done.add("R2 Main: " + supervisor.installMain(f));
                 f.delete();
             }
             if (!l.optString("agent_url").isEmpty()) {
                 File f = new File(supervisor.uploadDir(), "update-agent.apk");
-                download(l.optString("agent_url"), f);
-                String why = verify(f, ctx.getPackageName(), true);
+                String why = download(l, "agent", f);
+                if (why == null) why = verify(f, ctx.getPackageName(), true);
                 if (why != null) {
                     done.add("R2 Agent: " + why);
                     f.delete();
@@ -218,22 +252,47 @@ final class Updater {
         }
     }
 
-    private void download(String url, File to) throws Exception {
+    /** Downloads the "main" or "agent" APK of check()'s result; null, or why the download is refused. */
+    private String download(JSONObject l, String key, File to) throws Exception {
         to.delete();
-        get(url, MAX_APK, to);
+        boolean fromMirror = l.has("mirror");
+        get(l.optString(key + "_url"), MAX_APK, to, fromMirror);
         to.setReadable(true, false); // the package manager reads it as another user
+        String sha = l.optString(key + "_sha256");
+        if (!sha.isEmpty()) {
+            if (to.length() != l.optLong(key + "_size")) return "the download from the mirror has the wrong size";
+            if (!sha.equals(sha256(to))) return "the download from the mirror doesn't match its SHA-256";
+        }
+        return null;
+    }
+
+    private static String sha256(File f) throws Exception {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        InputStream in = new java.io.FileInputStream(f);
+        try {
+            byte[] buf = new byte[65536];
+            int n;
+            while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+        } finally {
+            in.close();
+        }
+        StringBuilder sb = new StringBuilder();
+        for (byte b : md.digest()) sb.append(String.format("%02x", b));
+        return sb.toString();
     }
 
     /**
-     * GET over https only, following up to 5 redirects (release downloads redirect to GitHub's file host).
+     * GET over https, following up to 5 redirects (release downloads redirect to GitHub's file host).
+     * Plain http only for the local mirror (lan), whose files are checked by signature anyway.
      * Returns the body, or writes it to `to` if given.
      */
-    private static byte[] get(String url, long max, File to) throws Exception {
+    private static byte[] get(String url, long max, File to, boolean lan) throws Exception {
         for (int hop = 0; hop < 6; hop++) {
             URL u = new URL(url);
-            if (!"https".equals(u.getProtocol())) throw new Exception("refusing a non-https URL: " + url);
-            HttpsURLConnection c = (HttpsURLConnection) u.openConnection();
-            c.setSSLSocketFactory(Tls12.factory());
+            boolean https = "https".equals(u.getProtocol());
+            if (!https && !(lan && "http".equals(u.getProtocol()))) throw new Exception("refusing a non-https URL: " + url);
+            HttpURLConnection c = (HttpURLConnection) u.openConnection();
+            if (https) ((HttpsURLConnection) c).setSSLSocketFactory(Tls12.factory());
             c.setInstanceFollowRedirects(false);
             c.setConnectTimeout(15_000);
             c.setReadTimeout(30_000);
@@ -247,7 +306,8 @@ final class Updater {
                     url = new URL(u, next).toString();
                     continue;
                 }
-                if (code == 404) throw new Exception("not found (no release yet, or a private repository): " + u);
+                if (code == 404) throw new Exception(lan ? "not found: " + u + " (has the mirror fetched this repository yet?)"
+                        : "not found (no release yet, or a private repository): " + u);
                 if (code != 200) throw new Exception("HTTP " + code + " from " + u.getHost());
                 long len = c.getContentLength();
                 if (len > max) throw new Exception("download too large");

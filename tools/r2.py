@@ -111,6 +111,8 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
                            look for a newer GitHub release / download, verify and install it (R2 reboots)
   update-auto <on|off>     check every 6 hours and install while R2 is idle (off by default)
   update-source <owner/repo>   follow another repository's releases (also add its certificate: trust-add)
+  update-mirror <url|off>  read releases from a copy on the local network, e.g. the Home Assistant add-on
+                           (http://<host>:8765, docs/update-mirror.md); off: straight from GitHub
   trust | trust-add <sha256> | trust-remove <sha256>
                            signing certificates whose APKs R2 installs (its own is always trusted)
   assist-reply <voice|beeps>  answer in the pipeline's voice, or in droid beeps with the text as subtitles
@@ -778,6 +780,14 @@ def cmd_update_source(robot, a):
     if not re.match(r'^[\w.-]+/[\w.-]+$', a.arg or ''):
         raise R2Error('usage: r2.py update-source <owner/repo>')
     show(robot.call('POST', '/update/source?repo=' + q(a.arg)))
+
+
+def cmd_update_mirror(robot, a):
+    import re
+    url = 'off' if a.arg == 'off' else a.arg or ''
+    if url != 'off' and not re.match(r'^https?://[^/?#@\s]+(/[^?#@\s]*)?$', url):
+        raise R2Error('usage: r2.py update-mirror <http://host:port | off>')
+    show(robot.call('POST', '/update/mirror?url=' + q('' if url == 'off' else url)))
 
 
 def identity_body(xml_text):
@@ -1451,6 +1461,7 @@ COMMANDS = {
     'update-install': lambda robot, a: show(robot.call('POST', '/update/install', timeout=600)),
     'update-auto': cmd_update_auto,
     'update-source': cmd_update_source,
+    'update-mirror': cmd_update_mirror,
     'trust': simple('GET', '/trust'),
     'trust-add': with_name('/trust?add=', 'trust-add <certificate sha256>'),
     'trust-remove': with_name('/trust?remove=', 'trust-remove <certificate sha256>'),
