@@ -141,13 +141,16 @@ tools\r2.ps1 update-check               # ask GitHub now
 tools\r2.ps1 update-install             # download, verify, install R2 Main, then the agent (R2 reboots)
 tools\r2.ps1 update-auto on             # check every 6 hours, install while R2 is idle (off by default)
 tools\r2.ps1 update-source owner/repo   # follow a fork; also trust-add its certificate
+tools\r2.ps1 update-mirror http://192.168.2.20:8765   # read releases from a copy on the local network
 ```
 
 It installs only APKs that pass the checks above and have a newer versionCode than the installed build.
 R2 Main goes on probation as with `push-main`, so a crash loop rolls it back. If the agent can't reach
 GitHub (Android 4.4's TLS stack and certificate store are old; the agent switches TLS 1.2 on, but GitHub's
-certificates may still not be trusted), download the release on a PC and use `push-main` / `push-agent`,
-which are checked the same way.
+certificates aren't trusted), serve the releases on the local network: the Home Assistant add-on or the PC
+tool downloads them, and `update-mirror` points R2 at that copy ([update-mirror.md](update-mirror.md)). The
+mirror may be plain HTTP: the same checks apply. Or download the release on a PC and use `push-main` /
+`push-agent`, which are checked the same way.
 
 ## Home Assistant
 

@@ -638,6 +638,18 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 return result("following releases of " + repo + ". Only APKs signed by a trusted certificate are "
                         + "installed (GET /trust); add a fork's with POST /trust?add=<sha256>");
             }
+            case "POST /update/mirror": { // ?url=http://host:port: read releases from a local mirror; empty: GitHub
+                String raw = req.query.get("url") == null ? "" : String.valueOf(req.query.get("url")).trim();
+                if (raw.isEmpty() || "off".equals(raw)) {
+                    updater.setMirror("");
+                    return result("no mirror: updates come straight from GitHub");
+                }
+                String url = UpdateMirror.normalize(raw);
+                if (url == null) return bad("url must look like http://192.168.1.10:8765 (no user name, query or ..)");
+                updater.setMirror(url);
+                return result("reading releases of " + updater.repo() + " from " + UpdateMirror.manifestUrl(url, updater.repo())
+                        + ". The APKs must still be signed by a trusted certificate (GET /trust).");
+            }
             case "POST /serial":
                 if (passive) return passiveError();
                 String line = req.bodyText.trim();
@@ -1305,8 +1317,9 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
     private static HttpApi.Response updateFailed(Exception e) {
         String m = String.valueOf(e.getMessage());
         boolean tls = e instanceof javax.net.ssl.SSLException || m.contains("SSL") || m.contains("Trust anchor");
-        String why = "update failed: " + m + (tls ? ". The robot's old TLS stack may not reach GitHub; download the "
-                + "release on a PC and use tools\\r2.ps1 push-main / push-agent (checked the same way)" : "");
+        String why = "update failed: " + m + (tls ? ". The robot's old TLS stack may not reach GitHub; serve the releases "
+                + "from the local network instead (docs/update-mirror.md: the Home Assistant add-on or tools\\r2.ps1 "
+                + "update-serve, then update-mirror), or use push-main / push-agent (checked the same way)" : "");
         EventLog.i(why);
         return HttpApi.Response.json(502, "{\"error\":" + JSONObject.quote(why) + "}");
     }

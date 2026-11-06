@@ -207,8 +207,10 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
 - [ ] Setup script for the build toolchain (JDK, Android SDK, platform-tools).
 - [ ] Later: the agent updates itself from GitHub releases. This needs signed updates (section 3).
       *Built, not yet tested on the robot.* `tools\r2.ps1 update-check`, `update-install`, `update-auto on`
-      (every 6 hours, only while idle; off by default), `update-source <owner/repo>`. Android 4.4's TLS may not
-      reach GitHub; then `push-main`/`push-agent` from a PC, which are checked the same way.
+      (every 6 hours, only while idle; off by default), `update-source <owner/repo>`. Android 4.4's TLS can't
+      reach GitHub, so the releases come through a local mirror: a Home Assistant add-on or the PC tool
+      downloads them and `update-mirror` points R2 at it ([docs/update-mirror.md](docs/update-mirror.md)).
+      *Built, not yet tested on the robot.* Or `push-main`/`push-agent` from a PC, checked the same way.
 
 ## 6. Scripted movement routines
 - [ ] Routine format (e.g. JSON): steps of `cmd` (any controller command), `wait`, `wait_until`

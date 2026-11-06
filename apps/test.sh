@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Off-robot tests: R2 Main's routine engine (Routine, RoutineRunner, RoutineStore, Triggers), places (Places),
 # watch-with-me (CueFile, CueStore, WatchWithMe), idle personality (IdlePersonality), sound reactions
-# (SoundReactions), the soundboard (Soundboard), "follow me"
+# (SoundReactions), the soundboard (Soundboard), the agent's update mirror reader (UpdateMirror), "follow me"
 # (FollowTracker, FollowControl, Follower), Home Assistant link
 # (HomeAssistant, without a broker), the chirp generator (Chirp), Home Assistant voice replies (Assist, Beeps),
 # the plugin interface (PluginManager,
@@ -61,6 +61,12 @@ javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$J
     "$AGENT_SRC/Hotspot.java" "$AGENT_SRC/EventLog.java" \
     "$APPS_DIR/agent/test/dev/r2hack/agent/HotspotTest.java"
 java -cp "$OUT:$JAR" dev.r2hack.agent.HotspotTest
+
+# Reading a local release mirror (docs/update-mirror.md), with the same example latest.json the Home
+# Assistant add-on's test checks itself against.
+javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \
+    "$AGENT_SRC/UpdateMirror.java" "$APPS_DIR/agent/test/dev/r2hack/agent/UpdateMirrorTest.java"
+java -cp "$OUT:$JAR" dev.r2hack.agent.UpdateMirrorTest "$ROOT/homeassistant/r2_update_mirror/example-latest.json"
 
 javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR:$OUT" -d "$OUT" \
     "$SRC/Plugin.java" "$SRC/PluginPermissions.java" "$SRC/PluginContext.java" "$SRC/PluginManager.java" \

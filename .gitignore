@@ -9,6 +9,8 @@
 !/apps/
 !/docs/
 !/tools/
+!/homeassistant/
+!/repository.yaml
 
 /apps/out/
 /apps/*/assets/
@@ -23,3 +25,4 @@
 *.apk
 *.img
 *.keystore
+__pycache__/

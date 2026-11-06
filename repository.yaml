@@ -1,0 +1,5 @@
+# Lets Home Assistant install the add-ons in homeassistant/ straight from this repository:
+# Settings > Add-ons > Add-on store > (top right) Repositories > add this repository's URL.
+name: R2-D2 custom software
+url: https://github.com/Sk3yNet/Fanhome_R2-D2_Custom_Software
+maintainer: Sk3yNet

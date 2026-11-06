@@ -108,6 +108,8 @@
 #                            look for a newer GitHub release / download, verify and install it (R2 reboots)
 #   update-auto <on|off>     check every 6 hours and install while R2 is idle (off by default)
 #   update-source <owner/repo>   follow another repository's releases (also add its certificate: trust-add)
+#   update-mirror <url|off>  read releases from a copy on the local network, e.g. the Home Assistant add-on
+#                            (http://<host>:8765, docs/update-mirror.md); off: straight from GitHub
 #   trust | trust-add <sha256> | trust-remove <sha256>
 #                            signing certificates whose APKs R2 installs (its own is always trusted)
 #   reboot | shutdown
@@ -578,6 +580,10 @@ switch ($Command) {
     'update-install' { Call POST /update/install -Timeout 600 }
     'update-auto'  { if ($Arg -notin 'on', 'off') { throw 'usage: r2.ps1 update-auto <on|off>' }; Call POST "/update/auto?on=$(if ($Arg -eq 'on') { 1 } else { 0 })" }
     'update-source' { if ($Arg -notmatch '^[\w.-]+/[\w.-]+$') { throw 'usage: r2.ps1 update-source <owner/repo>' }; Call POST "/update/source?repo=$([uri]::EscapeDataString($Arg))" }
+    'update-mirror' {
+        if ($Arg -ne 'off' -and $Arg -notmatch '^https?://[^/?#@\s]+(/[^?#@\s]*)?$') { throw 'usage: r2.ps1 update-mirror <http://host:port | off>' }
+        Call POST "/update/mirror?url=$(if ($Arg -eq 'off') { '' } else { [uri]::EscapeDataString($Arg) })"
+    }
     'trust'        { Call GET /trust | ConvertTo-Json }
     'trust-add'    { if (-not $Arg) { throw 'usage: r2.ps1 trust-add <certificate sha256>' }; Call POST "/trust?add=$([uri]::EscapeDataString($Arg))" | ConvertTo-Json }
     'trust-remove' { if (-not $Arg) { throw 'usage: r2.ps1 trust-remove <certificate sha256>' }; Call POST "/trust?remove=$([uri]::EscapeDataString($Arg))" | ConvertTo-Json }
