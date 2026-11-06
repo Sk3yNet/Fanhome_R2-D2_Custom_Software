@@ -12,6 +12,9 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   chirp [mood|'text']      a newly generated droid chirp: a mood (ack happy excited question sad worried
                            chatter whistle scream; default random), or droid sounds shaped like a sentence
                            (docs/chirps.md)
+  sounds                   the soundboard (docs/soundboard.md): factory sounds, mood banks, chirps, reactions
+  sound <number|mood|stop> play a factory sound by number, a random one from a mood bank (happy, random...),
+                           or stop the sound playing
   stop                     emergency stop (the agent stops the robot itself, then cancels the action;
                            with the drive lock on, driving is locked again)
   drive                    drive lock state (docs/drive-lock.md)
@@ -431,6 +434,28 @@ def cmd_chirp(robot, a):
         show(robot.call('POST', '/chirp?mood=' + a.arg))
     else:
         show(robot.call('POST', '/chirp', a.arg))  # text: the body, so long sentences fit
+
+
+def cmd_sounds(robot, a):
+    d = robot.call('GET', '/sounds')
+    print('R2 is muted' if d.get('muted') else 'volume %s%%' % d.get('volume'))
+    print('factory sounds:')
+    print(table([dict(s, moods=', '.join(s.get('moods') or [])) for s in d.get('sounds') or []],
+                ['number', 'label', 'moods']))
+    print('mood banks (r2.py sound <mood>): ' + ' '.join(m['name'] for m in d.get('moods') or []))
+    print('chirps (r2.py chirp <mood>): ' + ' '.join(c['mood'] for c in d.get('chirps') or []))
+    print('reactions (r2.py action <name>): ' + ', '.join(r['action'] + (' (your routine)' if r.get('custom') else '')
+                                                         for r in d.get('reactions') or []))
+
+
+def cmd_sound(robot, a):
+    arg = need(a.arg, 'sound <number|mood|stop>  (see: r2.py sounds)')
+    if arg == 'stop':
+        show(robot.call('POST', '/sound/stop'))
+    elif arg.isdigit():
+        show(robot.call('POST', '/sound?number=' + arg))
+    else:
+        show(robot.call('POST', '/sound?mood=' + q(arg)))
 
 
 def cmd_routines(robot, a):
@@ -1338,6 +1363,8 @@ COMMANDS = {
     'log-previous': simple('GET', '/log?previous=1'),
     'actions': lambda robot, a: print('\n'.join(ACTIONS)),
     'chirp': cmd_chirp,
+    'sounds': cmd_sounds,
+    'sound': cmd_sound,
     'action': with_name('/action?name=', 'action <name>  (see: r2.py actions)'),
     'stop': simple('POST', '/stop'),
     'drive': simple('GET', '/drive'),

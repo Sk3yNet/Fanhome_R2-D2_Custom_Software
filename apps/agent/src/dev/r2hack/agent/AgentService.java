@@ -692,6 +692,28 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
                 }
                 return toMain(m) ? result("chirping" + (mood.isEmpty() ? "" : " (" + mood + ")")) : bad("main app not connected");
             }
+            case "GET /sounds": // the soundboard (docs/soundboard.md): factory sounds, mood banks, chirps, reactions
+                return routines(new JSONObject().put("op", "sounds"));
+            case "POST /sound": { // ?number=N (a factory sound) or ?mood=happy (a random one from that bank)
+                String num = req.query.get("number"), mood = req.query.get("mood");
+                if ((num == null) == (mood == null)) return bad("send number=<sound number> or mood=<mood bank>, e.g. /sound?number=8 or /sound?mood=happy");
+                JSONObject ask = new JSONObject().put("op", "sound");
+                if (num != null) {
+                    try {
+                        int n = Integer.parseInt(num.trim());
+                        if (n < 0 || n > 255) return bad("number must be 0-255");
+                        ask.put("number", n);
+                    } catch (NumberFormatException e) {
+                        return bad("number must be a whole number");
+                    }
+                } else {
+                    if (!mood.matches("[a-z0-9][a-z0-9-]{0,31}")) return bad("mood must be a mood bank name, e.g. happy or random");
+                    ask.put("mood", mood);
+                }
+                return routines(ask);
+            }
+            case "POST /sound/stop":
+                return routines(new JSONObject().put("op", "sound-stop"));
             case "POST /assist": { // Home Assistant voice: mode=off|robot|ha and/or host=<Home Assistant's IP, or empty>
                 String mode = req.query.get("mode");
                 boolean hasHost = req.query.containsKey("host");

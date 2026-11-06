@@ -141,6 +141,9 @@ public final class SecurityTest {
         eq("read", Permissions.required("GET", "/status"), "status read");
         eq("read", Permissions.required("POST", "/stop"), "stop is read");
         eq("control", Permissions.required("POST", "/action"), "action control");
+        eq("read", Permissions.required("GET", "/sounds"), "soundboard list read");
+        eq("control", Permissions.required("POST", "/sound"), "soundboard play control");
+        eq("control", Permissions.required("POST", "/sound/stop"), "soundboard stop control");
         for (String r : new String[] {"POST /main/install", "POST /agent/install", "POST /reboot", "POST /adb", "POST /serial",
                 "POST /clients/add", "POST /update/install", "POST /trust", "POST /wifi", "GET /logcat", "POST /brand-new"}) {
             String[] p = r.split(" ");

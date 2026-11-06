@@ -249,6 +249,10 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       (idle chatter and head turns, reactions to loud sounds, drive sounds, how long he stays awake), on the
       web page and as a select in Home Assistant. *Built, not yet tested on the robot.* It is the
       `liveliness` setting; see [docs/liveliness.md](docs/liveliness.md).
+- [ ] **Soundboard:** a second page on the web page with R2's reactions, new beeps, a sentence in beeps,
+      random sounds by mood and every factory sound, each shown as the routine step that plays it
+      (`{"sound": "happy"}` and `{"beeps": "..."}` steps are new). `GET /sounds`, `POST /sound`,
+      `tools\r2.ps1 sounds` / `sound`. *Built, not yet tested on the robot.* See [docs/soundboard.md](docs/soundboard.md).
 - [ ] Gamepad support: drive with the left stick, head with the right, STOP and actions on buttons. *Built, not yet tested on the robot.* See docs/architecture.md (Web control page).
 
 ## 8. SD card installation (soft-mod)

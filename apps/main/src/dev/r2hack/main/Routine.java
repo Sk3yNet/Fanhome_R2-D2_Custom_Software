@@ -43,7 +43,10 @@ final class Routine {
     static final Set<String> DRIVE_ACTIONS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
             "turn-left", "turn-right", "turn-around", "forward", "circle", "dance", "patrol")));
 
-    enum Kind { WAIT, SOUND, CHIRP, HEAD, MODE, DRIVE, LED, CMD, ACTION, WAIT_UNTIL, REPEAT, ROUTINE }
+    /** The longest text a "beeps" step turns into droid sounds. */
+    static final int MAX_BEEPS_TEXT = 500;
+
+    enum Kind { WAIT, SOUND, CHIRP, BEEPS, HEAD, MODE, DRIVE, LED, CMD, ACTION, WAIT_UNTIL, REPEAT, ROUTINE }
 
     static final class Step {
         Kind kind;
@@ -52,7 +55,7 @@ final class Routine {
         boolean flag;            // SOUND, CHIRP: wait for it to end; WAIT_UNTIL: carry on after a timeout
         int power, angle;        // DRIVE
         JSONObject json;         // LED values, CMD command
-        String name;             // ACTION, ROUTINE, WAIT_UNTIL field, CHIRP mood
+        String name;             // ACTION, ROUTINE, WAIT_UNTIL field, CHIRP mood, SOUND mood bank (null: a number), BEEPS text
         String op;               // WAIT_UNTIL
         int value;               // WAIT_UNTIL
         List<Step> steps;        // REPEAT
@@ -89,6 +92,11 @@ final class Routine {
         Invalid(String message) {
             super(message);
         }
+    }
+
+    /** A mood bank name for a "sound" step: like a routine name. "random" means any bank. */
+    static boolean validMood(String n) {
+        return validName(n);
     }
 
     static boolean validName(String n) {
@@ -153,7 +161,16 @@ final class Routine {
                 break;
             case SOUND:
                 allowOnly(o, at, "sound", "until_done");
-                s.number = integer(o, "sound", 0, 255, at + ".sound");
+                if (o.opt("sound") instanceof String) {
+                    // A mood bank (docs/soundboard.md): a random factory sound from it, picked when the step runs.
+                    s.name = o.optString("sound").trim();
+                    if (!validMood(s.name)) {
+                        throw new Invalid(at + ".sound: a sound number, or a mood bank name such as \"happy\" or \"random\"");
+                    }
+                    s.number = -1;
+                } else {
+                    s.number = integer(o, "sound", 0, 255, at + ".sound");
+                }
                 s.flag = o.optBoolean("until_done", false);
                 break;
             case CHIRP:
@@ -162,6 +179,15 @@ final class Routine {
                 if (!Chirp.knownMood(s.name)) {
                     throw new Invalid(at + ".chirp: one of random, " + join(Chirp.MOODS));
                 }
+                s.flag = o.optBoolean("until_done", false);
+                break;
+            case BEEPS:
+                allowOnly(o, at, "beeps", "until_done");
+                if (!(o.opt("beeps") instanceof String) || o.optString("beeps").trim().isEmpty()) {
+                    throw new Invalid(at + ".beeps: the text to say in droid sounds, e.g. \"Hello there!\"");
+                }
+                s.name = o.optString("beeps").trim();
+                if (s.name.length() > MAX_BEEPS_TEXT) throw new Invalid(at + ".beeps: at most " + MAX_BEEPS_TEXT + " characters");
                 s.flag = o.optBoolean("until_done", false);
                 break;
             case HEAD:
