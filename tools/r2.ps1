@@ -117,6 +117,8 @@
 #                            skipping what R2 already has (R2 reboots for a new agent)
 #   update-build             git pull, build both apps (apps\build.ps1), then update-push apps\out
 #   update-serve [port]      serve the update mirror over HTTP (default port 8780) for R2 to download from
+#   update-mirror <url|off>  read releases from a copy on the local network, e.g. the Home Assistant add-on
+#                            (http://<host>:8765, docs/update-mirror.md); off: straight from GitHub
 #   trust | trust-add <sha256> | trust-remove <sha256>
 #                            signing certificates whose APKs R2 installs (its own is always trusted)
 #   reboot | shutdown
@@ -778,6 +780,10 @@ switch ($Command) {
         "Point R2 at it once: r2.ps1 update-mirror http://$(Get-LanAddress):$port  (then update-check / update-install)"
         'Ctrl+C stops it. Windows Firewall may ask to allow incoming connections.'
         Start-MirrorServer $port $mirror
+    }
+    'update-mirror' {
+        if ($Arg -ne 'off' -and $Arg -notmatch '^https?://[^/?#@\s]+(/[^?#@\s]*)?$') { throw 'usage: r2.ps1 update-mirror <http://host:port | off>' }
+        Call POST "/update/mirror?url=$(if ($Arg -eq 'off') { '' } else { [uri]::EscapeDataString($Arg) })"
     }
     'trust'        { Call GET /trust | ConvertTo-Json }
     'trust-add'    { if (-not $Arg) { throw 'usage: r2.ps1 trust-add <certificate sha256>' }; Call POST "/trust?add=$([uri]::EscapeDataString($Arg))" | ConvertTo-Json }

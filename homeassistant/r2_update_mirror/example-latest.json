@@ -1,0 +1,25 @@
+{
+  "repo": "Sk3yNet/Fanhome_R2-D2_Custom_Software",
+  "tag": "v0.3.0",
+  "version": "0.3.0",
+  "published": "2026-11-06T12:00:00Z",
+  "url": "https://github.com/Sk3yNet/Fanhome_R2-D2_Custom_Software/releases/tag/v0.3.0",
+  "cert": "1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a7988",
+  "mirrored": 1793966400,
+  "assets": {
+    "R2Main.apk": {
+      "path": "v0.3.0/R2Main.apk",
+      "sha256": "aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233",
+      "size": 2483112,
+      "version_code": 1015840,
+      "cert": "1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a7988"
+    },
+    "R2Agent.apk": {
+      "path": "v0.3.0/R2Agent.apk",
+      "sha256": "00112233445566778899aabbccddeeffaa11bb22cc33dd44ee55ff6600112233",
+      "size": 412640,
+      "version_code": 1015840,
+      "cert": "1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a7988"
+    }
+  }
+}

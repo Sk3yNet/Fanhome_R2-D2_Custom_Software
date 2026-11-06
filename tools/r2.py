@@ -120,6 +120,8 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
                            skipping what R2 already has (R2 reboots for a new agent)
   update-build             git pull, build both apps (apps/build.sh or build.ps1), then update-push apps/out
   update-serve [port]      serve the update mirror over HTTP (default port 8780) for R2 to download from
+  update-mirror <url|off>  read releases from a copy on the local network, e.g. the Home Assistant add-on
+                           (http://<host>:8765, docs/update-mirror.md); off: straight from GitHub
   trust | trust-add <sha256> | trust-remove <sha256>
                            signing certificates whose APKs R2 installs (its own is always trusted)
   assist-reply <voice|beeps>  answer in the pipeline's voice, or in droid beeps with the text as subtitles
@@ -787,6 +789,14 @@ def cmd_update_source(robot, a):
     if not re.match(r'^[\w.-]+/[\w.-]+$', a.arg or ''):
         raise R2Error('usage: r2.py update-source <owner/repo>')
     show(robot.call('POST', '/update/source?repo=' + q(a.arg)))
+
+
+def cmd_update_mirror(robot, a):
+    import re
+    url = 'off' if a.arg == 'off' else a.arg or ''
+    if url != 'off' and not re.match(r'^https?://[^/?#@\s]+(/[^?#@\s]*)?$', url):
+        raise R2Error('usage: r2.py update-mirror <http://host:port | off>')
+    show(robot.call('POST', '/update/mirror?url=' + q('' if url == 'off' else url)))
 
 
 def identity_body(xml_text):
@@ -1689,6 +1699,7 @@ COMMANDS = {
     'update-push': cmd_update_push,
     'update-build': cmd_update_build,
     'update-serve': cmd_update_serve,
+    'update-mirror': cmd_update_mirror,
     'trust': simple('GET', '/trust'),
     'trust-add': with_name('/trust?add=', 'trust-add <certificate sha256>'),
     'trust-remove': with_name('/trust?remove=', 'trust-remove <certificate sha256>'),

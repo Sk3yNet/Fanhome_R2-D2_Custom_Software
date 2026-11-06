@@ -97,8 +97,7 @@ tools\r2.ps1 update-install
 ```
 
 The Home Assistant add-on serves the same mirror layout, so R2 can follow it instead of a PC that has to be
-switched on. `update-mirror off` goes back to GitHub. (`update-mirror` comes with the agent's mirror support,
-which the add-on work adds.)
+switched on ([update-mirror.md](update-mirror.md)). `update-mirror off` goes back to GitHub.
 
 Each check and install still happens on R2: an APK must match the sha256 and size in `latest.json`, be signed by
 a certificate R2 trusts with the right package name, and have a newer versionCode than the installed build.
