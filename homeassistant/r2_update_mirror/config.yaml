@@ -1,5 +1,5 @@
 name: R2-D2 update mirror
-version: "1.1.2"
+version: "1.1.3"
 slug: r2_update_mirror
 description: Downloads R2-D2's signed releases from GitHub and serves them to R2 on your network, so R2 can update itself.
 url: https://github.com/Sk3yNet/Fanhome_R2-D2_Custom_Software/blob/main/docs/update-mirror.md
