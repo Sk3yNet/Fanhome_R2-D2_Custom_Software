@@ -49,16 +49,22 @@ def notify(title, message, ident='r2_update_mirror'):
                       {'title': title, 'message': message, 'notification_id': ident}) is not None
 
 
+def lan_address():
+    """This machine's address on the primary network interface, or None outside Home Assistant."""
+    for iface in (supervisor('/network/info') or {}).get('interfaces') or []:
+        if iface.get('primary') and iface.get('ipv4') and iface['ipv4'].get('address'):
+            return iface['ipv4']['address'][0].split('/')[0]
+    return None
+
+
 def mirror_url():
     """http://<this machine's LAN address>:<host port of 8765>, or None outside Home Assistant."""
     info = supervisor('/addons/self/info') or {}
     port = (info.get('network') or {}).get('8765/tcp')
     if not port:
         return None
-    for iface in (supervisor('/network/info') or {}).get('interfaces') or []:
-        if iface.get('primary') and iface.get('ipv4') and iface['ipv4'].get('address'):
-            return 'http://%s:%d' % (iface['ipv4']['address'][0].split('/')[0], port)
-    return None
+    addr = lan_address()
+    return 'http://%s:%d' % (addr, port) if addr else None
 
 
 def mqtt_settings():
