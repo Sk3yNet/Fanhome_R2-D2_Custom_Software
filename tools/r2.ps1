@@ -145,6 +145,7 @@ if (Test-Path $clientFile) {
 } elseif (Test-Path $ownerFile) { $cred = @{ Id = 'owner'; Key = (Get-Content $ownerFile -Raw).Trim() } }
 elseif (Test-Path $devFile) { $cred = @{ Id = 'dev'; Key = (Get-Content $devFile -Raw).Trim() } }
 $script:clockOffset = $null
+$script:signs = $true   # false for agents from before signed requests: they take X-R2-Token
 $cache = Join-Path $root 'secrets\last-robot-ip.txt'
 
 function Find-Robot([int]$Seconds = 8) {
@@ -202,7 +203,11 @@ function Get-RobotTime([string]$Ip) {
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     if ($null -eq $script:clockOffset) {
         $script:clockOffset = 0
-        try { $script:clockOffset = [long](Invoke-RestMethod "http://${Ip}:7700/ping" -TimeoutSec 5).time - $now } catch { }
+        try {
+            $reply = Invoke-RestMethod "http://${Ip}:7700/ping" -TimeoutSec 5
+            $script:signs = $null -ne $reply.time
+            if ($script:signs) { $script:clockOffset = [long]$reply.time - $now }
+        } catch { }
     }
     return $now + $script:clockOffset
 }
@@ -241,7 +246,12 @@ function Call([string]$Method, [string]$Path, $Body, [string]$InFile, [int]$Time
         $p.Body = $bytes; $p.ContentType = 'application/json'
         $bodyHash = Sha256Hex $bytes
     }
-    $p.Headers = if ($cred) { Get-SignedHeaders $Method $Path $bodyHash (Get-RobotTime $ip) } else { @{} }
+    $p.Headers = @{}
+    if ($cred) {
+        $t = Get-RobotTime $ip
+        # An agent from before signed requests (e.g. when updating it with push-agent) takes the key as it is.
+        $p.Headers = if ($script:signs) { Get-SignedHeaders $Method $Path $bodyHash $t } else { @{ 'X-R2-Token' = $cred.Key } }
+    }
     Invoke-RestMethod @p
 }
 
