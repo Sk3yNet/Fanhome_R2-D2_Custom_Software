@@ -308,7 +308,8 @@ class RobotAndHaTest(unittest.TestCase):
         link.start()
         self.addCleanup(link.client.stop)
         upd = 'homeassistant/update/r2_update_mirror/software/config'
-        self.assertTrue(wait_for(lambda: upd in broker.published and 'r2_update_mirror/software' in broker.published))
+        # The broker handles packets as they arrive: wait for the last state topic publish_state() sends.
+        self.assertTrue(wait_for(lambda: upd in broker.published and 'r2_update_mirror/health/attributes' in broker.published))
         self.assertIn(b'u', broker.connect_packet)
         cfg = json.loads(broker.published[upd][0])
         self.assertTrue(broker.published[upd][1], 'discovery must be retained')
