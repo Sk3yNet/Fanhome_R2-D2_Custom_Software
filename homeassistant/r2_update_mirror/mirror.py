@@ -39,7 +39,7 @@ import zipfile
 import hass
 import r2robot
 
-ADDON_VERSION = '1.1.1'
+ADDON_VERSION = '1.1.2'
 DEFAULT_REPO = 'Sk3yNet/Fanhome_R2-D2_Custom_Software'
 ASSETS = ('R2Main.apk', 'R2Agent.apk')
 MAX_APK = 64 * 1024 * 1024  # the agent's limit too
@@ -361,9 +361,11 @@ def write_json(path, obj):
 
 # ---- the add-on: mirror, R2's health and updates, Home Assistant, settings backups ----------------
 
-# Home Assistant's ingress proxy. Buttons on the page change things, so they only work through Home
-# Assistant's sidebar (signed-in users); the page on port 8765 is read-only.
-INGRESS_IPS = {'172.30.32.2'}
+# Buttons on the page change things, so they only work through Home Assistant's sidebar (signed-in
+# users). The sidebar (ingress) has its own port, which config.yaml doesn't publish on the network, so
+# anything arriving there came through Home Assistant. The page on port 8765 is read-only.
+INGRESS_PORT = 8099
+INGRESS_IPS = set()
 BACKUP_NAME_RE = re.compile(r'^r2-settings-\d{8}-\d{6}\.json$')
 
 
@@ -525,7 +527,7 @@ def run_action(app, action, form):
     return True
 
 
-def make_handler(app):
+def make_handler(app, ingress=False):
     mirror = app.mirror
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -536,7 +538,7 @@ def make_handler(app):
                 log('%s %s' % (self.client_address[0], fmt % args))
 
         def may_act(self):
-            return self.client_address[0] in app.action_ips
+            return ingress or self.client_address[0] in app.action_ips
 
         def do_HEAD(self):
             self.do_GET(head=True)
@@ -756,6 +758,9 @@ def main(argv=None):
                 'so there is no update entity; the page still works')
     threading.Thread(target=app.mirror_loop, name='mirror', daemon=True).start()
     threading.Thread(target=app.robot_loop, name='robot', daemon=True).start()
+    if os.environ.get('SUPERVISOR_TOKEN'):
+        ing = Server(('', INGRESS_PORT), make_handler(app, ingress=True))
+        threading.Thread(target=ing.serve_forever, name='ingress', daemon=True).start()
     Server(('', opts['port']), make_handler(app)).serve_forever()
     return 0
 
