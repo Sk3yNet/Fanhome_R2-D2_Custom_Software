@@ -253,6 +253,9 @@ class R2CliTest(unittest.TestCase):
         self.assertEqual(self.last()['path'], '/update/mirror?url=http%3A%2F%2F192.168.2.10%3A8765')
         self.run_cli('update-mirror', 'off')
         self.assertEqual(self.last()['path'], '/update/mirror?url=')
+        self.run_cli('update-control', 'on')
+        self.assertEqual(self.last()['path'], '/update/control?on=1')
+        self.assertEqual(self.run_cli('update-control', 'maybe')[0], 1)
         n = len(FakeAgent.requests)
         for bad in ('192.168.2.10:8765', 'http://u:p@host', 'ftp://h'):
             self.assertEqual(self.run_cli('update-mirror', bad)[0], 1, bad)

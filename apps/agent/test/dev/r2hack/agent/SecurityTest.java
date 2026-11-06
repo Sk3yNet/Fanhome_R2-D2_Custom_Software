@@ -144,8 +144,11 @@ public final class SecurityTest {
         eq("read", Permissions.required("GET", "/sounds"), "soundboard list read");
         eq("control", Permissions.required("POST", "/sound"), "soundboard play control");
         eq("control", Permissions.required("POST", "/sound/stop"), "soundboard stop control");
+        // Control may ask for an install; AgentService refuses it unless an admin allowed it (POST /update/control).
+        eq("control", Permissions.required("POST", "/update/install"), "update install control (gated)");
+        eq("control", Permissions.required("POST", "/update/check"), "update check control");
         for (String r : new String[] {"POST /main/install", "POST /agent/install", "POST /reboot", "POST /adb", "POST /serial",
-                "POST /clients/add", "POST /update/install", "POST /trust", "POST /wifi", "GET /logcat", "POST /brand-new"}) {
+                "POST /clients/add", "POST /update/control", "POST /update/mirror", "POST /update/source", "POST /trust", "POST /wifi", "GET /logcat", "POST /brand-new"}) {
             String[] p = r.split(" ");
             eq("admin", Permissions.required(p[0], p[1]), r + " admin");
         }

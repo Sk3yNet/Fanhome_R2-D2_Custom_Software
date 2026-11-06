@@ -1,5 +1,5 @@
 name: R2-D2 update mirror
-version: "1.0.0"
+version: "1.1.0"
 slug: r2_update_mirror
 description: Downloads R2-D2's signed releases from GitHub and serves them to R2 on your network, so R2 can update itself.
 url: https://github.com/Sk3yNet/Fanhome_R2-D2_Custom_Software/blob/main/docs/update-mirror.md
@@ -14,7 +14,15 @@ ports:
   8765/tcp: 8765
 ports_description:
   8765/tcp: Release mirror for R2 (plain HTTP on your network)
-webui: "http://[HOST]:[PORT:8765]/"
+# The page in Home Assistant's sidebar; its buttons only work there (signed-in users).
+ingress: true
+ingress_port: 8765
+panel_icon: mdi:robot
+panel_title: R2-D2
+# MQTT discovery for the update entity and health sensors; notifications after an install.
+services:
+  - mqtt:want
+homeassistant_api: true
 options:
   repositories:
     - Sk3yNet/Fanhome_R2-D2_Custom_Software
@@ -23,6 +31,11 @@ options:
   keep_releases: 2
   trusted_certs: []
   github_token: ""
+  robot: ""
+  robot_token: ""
+  ha_entities: true
+  backup_settings: false
+  backup_keep: 14
 schema:
   repositories:
     - match(^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$)
@@ -32,3 +45,8 @@ schema:
   trusted_certs:
     - match(^[0-9a-fA-F:]{64,95}$)
   github_token: password?
+  robot: match(^[A-Za-z0-9.-]*$)
+  robot_token: password?
+  ha_entities: bool
+  backup_settings: bool
+  backup_keep: int(1,60)

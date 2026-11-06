@@ -89,6 +89,16 @@ final class Updater {
         EventLog.i("update: " + (url.isEmpty() ? "asking GitHub for releases" : "reading releases from the mirror " + url));
     }
 
+    /** Whether control clients (Home Assistant's plain token) may start an install. Off by default. */
+    boolean controlMayInstall() {
+        return prefs.getBoolean("control-install", false);
+    }
+
+    void setControlMayInstall(boolean on) {
+        prefs.edit().putBoolean("control-install", on).commit();
+        EventLog.i("update: control clients " + (on ? "may" : "may not") + " install updates");
+    }
+
     boolean auto() {
         return prefs.getBoolean("auto", false);
     }
@@ -99,7 +109,8 @@ final class Updater {
     }
 
     JSONObject status() throws Exception {
-        JSONObject s = new JSONObject().put("repo", repo()).put("mirror", mirror()).put("auto", auto()).put("busy", busy)
+        JSONObject s = new JSONObject().put("repo", repo()).put("mirror", mirror()).put("auto", auto())
+                .put("control_may_install", controlMayInstall()).put("busy", busy)
                 .put("last_check", lastCheck / 1000).put("last_result", lastResult)
                 .put("main_installed", supervisor.mainVersion()).put("agent_installed", supervisor.version(ctx.getPackageName()));
         JSONObject l = latest;

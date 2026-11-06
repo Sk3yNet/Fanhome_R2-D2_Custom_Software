@@ -36,7 +36,10 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-ADDON_VERSION = '1.0.0'
+import hass
+import r2robot
+
+ADDON_VERSION = '1.1.0'
 DEFAULT_REPO = 'Sk3yNet/Fanhome_R2-D2_Custom_Software'
 ASSETS = ('R2Main.apk', 'R2Agent.apk')
 MAX_APK = 64 * 1024 * 1024  # the agent's limit too
@@ -161,6 +164,9 @@ def load_options(path):
     for c in certs:
         if not CERT_RE.match(c):
             raise MirrorError('trusted_certs: %r is not a SHA-256 (64 hex digits)' % c)
+    robot = (o.get('robot') or '').strip()
+    if robot and not re.match(r'^[A-Za-z0-9.\-]{1,100}$', robot):
+        raise MirrorError('robot: %r should be R2\'s IP address, such as 192.168.2.103' % robot)
     return {
         'repositories': repos or [DEFAULT_REPO],
         'check_hours': max(1, min(168, int(o.get('check_hours', 6)))),
@@ -169,6 +175,11 @@ def load_options(path):
         'trusted_certs': certs,
         'github_token': (o.get('github_token') or '').strip(),
         'port': int(o.get('port', 8765)),
+        'robot': (o.get('robot') or '').strip(),
+        'robot_token': (o.get('robot_token') or '').strip(),
+        'ha_entities': bool(o.get('ha_entities', True)),
+        'backup_settings': bool(o.get('backup_settings', False)),
+        'backup_keep': max(1, min(60, int(o.get('backup_keep', 14)))),
     }
 
 
@@ -303,10 +314,6 @@ class Mirror:
                 self.state[repo] = {'checked': int(time.time()), 'result': result, 'ok': ok}
             log('%s: %s' % (repo, result))
 
-    def run_forever(self):
-        while True:
-            self.update_all()
-            time.sleep(self.opts['check_hours'] * 3600)
 
 
 def parse_sha256sums(text):
@@ -341,16 +348,184 @@ def write_json(path, obj):
     os.replace(tmp, path)
 
 
-# ---- serving ----------------------------------------------------------------------------------------
+# ---- the add-on: mirror, R2's health and updates, Home Assistant, settings backups ----------------
 
-def make_handler(mirror):
+# Home Assistant's ingress proxy. Buttons on the page change things, so they only work through Home
+# Assistant's sidebar (signed-in users); the page on port 8765 is read-only.
+INGRESS_IPS = {'172.30.32.2'}
+BACKUP_NAME_RE = re.compile(r'^r2-settings-\d{8}-\d{6}\.json$')
+
+
+class App:
+    def __init__(self, mirror, opts, data_dir, action_ips=None):
+        self.mirror = mirror
+        self.opts = opts
+        self.robot = r2robot.Robot(opts['robot'], opts['robot_token']) if opts['robot'] else None
+        self.health = {}
+        self.update_info = {}
+        self.in_progress = False
+        self.last_action = ''
+        self.hass = None
+        self.mirror_url = None
+        self.wake = threading.Event()
+        self.lock = threading.Lock()
+        self.backup_dir = os.path.join(os.path.abspath(data_dir), 'backups')
+        self.action_ips = set(INGRESS_IPS if action_ips is None else action_ips)
+
+    # ---- what R2 runs and what it could run --------------------------------------------------------
+
+    def state(self):
+        h, u = self.health, self.update_info
+        installed = r2robot.version_name(h.get('main_installed'))
+        latest = installed
+        if u.get('update_available') and u.get('version'):
+            latest = u['version']
+        man = self.mirror.manifest(self.mirror.opts['repositories'][0]) or {}
+        return {'installed': installed, 'latest': latest, 'release_url': u.get('url') or man.get('url'),
+                'release_summary': self.last_action if self.in_progress else '',
+                'in_progress': self.in_progress, 'reachable': h.get('reachable') if self.robot else None,
+                'adb_open': h.get('adb_port_open'), 'problems': h.get('problems') or [], 'notes': h.get('notes') or []}
+
+    def publish(self):
+        if self.hass:
+            try:
+                self.hass.publish_state()
+            except Exception as e:
+                log('Home Assistant: could not publish: %s' % e)
+
+    def refresh_robot(self, check=False):
+        if not self.robot:
+            return
+        h = self.robot.health()
+        with self.lock:
+            self.health = h
+        if check and h.get('token_ok'):
+            try:
+                u = self.robot.check_update()
+            except r2robot.RobotError as e:
+                u = {'error': str(e)}
+            with self.lock:
+                self.update_info = u
+            log('R2: %s' % (u.get('error') or ('update %s available' % u.get('version') if u.get('update_available')
+                                               else 'up to date (%s)' % u.get('version'))))
+        self.publish()
+
+    # ---- actions (Home Assistant's buttons and the sidebar page) -----------------------------------
+
+    def check_now(self):
+        self.last_action = 'checking GitHub and R2...'
+        self.wake.set()
+
+    def install(self):
+        if not self.robot:
+            self.last_action = 'install: set robot and robot_token in the add-on configuration first'
+            return
+        with self.lock:
+            if self.in_progress:
+                return
+            self.in_progress = True
+        self.last_action = 'installing on R2: R2 downloads the update from this mirror, checks it and reboots...'
+        self.publish()
+        threading.Thread(target=self._install, daemon=True).start()
+
+    def _install(self):
+        try:
+            result = self.robot.install_update().get('result') or 'done'
+            self.last_action = 'install: %s' % result
+            hass.notify('R2-D2 update', 'R2 answered: %s\n\nR2 reboots if the agent was updated.' % result)
+        except r2robot.RobotError as e:
+            self.last_action = 'install failed: %s' % e
+            hass.notify('R2-D2 update failed', str(e))
+        finally:
+            with self.lock:
+                self.in_progress = False
+        log(self.last_action)
+        self.publish()
+        time.sleep(120)  # R2 may be rebooting
+        self.refresh_robot(check=True)
+
+    def backups(self):
+        try:
+            return sorted((f for f in os.listdir(self.backup_dir) if BACKUP_NAME_RE.match(f)), reverse=True)
+        except OSError:
+            return []
+
+    def backup_now(self):
+        if not self.robot:
+            return 'backup: set robot and robot_token first'
+        try:
+            b = self.robot.backup()
+        except r2robot.RobotError as e:
+            return 'backup failed: %s' % e
+        os.makedirs(self.backup_dir, exist_ok=True)
+        name = time.strftime('r2-settings-%Y%m%d-%H%M%S.json')
+        write_json(os.path.join(self.backup_dir, name), b)
+        for old in self.backups()[self.opts['backup_keep']:]:
+            os.remove(os.path.join(self.backup_dir, old))
+        n = ', '.join('%d %s' % (len(b.get(k) or {}), k) for k in ('routines', 'places', 'cues'))
+        return 'backed up %s to %s%s' % (n, name, '' if not b['errors'] else ' (%d could not be read)' % len(b['errors']))
+
+    def restore(self, name):
+        if not self.robot or not BACKUP_NAME_RE.match(name or '') or name not in self.backups():
+            return 'restore: no such backup'
+        with open(os.path.join(self.backup_dir, name)) as f:
+            b = json.load(f)
+        try:
+            return self.robot.restore(b)
+        except r2robot.RobotError as e:
+            return 'restore failed: %s' % e
+
+    # ---- loops -------------------------------------------------------------------------------------
+
+    def mirror_loop(self):
+        while True:
+            self.mirror.update_all()
+            self.refresh_robot(check=True)
+            if self.last_action == 'checking GitHub and R2...':
+                self.last_action = 'checked %s' % time.strftime('%H:%M')
+            self.wake.wait(self.opts['check_hours'] * 3600)
+            self.wake.clear()
+
+    def robot_loop(self):
+        n = 0
+        while True:
+            time.sleep(300)
+            n += 1
+            self.refresh_robot(check=(n % 12 == 0))  # health every 5 minutes, R2's update check hourly
+            if self.opts['backup_settings']:
+                newest = self.backups()[:1]
+                age = time.time() - os.path.getmtime(os.path.join(self.backup_dir, newest[0])) if newest else 1e9
+                if age > 23.5 * 3600:
+                    log(self.backup_now())
+
+
+def run_action(app, action, form):
+    if action == 'check':
+        app.check_now()
+    elif action == 'install':
+        app.install()
+    elif action == 'backup':
+        app.last_action = app.backup_now()
+    elif action == 'restore':
+        app.last_action = app.restore(form.get('name', [''])[0])
+    else:
+        return False
+    log('page: %s -> %s' % (action, app.last_action))
+    return True
+
+
+def make_handler(app):
+    mirror = app.mirror
+
     class Handler(http.server.BaseHTTPRequestHandler):
         server_version = 'r2-update-mirror/' + ADDON_VERSION
 
         def log_message(self, fmt, *args):
-            if not self.path.endswith('.apk'):
-                return
-            log('%s %s' % (self.client_address[0], fmt % args))
+            if self.path.endswith('.apk'):
+                log('%s %s' % (self.client_address[0], fmt % args))
+
+        def may_act(self):
+            return self.client_address[0] in app.action_ips
 
         def do_HEAD(self):
             self.do_GET(head=True)
@@ -358,22 +533,37 @@ def make_handler(mirror):
         def do_GET(self, head=False):
             path = urllib.parse.urlsplit(self.path).path
             if path in ('/', '/index.html'):
-                return self.send(200, 'text/html; charset=utf-8', status_page(mirror, self.headers.get('Host')).encode(), head)
+                page = status_page(app, self.headers.get('Host'), self.may_act())
+                return self.send(200, 'text/html; charset=utf-8', page.encode(), head)
             if path == '/status.json':
-                return self.send(200, 'application/json', json.dumps(status(mirror), indent=2).encode(), head)
+                return self.send(200, 'application/json', json.dumps(status(app), indent=2).encode(), head)
             file = resolve(mirror.data, path)
             if not file:
                 return self.send(404, 'text/plain', b'not found\n', head)
             ctype = 'application/json' if file.endswith('.json') else 'application/vnd.android.package-archive'
-            size = os.path.getsize(file)
             self.send_response(200)
             self.send_header('Content-Type', ctype)
-            self.send_header('Content-Length', str(size))
+            self.send_header('Content-Length', str(os.path.getsize(file)))
             self.send_header('Cache-Control', 'no-cache')
             self.end_headers()
             if not head:
                 with open(file, 'rb') as f:
                     shutil.copyfileobj(f, self.wfile)
+
+        def do_POST(self):
+            m = re.match(r'^/action/([a-z]+)$', urllib.parse.urlsplit(self.path).path)
+            n = min(int(self.headers.get('Content-Length') or 0), 4096)
+            form = urllib.parse.parse_qs(self.rfile.read(n).decode('utf-8', 'replace')) if n else {}
+            if not m:
+                return self.send(404, 'text/plain', b'not found\n', False)
+            if not self.may_act():
+                return self.send(403, 'text/plain', b'open this page from the Home Assistant sidebar to use its buttons\n', False)
+            if not run_action(app, m.group(1), form):
+                return self.send(404, 'text/plain', b'no such action\n', False)
+            self.send_response(303)
+            self.send_header('Location', '../')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
 
         def send(self, code, ctype, body, head):
             self.send_response(code)
@@ -400,7 +590,8 @@ def resolve(root, url_path):
     return file
 
 
-def status(mirror):
+def status(app):
+    mirror = app.mirror
     out = []
     with mirror.lock:
         state = dict(mirror.state)
@@ -408,42 +599,114 @@ def status(mirror):
         man = mirror.manifest(repo) or {}
         out.append({'repo': repo, 'tag': man.get('tag'), 'cert': man.get('cert'),
                     'published': man.get('published'), 'state': state.get(repo)})
-    return {'version': ADDON_VERSION, 'check_hours': mirror.opts['check_hours'], 'repositories': out}
+    return {'version': ADDON_VERSION, 'check_hours': mirror.opts['check_hours'], 'repositories': out,
+            'robot': app.opts['robot'] or None, 'health': app.health or None, 'update': app.update_info or None,
+            'ha': app.state(), 'last_action': app.last_action, 'backups': app.backups()}
 
 
-def status_page(mirror, host):
-    s = status(mirror)
-    host = host or 'this-machine:%d' % mirror.opts['port']
-    if not re.match(r'^[A-Za-z0-9.\-\[\]:]+$', host):
-        host = 'this-machine:%d' % mirror.opts['port']
+def _when(t):
+    return time.strftime('%Y-%m-%d %H:%M', time.localtime(t)) if t else 'not yet'
+
+
+def status_page(app, host, can_act):
+    e = html.escape
+    s = status(app)
+    h, u, st = app.health, app.update_info, app.state()
+    port = app.opts['port']
+    url = app.mirror_url
+    if not url:
+        url = 'http://%s' % (host if host and re.match(r'^[A-Za-z0-9.\-\[\]:]+$', host) else '<this machine>:%d' % port)
+
+    def button(action, label, enabled=True, why='', confirm=None, extra=''):
+        if not can_act:
+            return ''
+        js = ' onclick="return confirm(%s)"' % e(json.dumps(confirm)) if confirm else ''
+        dis = '' if enabled else ' disabled title="%s"' % e(why)
+        return ('<form method="post" action="action/%s" class="inline">%s<button%s%s>%s</button></form>'
+                % (action, extra, dis, js, e(label)))
+
+    # R2
+    if not app.robot:
+        robot = ('<p>Set <b>robot</b> (R2\'s IP address) and <b>robot_token</b> in the add-on\'s Configuration tab to see '
+                 'R2\'s health here and to install updates from Home Assistant.</p>')
+    else:
+        rows = [('Address', e(app.opts['robot'])),
+                ('Reachable', 'yes' if h.get('reachable') else '<span class="bad">no</span>' if h else 'checking...'),
+                ('R2 Main', e(h.get('main_installed') or '-')), ('Agent', e(h.get('agent_installed') or h.get('agent') or '-')),
+                ('adb over Wi-Fi port', '-' if h.get('adb_port_open') is None else
+                 ('<span class="bad">open</span>' if h['adb_port_open'] else 'closed')),
+                ('Updates from', e(h.get('mirror') or ('GitHub (no mirror set)' if h.get('token_ok') else '-'))),
+                ('Checked', e(_when(h.get('checked'))))]
+        robot = '<table>%s</table>' % ''.join('<tr><th>%s</th><td>%s</td></tr>' % r for r in rows)
+        robot += ''.join('<p class="bad">&#9888; %s</p>' % e(p) for p in h.get('problems') or [])
+        robot += ''.join('<p class="note">%s</p>' % e(n) for n in h.get('notes') or [])
+
+    # Updates
+    if u.get('error'):
+        upd = '<p class="bad">R2\'s update check: %s</p>' % e(u['error'])
+    elif u:
+        upd = ('<p>R2 runs <b>%s</b>. %s</p>' % (e(st['installed'] or '?'),
+               'Update to <b>%s</b> available.' % e(u.get('version')) if u.get('update_available')
+               else 'That is the newest release on the mirror (%s).' % e(u.get('version') or '-')))
+    else:
+        upd = '<p>Not checked with R2 yet.</p>' if app.robot else ''
+    can_install = bool(app.robot and u.get('update_available') and h.get('control_may_install') and not app.in_progress)
+    why = ('installing' if app.in_progress else 'no update available' if not u.get('update_available')
+           else 'allow it first: tools\\r2.ps1 update-control on')
+    upd += '<p>%s%s</p>' % (button('check', 'Check now'),
+                            button('install', 'Install on R2', can_install, why,
+                                   'Install the update on R2 now? R2 reboots if the agent is updated.') if app.robot else '')
+    if app.last_action:
+        upd += '<p class="note">%s</p>' % e(app.last_action)
+    if not can_act:
+        upd += '<p class="note">Open this page from Home Assistant\'s sidebar to use the buttons.</p>'
+
+    # Mirror
     rows = []
     for r in s['repositories']:
-        st = r['state'] or {}
-        when = time.strftime('%Y-%m-%d %H:%M', time.localtime(st['checked'])) if st.get('checked') else 'not yet'
+        rs = r['state'] or {}
         rows.append('<tr><td>%s</td><td>%s</td><td><code>%s</code></td><td class="%s">%s<br><small>%s</small></td></tr>' % (
-            html.escape(r['repo']), html.escape(r['tag'] or '-'), html.escape(r['cert'] or '-'),
-            'ok' if st.get('ok', True) else 'bad', html.escape(st.get('result', 'waiting for the first check')),
-            html.escape(when)))
-    cmd = 'tools\\r2.ps1 update-mirror http://%s' % host
+            e(r['repo']), e(r['tag'] or '-'), e(r['cert'] or '-'), '' if rs.get('ok', True) else 'bad',
+            e(rs.get('result', 'waiting for the first check')), e(_when(rs.get('checked')))))
+    mirror = ('<table><tr><th>Repository</th><th>Release</th><th>Signing certificate (SHA-256)</th><th>Last check</th></tr>'
+              '%s</table>' % ''.join(rows))
+
+    # Backups
+    backups = ''
+    if app.opts['backup_settings']:
+        items = ''.join('<li>%s %s</li>' % (e(b), button('restore', 'Restore', confirm='Write the routines, rooms and cue '
+                        'files from %s back to R2? Ones with the same name are replaced.' % b,
+                        extra='<input type="hidden" name="name" value="%s">' % e(b))) for b in s['backups'])
+        backups = ('<h2>Settings backups</h2><p>Every day: R2\'s routines, taught rooms and cue files (what the token can '
+                   'read back). Home Assistant\'s own backups include them. Not included: Wi-Fi, keys and other '
+                   'agent settings; use <code>tools\\r2.ps1 save-settings</code> for those.</p><ul>%s</ul><p>%s</p>'
+                   % (items or '<li>none yet</li>', button('backup', 'Back up now')))
+
+    cmd = 'tools\\r2.ps1 update-mirror %s' % url
     return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>R2-D2 update mirror</title><style>
-body{font:15px system-ui,sans-serif;margin:16px;max-width:900px;color:#222;background:#fff}
-table{border-collapse:collapse;width:100%%}td,th{border-bottom:1px solid #ddd;padding:6px;text-align:left;vertical-align:top}
-code{word-break:break-all;font-size:12px}.bad{color:#b00}pre{background:#f4f4f4;padding:8px;overflow-x:auto}
-@media (prefers-color-scheme: dark){body{background:#111;color:#ddd}pre{background:#222}td,th{border-color:#333}.bad{color:#f66}}
+<title>R2-D2 updates</title><style>
+:root{--fg:#222;--bg:#fff;--line:#ddd;--box:#f4f4f4;--bad:#b00;--muted:#666}
+@media (prefers-color-scheme: dark){:root{--fg:#ddd;--bg:#111;--line:#333;--box:#222;--bad:#f66;--muted:#999}}
+body{font:15px system-ui,sans-serif;margin:16px;max-width:900px;color:var(--fg);background:var(--bg)}
+table{border-collapse:collapse;width:100%%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
+code{word-break:break-all;font-size:12px}.bad{color:var(--bad)}.note{color:var(--muted)}
+pre{background:var(--box);padding:8px;overflow-x:auto}form.inline{display:inline;margin-right:8px}
+button{font:inherit;padding:6px 14px;cursor:pointer}button[disabled]{cursor:not-allowed}
 </style></head><body>
-<h1>R2-D2 update mirror</h1>
-<p>Copies R2's signed releases from GitHub every %d hours and serves them to R2 on this network.
-R2 installs only APKs signed by a certificate it trusts, so this mirror can't push anything else onto it.</p>
-<table><tr><th>Repository</th><th>Release</th><th>Signing certificate (SHA-256)</th><th>Last check</th></tr>%s</table>
-<h2>Point R2 at this mirror (once)</h2>
+<h1>R2-D2 updates</h1>
+<h2>R2</h2>%s
+<h2>Updates</h2>%s
+<h2>Mirror</h2>
+<p>Copies R2's signed releases from GitHub every %d hours and serves them to R2 on this network. R2 installs only
+APKs signed by a certificate it trusts, so this mirror can't put anything else on it.</p>%s
+%s
+<h2>Setup (once, from the PC)</h2>
 <pre>%s
-tools\\r2.ps1 update-check
-tools\\r2.ps1 update-install</pre>
-<p>Or with <code>tools/r2.py</code> on Linux or macOS. Use this machine's IP address if R2 can't resolve its name.
-<code>update-auto on</code> makes R2 check every 6 hours and install while idle. Restart the add-on to check GitHub now.</p>
-<p><small>Add-on %s · <a href="status.json">status.json</a></small></p>
-</body></html>""" % (s['check_hours'], ''.join(rows), html.escape(cmd), ADDON_VERSION)
+tools\\r2.ps1 client-add home-assistant -Plain    # the robot_token for this add-on
+tools\\r2.ps1 update-control on                   # lets the Install button work</pre>
+<p class="note">Or <code>tools/r2.py</code> on Linux or macOS. Use this machine's IP address: R2 can't resolve names.</p>
+<p><small>Add-on %s &middot; <a href="status.json">status.json</a></small></p>
+</body></html>""" % (robot, upd, s['check_hours'], mirror, backups, e(cmd), ADDON_VERSION)
 
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -456,20 +719,33 @@ def main(argv=None):
     p.add_argument('command', nargs='?', default='serve', choices=['serve', 'once', 'apk-info'])
     p.add_argument('file', nargs='?')
     p.add_argument('--options', default='/data/options.json')
-    p.add_argument('--data', default='/data/mirror')
+    p.add_argument('--data', default='/data')
     a = p.parse_args(argv)
     if a.command == 'apk-info':
         print('cert %s  versionCode %d' % (apk_cert(a.file), apk_version_code(a.file)))
         return 0
     opts = load_options(a.options)
-    mirror = Mirror(a.data, opts)
+    mirror = Mirror(os.path.join(a.data, 'mirror'), opts)
     if a.command == 'once':
         mirror.update_all()
         return 0 if all(s['ok'] for s in mirror.state.values()) else 1
-    log('R2-D2 update mirror %s: %s, every %d h, port %d' % (
-        ADDON_VERSION, ', '.join(opts['repositories']), opts['check_hours'], opts['port']))
-    threading.Thread(target=mirror.run_forever, daemon=True).start()
-    Server(('', opts['port']), make_handler(mirror)).serve_forever()
+    # Outside Home Assistant (no Supervisor) the buttons work from this machine only.
+    app = App(mirror, opts, a.data, None if os.environ.get('SUPERVISOR_TOKEN') else {'127.0.0.1', '::1'})
+    log('R2-D2 update mirror %s: %s, every %d h, port %d%s' % (
+        ADDON_VERSION, ', '.join(opts['repositories']), opts['check_hours'], opts['port'],
+        ', robot %s' % opts['robot'] if opts['robot'] else ''))
+    app.mirror_url = hass.mirror_url()
+    if opts['ha_entities'] and app.robot:
+        broker = hass.mqtt_settings()
+        if broker:
+            app.hass = hass.HassLink(app, broker, log=log)
+            app.hass.start()
+        else:
+            log('Home Assistant: no MQTT broker offered (install the Mosquitto add-on and the MQTT integration) '
+                'so there is no update entity; the page still works')
+    threading.Thread(target=app.mirror_loop, name='mirror', daemon=True).start()
+    threading.Thread(target=app.robot_loop, name='robot', daemon=True).start()
+    Server(('', opts['port']), make_handler(app)).serve_forever()
     return 0
 
 
