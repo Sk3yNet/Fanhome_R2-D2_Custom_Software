@@ -10,7 +10,8 @@ Usage: python3 tools/r2.py <command> [arg] [--robot <ip>] [--user <name>] [--lin
   log-previous             agent event log from the previous boot (e.g. after a crash or power loss)
   action <name>            run a robot action, e.g. dance, wake, lightsaber, leia (list: actions)
   chirp [mood|'text']      a newly generated droid chirp: a mood (ack happy excited question sad worried
-                           chatter; default random), or droid sounds shaped like a sentence (docs/chirps.md)
+                           chatter whistle scream; default random), or droid sounds shaped like a sentence
+                           (docs/chirps.md)
   stop                     emergency stop (the agent stops the robot itself, then cancels the action;
                            with the drive lock on, driving is locked again)
   drive                    drive lock state (docs/drive-lock.md)
@@ -157,11 +158,11 @@ API_PORT = 7700
 ANNOUNCE_PORT = 7702
 
 ACTIONS = ('stop wake turn-left turn-right turn-around forward circle patrol follow dance shake-head who-are-you noise '
-           'not-recognized chirp lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair '
+           'not-recognized chirp whistle freak-out lightsaber arm short-lcd long-lcd flash-front flash-back leia luke mute unmute pair '
            'phone-app-on phone-app-off voice-on voice-off face-on face-off liveliness-off liveliness-quiet liveliness-chatty '
            'liveliness-full chirps-on chirps-off beeps-on beeps-off react-clap react-double-clap react-loud reactions-on '
            'reactions-off').split()
-CHIRP_MOODS = ('random', 'ack', 'happy', 'excited', 'question', 'sad', 'worried', 'chatter')
+CHIRP_MOODS = ('random', 'ack', 'happy', 'excited', 'question', 'sad', 'worried', 'chatter', 'whistle', 'scream')
 
 
 class R2Error(Exception):

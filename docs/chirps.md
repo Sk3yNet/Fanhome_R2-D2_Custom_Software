@@ -19,6 +19,15 @@ switching between two pitches), with short gaps between them. A **mood** picks t
 | `chatter` | R2 "talking": a mix of everything. |
 | `random` | Any of the above except `ack`. |
 
+Two set pieces work like moods but are never picked by `random`:
+
+| Name | Sounds like |
+|---|---|
+| `whistle` | A wolf whistle: a quick rise, a breath, then up again and a long fall (about 0.9 s). The pitch shifts a little each time. |
+| `scream` | R2's freak-out: frantic trills, a long shrieking fall with a fast wide vibrato, panicky blips, and a second shriek (about 2–3 s). |
+
+The `whistle` and `freak-out` actions use them ([below](#wolf-whistle-and-freak-out)).
+
 ## Using them
 - **Confirmation beep:** on by default. `tools\r2.ps1 action chirps-off` brings back the factory
   sound 7, and `chirps-on` switches back. The web page has a *New beeps each time* switch. The setting
@@ -32,6 +41,23 @@ switching between two pitches), with short gaps between them. A **mood** picks t
 
 Chirps play on the music stream, so the volume and mute settings apply, and they interrupt whatever
 sound is playing. The microphone ignores them like any other droid sound.
+
+## Wolf whistle and freak-out
+Ask R2 a "how pretty" or "how scary" question and he answers it his way. *Built, not yet tested on the robot.*
+
+| Say "hey R2-D2", then | Action | What R2 does |
+|---|---|---|
+| "how pretty is ...?" / "how pretty are ...?" | `whistle` | Looks over to his right, wolf whistles, and looks back. |
+| "how scary is ...?" / "how scary are ...?" | `freak-out` | Screams and shakes his head wildly from side to side. |
+
+Only the start of the question counts, so "how pretty is the sunset" and "how scary are spiders" both work, whatever
+follows. Neither action drives the wheels, so they work with the [drive lock](drive-lock.md) on. If the generated
+sound can't play, R2 uses a factory sound instead (his song for the whistle, the "huh?" for the freak-out).
+
+The actions also run from `tools\r2.ps1 action whistle` / `action freak-out`, the web page, the **Wolf whistle** and
+**Freak out** buttons in Home Assistant, and routine steps (`{"action": "whistle"}`). A routine named `whistle` or
+`freak-out` replaces the built-in one. For Home Assistant's voice pipeline, see
+[home-assistant-voice.md](home-assistant-voice.md#letting-voice-and-the-ai-run-r2s-actions).
 
 ## Droid sounds shaped like text
 For a beeps-only reply, `Chirp.speak(text, mood, seed)` turns a sentence into droid sounds of about the

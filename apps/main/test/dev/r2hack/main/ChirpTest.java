@@ -24,6 +24,7 @@ public final class ChirpTest {
     public static void main(String[] args) throws Exception {
         moods();
         variety();
+        specials();
         text();
         if (args.length > 0) examples(new File(args[0]));
         System.out.println("chirps: " + passed + " passed, " + failed + " failed");
@@ -81,6 +82,57 @@ public final class ChirpTest {
         }
     }
 
+    /** The set pieces: a wolf whistle and a scream. Known moods, never picked by "random", recognisable shapes. */
+    static void specials() {
+        for (String mood : Chirp.SPECIALS) {
+            check(mood + " is a known mood", Chirp.knownMood(mood));
+            for (long seed = 0; seed < 200; seed++) {
+                short[] pcm = Chirp.render(mood, seed);
+                double s = Chirp.seconds(pcm);
+                String at = mood + " seed " + seed;
+                check(at + ": length " + s + " s", s >= 0.6 && s <= 3.2);
+                check(at + ": peak", peak(pcm) > 8000 && peak(pcm) < Short.MAX_VALUE);
+                check(at + ": starts quietly", Math.abs(pcm[0]) < 500);
+                check(at + ": ends quietly", Math.abs(pcm[pcm.length - 1]) < 2000);
+                for (Chirp.Tone t : Chirp.tones(mood, seed)) {
+                    double hi = Math.max(t.f0, t.f1) * (1 + t.wobbleDepth), lo = Math.min(t.f0, t.f1) * (1 - t.wobbleDepth);
+                    check(at + ": pitch " + lo + "-" + hi + " Hz", lo >= 300 && hi <= 6500 && hi < Chirp.RATE / 3.0);
+                    check(at + ": tone length", t.seconds > 0.02 && t.seconds < 1);
+                }
+            }
+        }
+        for (long seed = 0; seed < 50; seed++) {
+            // Wolf whistle: two rising tones, the second gliding without a break into a long fall below where it started.
+            List<Chirp.Tone> w = Chirp.tones("whistle", seed);
+            check("whistle " + seed + " has three tones", w.size() == 3);
+            if (w.size() == 3) {
+                check("whistle " + seed + " rises twice", w.get(0).f1 > w.get(0).f0 * 2 && w.get(1).f1 > w.get(1).f0 * 2);
+                check("whistle " + seed + " has a breath, then no break", w.get(0).gapAfter > 0.05 && w.get(1).legato && w.get(1).gapAfter == 0);
+                check("whistle " + seed + " falls from the top", w.get(2).f0 == w.get(1).f1 && w.get(2).f1 < w.get(0).f0);
+                check("whistle " + seed + " ends long", w.get(2).seconds > w.get(0).seconds * 2);
+            }
+            // Scream: the highest, longest tone falls a long way, with a fast wide vibrato.
+            Chirp.Tone top = null;
+            for (Chirp.Tone t : Chirp.tones("scream", seed)) if (top == null || t.seconds > top.seconds) top = t;
+            check("scream " + seed + " shrieks down", top.f0 > 4000 && top.f1 < top.f0 / 2.5 && top.wobbleHz > 20 && top.wobbleDepth >= 0.1);
+        }
+        // The legato join really is joined: no near-silence in the middle of the whistle's second part.
+        short[] pcm = Chirp.render("whistle", 3);
+        List<Chirp.Tone> w = Chirp.tones("whistle", 3);
+        int join = (int) Math.round((w.get(0).seconds + w.get(0).gapAfter + w.get(1).seconds) * Chirp.RATE);
+        int around = 0;
+        for (int i = join - 200; i < join + 200; i++) around = Math.max(around, Math.abs(pcm[i]));
+        check("whistle is loud across the join (" + around + ")", around > 8000);
+        java.util.Set<String> picked = new java.util.HashSet<>();
+        for (long seed = 0; seed < 300; seed++) {
+            // "random" picks among MOODS; which one isn't exposed, so compare against each special's tones.
+            List<Chirp.Tone> r = Chirp.tones("random", seed);
+            if (r.size() == 3 && r.get(1).legato) picked.add("whistle");
+        }
+        check("random never whistles", picked.isEmpty());
+        check("specials aren't regular moods", !Arrays.asList(Chirp.MOODS).contains("whistle") && !Arrays.asList(Chirp.MOODS).contains("scream"));
+    }
+
     static void text() {
         double shortS = Chirp.seconds(Chirp.speak("Yes.", null, 1));
         double longS = Chirp.seconds(Chirp.speak("The kitchen lights are on, and the front door is locked. Anything else?", null, 1));
@@ -110,6 +162,9 @@ public final class ChirpTest {
     static void examples(File dir) throws Exception {
         dir.mkdirs();
         for (String mood : Chirp.MOODS) {
+            for (int i = 1; i <= 3; i++) Files.write(new File(dir, mood + "-" + i + ".wav").toPath(), Chirp.wav(Chirp.render(mood, i)));
+        }
+        for (String mood : Chirp.SPECIALS) {
             for (int i = 1; i <= 3; i++) Files.write(new File(dir, mood + "-" + i + ".wav").toPath(), Chirp.wav(Chirp.render(mood, i)));
         }
         Files.write(new File(dir, "text-question.wav").toPath(),

@@ -192,7 +192,7 @@ The device (named after the robot) has:
 - **Sensors:** battery (%), charging, mode (ready, sleeping, pairing, patrol, phone control), the action
   that is running, the controller's error (diagnostic), and the watch-with-me state.
 - **Buttons:** stop, wake up, turn left / right / around, go forward, walk a circle, patrol, dance, shake
-  head, who are you, make some noise, flash front / back light, go home, tour the rooms, and one button per
+  head, who are you, make some noise, chirp, wolf whistle, freak out, flash front / back light, go home, tour the rooms, and one button per
   stored routine (`Routine <name>`). Rooms ([places.md](places.md)): a **Location** sensor and a **Go to** select. A routine that is saved or deleted shows up or disappears within a second or so.
 - **Switches:** lightsaber, arm, projector Princess Leia, projector Skywalker, short and long display,
   mute, voice commands, face tracking, watch with me ([watch-with-me.md](watch-with-me.md)), driving enabled,
@@ -246,7 +246,8 @@ Wi-Fi, no Wi-Fi, hotspot) or sleep. Charging switching off is debounced for 3 s.
 and English speech model are copied once from the factory app on the robot; nothing is bundled. Say
 "hey R2-D2" (the back light shows R2 is listening), then a command within 15 s: turn left / right /
 around, go forward, shake your head, walk a circle, dance please, make some noise, who are you,
-lightsaber, move arms, patrol, follow me, stop, Princess Leia, Skywalker. Each command keeps it listening for another
+lightsaber, move arms, patrol, follow me, stop, Princess Leia, Skywalker, and the questions "how pretty is/are ..." (a wolf
+whistle) and "how scary is/are ..." (a freak-out). Each command keeps it listening for another
 15 s. It doesn't listen while asleep, patrolling, pairing, or playing a projector clip or music. To tune
 the phrases or their sensitivity, put a PocketSphinx keyword file at `files/voice/keywords.txt` in R2
 Main's data (phrases must use words from the model's dictionary).

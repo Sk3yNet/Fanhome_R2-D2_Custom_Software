@@ -93,7 +93,9 @@ script:
     description: >-
       Makes the R2-D2 robot do something with his body: move, dance, make a sound, switch his
       lightsaber or arm, or show a Princess Leia or Luke Skywalker hologram. Use it whenever the user
-      asks R2 to do something physical. "stop" stops whatever he is doing.
+      asks R2 to do something physical. "stop" stops whatever he is doing. When the user asks how
+      pretty something is, answer with "whistle" (a wolf whistle); when they ask how scary something
+      is, answer with "freak-out".
     fields:
       action:
         description: The action for R2
@@ -101,7 +103,8 @@ script:
         selector:
           select:
             options: [dance, turn-left, turn-right, turn-around, forward, circle, patrol, follow, shake-head,
-                      who-are-you, noise, lightsaber, arm, leia, luke, flash-front, flash-back, stop]
+                      who-are-you, noise, whistle, freak-out, lightsaber, arm, leia, luke, flash-front,
+                      flash-back, stop]
     sequence:
       - action: rest_command.r2_action
         data:
@@ -130,7 +133,18 @@ intents:
     data:
       - sentences:
           - "[(R2 | R2-D2 | artoo)] {r2_action} [please]"
+      # "how pretty is the sunset?" -> a wolf whistle, "how scary are spiders?" -> a freak-out
+      - sentences:
+          - "how pretty (is | are) {anything}"
+        slots:
+          r2_action: "whistle"
+      - sentences:
+          - "how scary (is | are) {anything}"
+        slots:
+          r2_action: "freak-out"
 lists:
+  anything:
+    wildcard: true
   r2_action:
     values:
       - in: "dance"

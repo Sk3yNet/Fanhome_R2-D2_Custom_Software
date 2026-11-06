@@ -82,6 +82,9 @@ final class Voice {
             {"who are you", "who-are-you", "1e-16"}, {"lightsaber", "lightsaber", "1e-22"},
             {"move arms", "arm", "1e-16"}, {"patrol", "patrol", "1e-8"}, {"follow me", "follow", "1e-16"}, {"stop", "stop", "1e-10"},
             {"princess leia", "leia", "1e-20"}, {"skywalker", "luke", "1e-20"},
+            // Questions: only the start counts, so "how pretty is the sunset" and "how scary are spiders" both work.
+            {"how pretty is", "whistle", "1e-18"}, {"how pretty are", "whistle", "1e-18"},
+            {"how scary is", "freak-out", "1e-18"}, {"how scary are", "freak-out", "1e-18"},
     };
 
     private final Context ctx;

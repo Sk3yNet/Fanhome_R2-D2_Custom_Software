@@ -33,6 +33,7 @@ final class Triggers {
             "hey r two d two", "turn left", "turn right", "turn around", "go forward", "shake your head",
             "walk a circle", "dance please", "make some noise", "who are you", "lightsaber", "move arms",
             "patrol", "stop", "princess leia", "skywalker",
+            "how pretty is", "how pretty are", "how scary is", "how scary are",
             "go to", "go home", "come home", // places (Places.phrases)
     };
 

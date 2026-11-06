@@ -79,6 +79,9 @@ routine engine in section 6.
       Italian, Japanese, Brazilian Portuguese, Russian and Chinese. Confirmed in English on the robot: "hey R2-D2", then a command within 15 s (the back light alternates green and yellow while listening). Other languages: the factory app's speech models for them are on the robot, and they need phrase lists.
 - [x] Decide between loading the factory speech models from the robot at runtime and using an open-source
       offline recognizer with its own models. Decided: the robot's own PocketSphinx library and English model, loaded at runtime, with our own phrase list (`files/voice/keywords.txt` overrides it). Free speech goes to a container (docs/offload.md).
+- [ ] **Wolf whistle and freak-out:** "how pretty is ...?" gets a wolf whistle and a look over, "how scary is ...?"
+      a scream and a frantic head shake (actions `whistle` and `freak-out`, also in Home Assistant, routines and
+      the web page). See [docs/chirps.md](docs/chirps.md#wolf-whistle-and-freak-out). *Built, not yet tested on the robot.*
 - [ ] Pause listening during projector audio, patrol and pairing. *Built, not yet tested on the robot.* Also while music plays. While R2 sleeps only the wake phrase counts, so "hey R2-D2" wakes him.
 
 ### Camera

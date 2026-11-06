@@ -22,6 +22,8 @@ final class Chirp {
     static final int RATE = 22050;
     /** The moods render() knows. "random" picks one of the others. */
     static final String[] MOODS = {"ack", "happy", "excited", "question", "sad", "worried", "chatter"};
+    /** Set pieces render() also knows, which "random" never picks: a wolf whistle, and R2's scream. */
+    static final String[] SPECIALS = {"whistle", "scream"};
     static final double MAX_SECONDS = 8;          // speak() never makes more than this
     static final int MAX_TEXT = 2000;              // characters of text speak() looks at
     private static final double PEAK = 0.8 * Short.MAX_VALUE;
@@ -33,6 +35,7 @@ final class Chirp {
         boolean trill;                  // square wobble: jump between two pitches instead of sliding
         double gapAfter;                // silence after it, in seconds
         double level = 1;
+        boolean legato;                 // slides straight into the next tone: no gap, no fade between them
 
         Tone(double seconds, double f0, double f1) {
             this.seconds = seconds;
@@ -53,6 +56,7 @@ final class Chirp {
     static boolean knownMood(String mood) {
         if ("random".equals(mood)) return true;
         for (String m : MOODS) if (m.equals(mood)) return true;
+        for (String m : SPECIALS) if (m.equals(mood)) return true;
         return false;
     }
 
@@ -142,6 +146,40 @@ final class Chirp {
                     if (rnd.nextInt(3) == 0) blip(0.03, 0.05);
                 }
                 break;
+            case "whistle": { // a wolf whistle: a quick rise, a breath, then up again and a long fall
+                double k = between(0.92, 1.08); // a slightly different whistler each time
+                Tone first = new Tone(between(0.16, 0.22), 1150 * k, 2900 * k);
+                first.wobbleHz = 5;
+                first.wobbleDepth = 0.006;
+                first.gapAfter = between(0.09, 0.14);
+                add(first);
+                Tone up = new Tone(between(0.12, 0.16), 1300 * k, 3100 * k);
+                up.legato = true;
+                add(up);
+                Tone fall = new Tone(between(0.45, 0.6), up.f1, 900 * k);
+                fall.wobbleHz = 5;
+                fall.wobbleDepth = 0.008;
+                add(fall);
+                break;
+            }
+            case "scream": { // R2's freak-out: frantic trills, a long shrieking fall, panicky blips, another shriek
+                range(2000, 4000);
+                for (int i = 2 + rnd.nextInt(2); i > 0; i--) trill(0.06, 0.12).gapAfter = between(0.005, 0.02);
+                for (int n = 0; n < 2; n++) {
+                    Tone shriek = new Tone(n == 0 ? between(0.7, 0.95) : between(0.4, 0.6),
+                            between(4300, 5000), between(1100, 1500));
+                    shriek.wobbleHz = between(24, 34);
+                    shriek.wobbleDepth = between(0.12, 0.2);
+                    shriek.gapAfter = between(0.04, 0.08);
+                    add(shriek);
+                    if (n == 0) {
+                        for (int i = 3 + rnd.nextInt(3); i > 0; i--) {
+                            (rnd.nextBoolean() ? blip(0.03, 0.06) : down(0.05, 0.1)).gapAfter = between(0.01, 0.03);
+                        }
+                    }
+                }
+                break;
+            }
             default: // chatter: R2 "talking", a mix of everything
                 range(1100, 3700);
                 for (int i = 5 + rnd.nextInt(5); i > 0; i--) talk();
@@ -251,7 +289,7 @@ final class Chirp {
     }
 
     private Tone add(Tone t) {
-        if (t.gapAfter == 0) t.gapAfter = between(0.02, 0.06);
+        if (t.gapAfter == 0 && !t.legato) t.gapAfter = between(0.02, 0.06);
         tones.add(t);
         return t;
     }
@@ -306,9 +344,11 @@ final class Chirp {
         short[] out = new short[total];
         int pos = 0;
         double phase = 0;
+        boolean joined = false; // the previous tone slides into this one
         for (Tone t : tones) {
             int n = samples(t.seconds);
-            int attack = Math.min(n / 4, samples(0.004)), release = Math.min(n / 3, samples(0.012));
+            int attack = joined ? 0 : Math.min(n / 4, samples(0.004));
+            int release = t.legato ? 0 : Math.min(n / 3, samples(0.012));
             double wobPhase = rnd.nextDouble();
             double glide = Math.pow(t.f1 / t.f0, 1.0 / Math.max(1, n)), base = t.f0; // exponential glide, per sample
             for (int i = 0; i < n; i++) {
@@ -329,7 +369,8 @@ final class Chirp {
                 else if (i >= n - release) env = (double) (n - i) / release;
                 out[pos + i] = (short) Math.round(v / 1.3 * env * t.level * PEAK);
             }
-            phase = 0; // each tone starts from silence anyway (envelope), so no click
+            joined = t.legato && t.gapAfter == 0;
+            if (!joined) phase = 0; // each tone starts from silence anyway (envelope), so no click
             pos += n + samples(t.gapAfter);
         }
         return out;
