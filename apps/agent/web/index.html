@@ -423,7 +423,7 @@ $("save").onclick = () => {
   token = v;
   $("setup").open = false; refresh(); loadRoutines(); boardLoaded = false; showPage();
 };
-$("stop").onclick = () => { driving = false; padDriving = false; padLatched = true; api("POST", "/stop").then(() => say("stopped"), e => say("stop failed: " + e.message)); };
+$("stop").onclick = () => { driving = false; padDriving = false; padLatched = true; driveKick(); api("POST", "/stop").then(() => say("stopped"), e => say("stop failed: " + e.message)); };
 
 for (const a of ACTIONS) {
   const b = document.createElement("button");
@@ -584,10 +584,13 @@ $("tourBtn").onclick = () => placeCall("/tour");
 loadPlaces(); setInterval(loadPlaces, 5000);
 
 // Joystick: angle 0 = forward, 90 = spin right, -90 = spin left, 180 = back (the controller's `move`).
-// While held, the command is repeated so the agent's motion watchdog (3 s) keeps it alive.
+// The newest stick position goes out as soon as the previous command has been answered (one request at a time,
+// so an old command can never overtake a newer one or the stop), and while held it is repeated every
+// DRIVE_REPEAT_MS so the agent's motion watchdog (3 s) keeps it alive. Letting go sends the stop at once.
 const pad = $("pad"), knob = $("knob");
-let driving = false, padDriving = false, padLatched = true, want = { power: 0, angle: 0 }, loopOn = false;
+let driving = false, padDriving = false, padLatched = true, want = { power: 0, angle: 0 };
 $("power").oninput = e => $("powerOut").textContent = e.target.value;
+const DRIVE_REPEAT_MS = 300, DRIVE_MIN_GAP_MS = 40;
 
 function setFromPointer(ev) {
   const r = pad.getBoundingClientRect(), R = r.width / 2;
@@ -600,29 +603,43 @@ function setFromPointer(ev) {
   const top = teachingNow ? Math.min(40, +$("power").value) : +$("power").value; // gentle while teaching a route
   want = mag < 0.15 ? { power: 0, angle: 0 } : { power: Math.round(mag * top), angle: Math.round(a * 180 / Math.PI) };
 }
-async function driveLoop() {
-  if (loopOn) return; loopOn = true;
-  while (driving || padDriving) {
-    const t = Date.now();
-    try { await send({ cmd: "move", power: want.power, angle: want.angle }); } catch (e) {
-      say("drive: " + e.message);
-      // Refused (drive lock or low battery): don't keep trying; the gamepad needs START and a centered stick.
-      if (e.message.startsWith("refused")) { if (driving) release(); if (padDriving) { padDriving = false; padLatched = true; } break; }
-    }
-    await new Promise(r => setTimeout(r, Math.max(0, 250 - (Date.now() - t))));
-    if (document.hidden) { driving = false; padDriving = false; } // a hidden tab can't see the stick being let go
+let driveBusy = false, driveSent = { power: 0, angle: 0 }, driveSentAt = 0, driveTimer = null, stopRetries = 0;
+const STOP_MOVE = { power: 0, angle: 0 };
+// Call whenever the stick, `driving` or `padDriving` changes; it sends what is needed now and schedules the repeat.
+function driveKick() {
+  clearTimeout(driveTimer); driveTimer = null;
+  const active = driving || padDriving, next = active ? want : STOP_MOVE;
+  if (driveBusy) {
+    // Let go while a command is on its way: send the stop now as well. The ordered stop still follows
+    // the answer, so even if this one arrives first, R2 ends up stopped.
+    if (!active && driveSent.power > 0 && !driveSent.stopRushed) { driveSent.stopRushed = true; send({ cmd: "move", power: 0, angle: 0 }).catch(() => {}); }
+    return; // the answer calls driveKick again
   }
-  loopOn = false;
-  send({ cmd: "move", power: 0, angle: 0 }).catch(() => {});
+  const same = next.power === driveSent.power && next.angle === driveSent.angle, since = Date.now() - driveSentAt;
+  if (same && (!active || next.power === 0)) return; // stopped, and the stop went out
+  if (same && since < DRIVE_REPEAT_MS) { driveTimer = setTimeout(driveKick, DRIVE_REPEAT_MS - since); return; }
+  if (since < DRIVE_MIN_GAP_MS) { driveTimer = setTimeout(driveKick, DRIVE_MIN_GAP_MS - since); return; }
+  driveBusy = true; driveSent = { power: next.power, angle: next.angle }; driveSentAt = Date.now();
+  if (next.power > 0) stopRetries = 0;
+  send({ cmd: "move", power: next.power, angle: next.angle }).catch(e => {
+    say("drive: " + e.message);
+    // Refused (drive lock or low battery): don't keep trying; the gamepad needs START and a centered stick.
+    if (e.message.startsWith("refused")) { if (driving) release(); if (padDriving) { padDriving = false; padLatched = true; } }
+    else if (next.power === 0 && stopRetries++ < 2) driveSent = { power: -1, angle: 0 }; // the stop didn't arrive: send it again
+  }).finally(() => {
+    driveBusy = false;
+    if (document.hidden) { driving = false; padDriving = false; } // a hidden tab can't see the stick being let go
+    driveKick();
+  });
 }
-pad.addEventListener("pointerdown", e => { pad.setPointerCapture(e.pointerId); padDriving = false; padLatched = true; driving = true; setFromPointer(e); driveLoop(); });
-pad.addEventListener("pointermove", e => { if (driving) setFromPointer(e); });
-const release = () => { driving = false; knob.style.left = "50%"; knob.style.top = "50%"; };
+pad.addEventListener("pointerdown", e => { pad.setPointerCapture(e.pointerId); padDriving = false; padLatched = true; driving = true; setFromPointer(e); driveKick(); });
+pad.addEventListener("pointermove", e => { if (driving) { setFromPointer(e); driveKick(); } });
+const release = () => { driving = false; knob.style.left = "50%"; knob.style.top = "50%"; driveKick(); };
 pad.addEventListener("pointerup", release); pad.addEventListener("pointercancel", release);
 // Switching tabs or apps mid-drive never delivers the pointerup, so stop instead of waiting for the watchdog.
 function stopAllDriving() {
   if (driving) release();
-  if (padDriving) { padDriving = false; padLatched = true; }
+  if (padDriving) { padDriving = false; padLatched = true; driveKick(); }
   if (headHeld) headRelease();
   if (gpHead) { gpHead = 0; send({ cmd: "head-dir", dir: 0 }).catch(() => {}); }
 }
@@ -785,8 +802,8 @@ function pollGamepad() {
   const m = stickToMove(gp.axes[0] || 0, gp.axes[1] || 0, +$("power").value, gp.buttons[GP.RT] ? gp.buttons[GP.RT].value : 0);
   if (m.power === 0) padLatched = false;
   if (!driving && !padLatched) {
-    if (m.power > 0) { want = m; if (!padDriving) { padDriving = true; driveLoop(); } }
-    else if (padDriving) { want = m; padDriving = false; } // the drive loop sends the stop
+    if (m.power > 0) { want = m; padDriving = true; driveKick(); }
+    else if (padDriving) { want = m; padDriving = false; driveKick(); } // sends the stop
   }
   padState(gp.id.replace(/\s*\(.*$/, "") + (padLatched && m.power > 0 ? ": let go of the stick to drive" : padDriving ? ": driving" : ": ready"), true);
 
@@ -813,7 +830,7 @@ if (!navigator.getGamepads) {
     clearInterval(gpTimer); gpTimer = null; gpIndex = null;
     const next = [...navigator.getGamepads()].find(p => p && p.connected && p.index !== e.gamepad.index);
     if (next) { gpIndex = next.index; gpPrev = []; padLatched = true; gpTimer = setInterval(pollGamepad, 50); }
-    if (padDriving) { padDriving = false; want = { power: 0, angle: 0 }; }
+    if (padDriving) { padDriving = false; want = { power: 0, angle: 0 }; driveKick(); }
     if (gpHead) { gpHead = 0; send({ cmd: "head-dir", dir: 0 }).catch(() => {}); }
     padState("Gamepad disconnected.", false); say("gamepad disconnected: stopped");
   });

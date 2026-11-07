@@ -86,7 +86,8 @@ final class SerialLink implements ControllerLink {
                         line.reset();
                         if (s.length() > 2 && s.charAt(0) == '{') {
                             lastRxAt = System.currentTimeMillis();
-                            if (s.contains("\"gin\"")) lastGin = s;
+                            // The UART sometimes drops bytes; a garbled report would break /status until the next one.
+                            if (s.contains("\"gin\"") && parses(s)) lastGin = s;
                             listener.onControllerLine(s);
                         }
                     } else if (line.size() < 4096) {
@@ -103,6 +104,15 @@ final class SerialLink implements ControllerLink {
                 }
                 sleep(2000);
             }
+        }
+    }
+
+    private static boolean parses(String s) {
+        try {
+            new org.json.JSONObject(s);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 

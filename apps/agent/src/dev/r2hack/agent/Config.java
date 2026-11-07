@@ -15,6 +15,8 @@ final class Config {
 
     static final long STATION_CONNECT_TIMEOUT_MS = 60_000;
     static final long STATION_LOST_TIMEOUT_MS = 90_000;
+    /** How often Wi-Fi power saving is switched off again (Android turns it back on after a DHCP renewal). */
+    static final long WIFI_POWER_SAVE_CHECK_MS = 60_000;
 
     static final long GIN_POLL_MS = 5_000;            // same cadence as the stock app
     static final long HEARTBEAT_TIMEOUT_MS = 10_000;  // main app counts as dead after this
