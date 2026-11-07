@@ -123,6 +123,15 @@ and calling it again restarts the timer. `adb-off` switches it off now. Every ag
 On KitKat Wi-Fi adb replaces adb over USB, so USB adb works whenever Wi-Fi adb is off. The `dmesg`,
 `fetch-token` and `import-identity` commands switch it on by themselves.
 
+Switching it needs root, and R2's own `su` doesn't work (it is a Superuser client without its daemon or app).
+The agent gets root from a small helper, `r2-rootd.sh` (source in `apps/agent/system/`), which Android starts as
+root at every boot through `/system/etc/install-recovery.sh`. It only runs requests the agent drops into its
+own private folder, and it closes Wi-Fi adb early in the boot too, because the factory `/init.rc` opens port
+5555 at every boot. `install-on-robot.ps1 install` and `refresh-agent` put it in place;
+`install-on-robot.ps1 root-helper` installs or updates just the helper and starts it without a reboot.
+Without the helper the agent can't close adb (or set up the firewall); `status` then shows `"root": "none"`
+and `adb_wifi` stays `true`, since it reports the real adb properties.
+
 For development on a trusted network, `tools\r2.ps1 adb-always` keeps it on across reboots (shown as
 `adb_wifi_always` in `status`); `adb-off` undoes that.
 Only the serial console sees the bootloader/early kernel output, or works when Android itself doesn't boot.

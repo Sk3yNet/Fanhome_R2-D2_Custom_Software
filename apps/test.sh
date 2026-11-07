@@ -159,3 +159,12 @@ javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$J
     "$AGENT_SRC/DriveLock.java" "$AGENT_SRC/MotionGuard.java" "$AGENT_SRC/Config.java" \
     "$APPS_DIR/agent/test/dev/r2hack/agent/DriveLockTest.java"
 java -cp "$OUT:$JAR" dev.r2hack.agent.DriveLockTest
+
+# adb over Wi-Fi: reading adbd's properties, and the root helper's exit codes. Supervisor and EventLog are
+# compiled for AdbControl's references only (nothing here runs a command); the helper script gets a syntax check.
+javac -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 -classpath "$JAR" -d "$OUT" \
+    -sourcepath "$AGENT_SRC/../../.." "$AGENT_SRC/AdbControl.java" "$AGENT_SRC/Root.java" \
+    "$APPS_DIR/agent/test/dev/r2hack/agent/AdbControlTest.java"
+java -cp "$OUT:$JAR" dev.r2hack.agent.AdbControlTest
+sh -n "$APPS_DIR/agent/system/r2-rootd.sh"
+sh -n "$APPS_DIR/agent/system/install-recovery.sh"

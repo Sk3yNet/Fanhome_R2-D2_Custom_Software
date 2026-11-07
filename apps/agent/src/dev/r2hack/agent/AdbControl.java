@@ -33,6 +33,7 @@ final class AdbControl {
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
+                int tick = 0;
                 while (true) {
                     try {
                         Thread.sleep(10_000);
@@ -42,6 +43,11 @@ final class AdbControl {
                     if (end != 0 && SystemClock.elapsedRealtime() >= end && !always()) {
                         offAt = 0;
                         apply(false, "timer ran out");
+                    } else if (++tick % 30 == 0 && !on && !always() && isOn()) {
+                        // Every 5 minutes: something (a failed switch, the factory boot script) left it open.
+                        synchronized (AdbControl.this) {
+                            if (!on && offAt == 0) apply(false, "found open while it should be off");
+                        }
                     }
                 }
             }
@@ -77,7 +83,13 @@ final class AdbControl {
         return prefs.getBoolean(PREF_ALWAYS, false);
     }
 
+    /** Whether adbd really listens on Wi-Fi, from the properties (not just what was asked for). */
     boolean isOn() {
+        return listening(Supervisor.run("getprop", "service.adb.tcp.port"), Supervisor.run("getprop", "persist.adb.tcp.port"));
+    }
+
+    /** What was last asked for (on or off); differs from isOn() when switching failed. */
+    boolean wanted() {
         return on;
     }
 
@@ -91,6 +103,10 @@ final class AdbControl {
      * KitKat's adbd listens on TCP when service.adb.tcp.port (or, if that's unset, persist.adb.tcp.port)
      * is a port number, and on USB otherwise. Both are set, so an old persist value from the install
      * script can't turn it back on at the next boot, and adbd is restarted to pick it up.
+     * The factory /init.rc sets service.adb.tcp.port to 5555 at every boot; the root helper (r2-rootd.sh)
+     * closes it again early in the boot, and this does it again when the agent starts.
+     * Setting the properties needs root (see Root); the result is read back, so a failure shows in the log and
+     * in /status (adb_wifi follows the real properties) instead of being reported as done.
      */
     private void apply(boolean wantOn, String why) {
         String service = wantOn ? String.valueOf(PORT) : "-1";
@@ -101,9 +117,21 @@ final class AdbControl {
             EventLog.i("adb over Wi-Fi " + (wantOn ? "on" : "off") + ": " + why + " (already)");
             return; // no adbd restart, so an open USB session survives an agent restart
         }
-        String out = Supervisor.run("su", "-c", "setprop service.adb.tcp.port " + service
+        String out = Root.run("setprop service.adb.tcp.port " + service
                 + "; setprop persist.adb.tcp.port " + persist + "; stop adbd; start adbd");
+        boolean nowOn = isOn();
+        if (nowOn != wantOn) {
+            EventLog.i("adb over Wi-Fi: FAILED to switch " + (wantOn ? "on" : "off") + " (" + why + "), it is still "
+                    + (nowOn ? "on" : "off") + (out.isEmpty() ? "" : ": " + out));
+            return;
+        }
         EventLog.i("adb over Wi-Fi " + (wantOn ? "on" : "off") + ": " + why + (out.isEmpty() ? "" : " (" + out + ")"));
+    }
+
+    /** Whether adbd listens on TCP with these property values: the service one wins when it is set. */
+    static boolean listening(String service, String persist) {
+        String s = service == null ? "" : service.trim();
+        return s.isEmpty() ? tcpPort(persist == null ? "" : persist) : tcpPort(s);
     }
 
     /** Whether a property value makes adbd listen on TCP (a port number above 0). */

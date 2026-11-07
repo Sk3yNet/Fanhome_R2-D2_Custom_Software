@@ -79,6 +79,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         EventLog.i("agent " + Secrets.VERSION + " starting" + (passive ? " (PASSIVE: stock app enabled)" : ""));
 
         loadExtraSubnets();
+        Root.init(this);
         adb = new AdbControl(getSharedPreferences("agent", MODE_PRIVATE));
         adb.start();
         hardening = new Hardening(this, getSharedPreferences("agent", MODE_PRIVATE));
@@ -283,8 +284,8 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
             startActivity(i);
         } catch (Exception e) {
             // Granted only when the /system copy of the agent asks for it too; otherwise power off as root.
-            EventLog.i("shutdown permission missing, powering off with su: " + e.getMessage());
-            String out = Supervisor.run("su", "-c", "reboot -p");
+            EventLog.i("shutdown permission missing, powering off as root: " + e.getMessage());
+            String out = Root.run("reboot -p");
             if (!out.isEmpty()) EventLog.i("power off: " + out);
         }
     }
@@ -1208,6 +1209,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         s.put("adb_wifi", adb.isOn());
         s.put("adb_wifi_always", adb.always());
         s.put("adb_wifi_seconds_left", adb.secondsLeft());
+        s.put("root", Root.via());
         s.put("extra_subnets", subnetList());
         s.put("hardening", hardening.summary());
         s.put("mqtt", mqttState.isEmpty() ? "unknown" : mqttState);

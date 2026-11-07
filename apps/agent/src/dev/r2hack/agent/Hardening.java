@@ -271,7 +271,7 @@ final class Hardening {
     }
 
     private boolean hooked(String ipt, String chain) {
-        String out = Supervisor.run("su", "-c", ipt + " -C INPUT -j " + chain + " && echo HOOKED");
+        String out = Root.run(ipt + " -C INPUT -j " + chain + " && echo HOOKED");
         if (out.endsWith("HOOKED")) return true;
         // Only a clear "no such rule" counts as missing; an iptables without -C must not cause a loop of re-applies.
         return !(out.contains("matching rule") || out.contains("Bad rule") || out.contains("No chain"));
@@ -283,7 +283,7 @@ final class Hardening {
         String cmdline = Supervisor.run("cat", "/proc/cmdline");
         int console = HardeningRules.consoleUart(cmdline);
         List<HardeningRules.Node> nodes = HardeningRules.parseNodes(
-                Supervisor.run("su", "-c", HardeningRules.listTargetsScript()));
+                Root.run(HardeningRules.listTargetsScript()));
         JSONObject original = originals();
         JSONArray fixed = new JSONArray(), failed = new JSONArray();
         String agentUser = HardeningRules.appUserName(android.os.Process.myUid());
@@ -305,17 +305,17 @@ final class Hardening {
                     failed.put(n.path + ": agent uid " + android.os.Process.myUid() + " has no app user name, left as is");
                     continue;
                 }
-                String out = Supervisor.run("su", "-c", "chown " + agentUser + " " + n.path + " && chmod " + mode + " " + n.path);
+                String out = Root.run("chown " + agentUser + " " + n.path + " && chmod " + mode + " " + n.path);
                 File f = new File(n.path);
                 if (!f.canRead() || !f.canWrite()) {
-                    Supervisor.run("su", "-c", "chown " + n.owner + "." + n.group + " " + n.path
+                    Root.run("chown " + n.owner + "." + n.group + " " + n.path
                             + "; chmod " + HardeningRules.octal(n.mode) + " " + n.path);
                     failed.put(n.path + ": agent lost access after the change, put back (" + out + ")");
                     continue;
                 }
                 fixed.put(n.path + " " + mode + " " + agentUser + ":" + n.group);
             } else {
-                String out = Supervisor.run("su", "-c", "chmod " + mode + " " + n.path + " && echo DONE");
+                String out = Root.run("chmod " + mode + " " + n.path + " && echo DONE");
                 if (out.endsWith("DONE")) fixed.put(n.path + " " + mode + " " + n.owner + ":" + n.group);
                 else failed.put(n.path + ": " + out);
             }
@@ -424,7 +424,7 @@ final class Hardening {
             } finally {
                 out.close();
             }
-            return Supervisor.run("su", "-c", "sh " + f.getAbsolutePath());
+            return Root.run("sh " + f.getAbsolutePath());
         } catch (Exception e) {
             return "error: " + e;
         }
