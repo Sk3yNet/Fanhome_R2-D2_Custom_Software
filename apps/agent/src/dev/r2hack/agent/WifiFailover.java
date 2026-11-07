@@ -29,11 +29,16 @@ final class WifiFailover {
     private volatile long disconnectedSince;
     private volatile String homeSsid = "";
     private final Hotspot hotspot;
+    private final WifiManager.WifiLock perfLock;
+    private volatile long powerSaveCheckedAt;
+    private volatile Boolean powerSaveOff;   // null until the first attempt
 
     WifiFailover(Context ctx, boolean passive) {
         wm = (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         prefs = ctx.getSharedPreferences("wifi", Context.MODE_PRIVATE);
         hotspot = new Hotspot(ctx, wm, passive);
+        perfLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "r2-agent");
+        perfLock.setReferenceCounted(false);
     }
 
     Hotspot hotspot() {
@@ -95,6 +100,11 @@ final class WifiFailover {
     }
 
     void start() {
+        try {
+            perfLock.acquire(); // no "screen off" Wi-Fi savings: R2 has no screen to turn on
+        } catch (Exception e) {
+            EventLog.e("wifi: high-performance lock failed", e);
+        }
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -124,6 +134,7 @@ final class WifiFailover {
             if (!MODE_STATION.equals(preferredMode()) || state.startsWith("ap")) continue;
             if (connectedToHome()) {
                 disconnectedSince = 0;
+                if (System.currentTimeMillis() - powerSaveCheckedAt >= Config.WIFI_POWER_SAVE_CHECK_MS) keepPowerSaveOff();
             } else {
                 long now = System.currentTimeMillis();
                 if (disconnectedSince == 0) disconnectedSince = now;
@@ -164,6 +175,7 @@ final class WifiFailover {
                 if (connectedToHome() && ipAddress() != null) {
                     disconnectedSince = 0;
                     EventLog.i("wifi: joined " + homeSsid + " as " + ipAddress());
+                    keepPowerSaveOff();
                     return true;
                 }
                 sleep(1000);
@@ -173,6 +185,33 @@ final class WifiFailover {
         }
         return false;
     }
+
+    /**
+     * Switches the Wi-Fi chip's power saving off. With it on, the chip dozes between beacons and holds
+     * packets for R2 for up to ~1.7 s (measured: ping 1 to 1751 ms, average 423), which made driving surge and
+     * turns and stops arrive late; with it off, pings stay under 40 ms. Android switches it back on after
+     * every DHCP renewal, so this is repeated every WIFI_POWER_SAVE_CHECK_MS while joined. Needs root
+     * (the r2-rootd helper); costs a little battery, which R2 spends on motors and lights anyway.
+     */
+    private void keepPowerSaveOff() {
+        powerSaveCheckedAt = System.currentTimeMillis();
+        Root.Result r = Root.exec(POWER_SAVE_OFF, 10_000);
+        boolean ok = r.code == 0 && r.output.contains("OK");
+        Boolean was = powerSaveOff;
+        powerSaveOff = ok;
+        if (was == null || was != ok) {
+            EventLog.i(ok ? "wifi: power saving off (low latency for driving)"
+                    : "wifi: could not switch power saving off (" + r.output + "); driving may lag");
+        }
+    }
+
+    /** "off", "on" (couldn't switch it off) or "unknown", for /status. */
+    String powerSave() {
+        Boolean off = powerSaveOff;
+        return off == null || isAp() ? "unknown" : off ? "off" : "on";
+    }
+
+    static final String POWER_SAVE_OFF = "wpa_cli -p /data/misc/wifi/sockets -i wlan0 SET ps 0";
 
     private void goAp(String label) {
         try {

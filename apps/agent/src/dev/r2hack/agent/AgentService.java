@@ -1196,6 +1196,7 @@ public class AgentService extends Service implements ControllerLink.Listener, Br
         s.put("simulated_controller", sim);
         s.put("ip", WifiFailover.ipAddress());
         s.put("wifi", wifi.state());
+        s.put("wifi_power_save", wifi.powerSave());
         s.put("wifi_preferred", wifi.preferredMode());
         s.put("hotspot", wifi.hotspot().ssid());
         s.put("hotspot_factory_settings", wifi.hotspot().usingFactory());
