@@ -25,8 +25,9 @@ say() {
 
 # Field from "ls -lnd": 1 = mode, 2 = owner uid (toolbox ls).
 field() {
+    i=$1
     set -- $(ls -lnd "$2" 2> /dev/null)
-    eval echo "\${$1}"
+    eval echo "\${$i}"
 }
 
 tcp_port() {
@@ -79,6 +80,7 @@ serve() {
     done
 }
 
+trap '' HUP   # started from an adb shell, it must outlive that shell
 say "started"
 # The factory init.rc's "on boot" block sets port 5555; close it once now and again after boot completes in
 # case that block runs after us.
@@ -88,7 +90,9 @@ rm -f "$Q"/*.run "$Q"/*.tmp 2> /dev/null
 
 booted=0
 while true; do
-    serve
+    # In a subshell, so a mistake in serve can't end the helper; it only forks when a request is waiting.
+    set -- "$Q"/*.req
+    if [ -e "$1" ] || [ -h "$1" ]; then (serve); fi
     if [ $booted = 0 ] && [ "$(getprop sys.boot_completed)" = 1 ]; then
         booted=1
         adb_close "boot completed"

@@ -38,7 +38,7 @@ function Install-RootHelper {
 
 function Start-RootHelper {
     # A running copy keeps the old script; stop it, then start the new one the way the boot does.
-    Sh 'for p in /proc/[0-9]*; do grep -q [r]2-rootd $p/cmdline 2>/dev/null && kill ${p#/proc/}; done; /system/etc/install-recovery.sh' | Out-Null
+    Sh 'for p in /proc/[0-9]*; do grep -q [r]2-rootd $p/cmdline 2>/dev/null && kill ${p#/proc/}; done; /system/etc/install-recovery.sh; sleep 1' | Out-Null
 }
 if ($Action -eq 'install') {
     foreach ($f in 'apps\out\R2Agent.apk', 'apps\out\R2Main.apk', 'backup\mmcblk0_full.img') {
