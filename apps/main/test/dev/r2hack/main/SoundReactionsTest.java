@@ -94,8 +94,10 @@ public final class SoundReactionsTest {
         check("two claps 1.5 s apart: two single claps",
                 new Audio().noise(2000, room).clap(-6, room).noise(1400, room).clap(-6, room).noise(2000, room).feed(),
                 "clap", "clap");
-        check("a soft clap is still heard in a quiet room",
-                new Audio().noise(2000, room).clap(-28, room).noise(2000, room).feed(), "clap");
+        check("a clap at -16 dB is heard in a quiet room",
+                new Audio().noise(2000, room).clap(-16, room).noise(2000, room).feed(), "clap");
+        check("a soft click (peak about -26 dB, like a hard drive) isn't",
+                new Audio().noise(2000, room).clap(-34, room).noise(2000, room).feed(), new String[0]);
         check("a clap barely above a noisy room isn't",
                 new Audio().noise(6000, -30).clap(-27, -30).noise(2000, -30).feed(), new String[0]);
         check("a loud clap in a noisy room is",
@@ -147,6 +149,18 @@ public final class SoundReactionsTest {
         for (int i = 0; i < 12; i++) slow.clap(-6, room).noise(4000, room); // a clap every 4 s for most of a minute
         slow.feedInto(spread, false);
         checkTrue("claps spread out over a minute: not a noisy room", !spread.noisy());
+
+        Audio clicks = new Audio().noise(2000, -63);
+        for (int i = 0; i < 60; i++) clicks.clap(-32 - (i % 11), -63).noise(400, -63); // a hard drive working, 30 s (clap()'s level is the envelope; peaks come out about 8 dB higher: -24 to -34)
+        final List<String> driveHeard = new ArrayList<>();
+        SoundReactions drive = new SoundReactions(new SoundReactions.Listener() {
+            public void onSound(String kind, double peakDb) {
+                driveHeard.add(kind);
+            }
+        });
+        clicks.feedInto(drive, false);
+        checkTrue("hard drive clicks (-24 to -34 dB): not a noisy room", !drive.noisy());
+        check("hard drive clicks: no claps", driveHeard, new String[0]);
 
         SoundReactions loudRoom = quietDetector();
         new Audio().noise(10_000, -32).feedInto(loudRoom, false);

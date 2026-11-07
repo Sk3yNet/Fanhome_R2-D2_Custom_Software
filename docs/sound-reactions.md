@@ -22,7 +22,8 @@ decides how much he reacts:
 - **chatty:** claps, double claps and loud sounds, sound only.
 - **full:** the same, with head moves.
 
-On top of that, the **Sound reactions** switch turns just this feature on or off (default on): on the
+On top of that, the **Sound reactions** switch turns just this feature on or off (default **off** since 2026-11-07,
+because other noises in a room are easily taken for claps; switch it on if you want them): on the
 web page under Settings, as a Home Assistant switch, or with `tools\r2.ps1 action reactions-off` /
 `reactions-on`. The setting is kept across reboots.
 
@@ -44,7 +45,8 @@ Sound reactions keep working when voice commands are off, or when the speech mod
 `SoundReactions.java` cuts the audio into 20 ms frames and keeps a noise floor that follows the room:
 it drops quickly when the room gets quieter and rises over a few seconds when it gets louder (a TV,
 a fan). A sound that keeps going for 3 s becomes the new floor. A sound event starts when a frame's
-peak is 20 dB above the floor (and at least -35 dBFS):
+peak is 20 dB above the floor and at least -20 dBFS. (It was -35 dBFS until a hard drive working in
+the same room, clicking at -24 to -34 dBFS, was heard as a clap a second.)
 
 - **clap:** the event is at most 160 ms long and loudest at its start;
 - **double clap:** two claps 150–800 ms apart (a single clap is reported once that window has passed,

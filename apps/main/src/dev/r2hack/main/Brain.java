@@ -1541,7 +1541,7 @@ final class Brain implements PhoneLink.Host, Voice.Host, FaceTracker.Host, Assis
     // ---- sound reactions (claps and loud sounds) -------------------------------------------
 
     private boolean reactionsOn() {
-        return io.getSharedPreferences("settings", 0).getBoolean("sound_reactions", true);
+        return io.getSharedPreferences("settings", 0).getBoolean("sound_reactions", false);
     }
 
     /** The microphone stays open for sound reactions while they are on and liveliness isn't off. */

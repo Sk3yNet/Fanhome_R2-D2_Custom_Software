@@ -33,7 +33,9 @@ final class SoundReactions {
 
     // Tunables (dBFS: 0 is the loudest the microphone can report, -90 is near silence).
     static final double START_ABOVE_FLOOR_DB = 20; // an event starts this far above the noise floor...
-    static final double START_MIN_DB = -35;        // ...and never below this level
+    // ...and never below this level. A hard drive's clicks in the same room came in at -24 to -34 dBFS and
+    // looked like a clap a second (2026-11-07), so quieter sounds than this aren't events at all.
+    static final double START_MIN_DB = -20;
     static final double HOLD_ABOVE_FLOOR_DB = 10;  // the event lasts while frames' average level stays this far above the floor
     static final int END_QUIET_FRAMES = 2;          // 40 ms below that ends the event
     static final int CLAP_MAX_MS = 160;
