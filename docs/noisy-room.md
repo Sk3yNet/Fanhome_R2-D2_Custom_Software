@@ -28,7 +28,8 @@ R2 decides this by himself from the same microphone audio the sound reactions us
 (`SoundReactions.java`):
 
 - **10 or more sound events within 20 seconds.** People rarely clap or bang that often, but every beat
-  of a song is an event.
+  of a song is an event. Only sounds peaking at -20 dBFS or louder count, so quiet clicks (a hard
+  drive working) don't make the room noisy.
 - **or the room itself is loud:** its noise floor is -40 dBFS or louder (a TV turned up).
 
 He stays careful for **60 seconds** after the last sign of it, so a quiet bit in a song doesn't end it.
