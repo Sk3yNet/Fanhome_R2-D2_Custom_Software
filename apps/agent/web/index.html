@@ -74,9 +74,69 @@
   .board button small { display:block; color:var(--dim); font-size:11px; margin-top:2px; }
   .board button.custom small { color:var(--warn); }
   #stepOut { flex:1; font:13px ui-monospace,Menlo,Consolas,monospace; padding:8px; border-radius:8px; border:1px solid var(--line); background:#0b0e12; color:var(--text); min-width:0; }
+  /* Blueprint background: a fixed grid plus an R2 drawing that turns once every 3 minutes.
+     Only a transform is animated, so the browser just spins one layer. Reduced motion: it stays still. */
+  #blueprint { position:fixed; inset:0; z-index:-1; overflow:hidden; pointer-events:none; color:#6ea8ff; opacity:.2;
+    background-image:linear-gradient(#6ea8ff33 1px,transparent 1px),linear-gradient(90deg,#6ea8ff33 1px,transparent 1px); background-size:24px 24px; background-position:-1px -1px; }
+  #blueprint svg { position:absolute; left:50%; top:50%; width:min(120vw,120vh,900px); height:min(120vw,120vh,900px); margin:calc(min(120vw,120vh,900px) / -2) 0 0 calc(min(120vw,120vh,900px) / -2);
+    -webkit-animation:bpSpin 180s linear infinite; animation:bpSpin 180s linear infinite; will-change:transform; }
+  @-webkit-keyframes bpSpin { to { -webkit-transform:rotate(360deg); } }
+  @keyframes bpSpin { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #blueprint svg { -webkit-animation:none; animation:none; } }
+  section { background:rgba(23,27,34,.86); }
 </style>
 </head>
 <body>
+<div id="blueprint" aria-hidden="true">
+  <!-- Original line drawing of R2 (front view) on a blueprint grid. It turns slowly; see #blueprint in the styles. -->
+  <svg viewBox="0 0 400 400" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round">
+    <circle cx="200" cy="200" r="188" stroke-width=".8"/>
+    <circle cx="200" cy="200" r="182" stroke-width="5" stroke-dasharray="1 14.88"/>
+    <circle cx="200" cy="200" r="172" stroke-width=".6" stroke-dasharray="6 6"/>
+    <path d="M200 6V30M200 370V394M6 200H30M370 200H394" stroke-width=".8"/>
+    <!-- dome -->
+    <path d="M140 150A60 60 0 0 1 260 150Z"/>
+    <path d="M141 140H259M146 126H254" stroke-width=".8"/>
+    <rect x="192" y="88" width="16" height="8" rx="2"/>
+    <circle cx="176" cy="113" r="9"/><circle cx="176" cy="113" r="4.5"/>
+    <circle cx="214" cy="108" r="3"/><rect x="224" y="106" width="16" height="12" rx="1.5"/>
+    <path d="M152 128V138H166V128ZM172 128V138H186V128ZM214 128V138H228V128ZM234 128V138H248V128Z" stroke-width=".8"/>
+    <!-- body -->
+    <rect x="137" y="150" width="126" height="6" rx="1"/>
+    <path d="M140 156H260V296H140Z"/>
+    <path d="M152 156V296M248 156V296" stroke-width=".6" stroke-dasharray="3 3"/>
+    <rect x="158" y="166" width="30" height="34" rx="2"/>
+    <path d="M163 174H183M163 182H183M163 190H183" stroke-width=".7"/>
+    <rect x="200" y="166" width="40" height="16" rx="2"/>
+    <circle cx="208" cy="194" r="4"/><circle cx="220" cy="194" r="4"/><circle cx="232" cy="194" r="4"/>
+    <rect x="170" y="214" width="60" height="12" rx="2"/>
+    <rect x="174" y="232" width="52" height="11" rx="2"/>
+    <rect x="160" y="254" width="20" height="30" rx="2"/>
+    <path d="M190 258H240M190 266H240M190 274H240M190 282H240" stroke-width=".7"/>
+    <path d="M140 296L150 312H250L260 296"/>
+    <!-- legs -->
+    <path d="M112 168H136V292L130 306H118L112 292Z"/>
+    <circle cx="124" cy="184" r="10"/><circle cx="124" cy="184" r="4"/>
+    <path d="M118 210H130V280H118Z" stroke-width=".7"/>
+    <path d="M106 306H142L150 336H98Z"/>
+    <path d="M288 168H264V292L270 306H282L288 292Z"/>
+    <circle cx="276" cy="184" r="10"/><circle cx="276" cy="184" r="4"/>
+    <path d="M282 210H270V280H282Z" stroke-width=".7"/>
+    <path d="M294 306H258L250 336H302Z"/>
+    <rect x="188" y="312" width="24" height="14" rx="1"/>
+    <path d="M180 326H220L226 336H174Z"/>
+    <!-- ground and dimensions -->
+    <path d="M70 340H330" stroke-dasharray="8 4" stroke-width=".7"/>
+    <path d="M346 88V336M340 88H352M340 336H352M98 352H302M98 346V358M302 346V358" stroke-width=".7"/>
+    <path d="M200 60V82M200 344V360M60 200H96" stroke-width=".5" stroke-dasharray="2 3"/>
+    <g fill="currentColor" stroke="none" font-family="ui-monospace,Consolas,monospace" font-size="8" letter-spacing="1">
+      <text x="200" y="372" text-anchor="middle">R2 · ASTROMECH · FRONT ELEVATION</text>
+      <text x="355" y="215" transform="rotate(90 355 215)" text-anchor="middle">HEIGHT</text>
+      <text x="200" y="364" text-anchor="middle" font-size="6">WIDTH</text>
+      <text x="200" y="40" text-anchor="middle" font-size="6">SHEET 1 / 1 · SCALE 1:2</text>
+    </g>
+  </svg>
+</div>
 <main>
   <h1>R2 Control <span id="conn" class="pill">not connected</span></h1>
 

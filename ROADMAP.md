@@ -271,6 +271,9 @@ the old WebView, an old TLS stack, the Wi-Fi stack (KRACK), Bluetooth (BlueBorne
       random sounds by mood and every factory sound, each shown as the routine step that plays it
       (`{"sound": "happy"}` and `{"beeps": "..."}` steps are new). `GET /sounds`, `POST /sound`,
       `tools\r2.ps1 sounds` / `sound`. *Built, not yet tested on the robot.* See [docs/soundboard.md](docs/soundboard.md).
+- [ ] **Blueprint background:** the web page shows a faint blueprint drawing of R2 on a grid that turns
+      once every 3 minutes behind the controls (it stays still when the device asks for reduced motion).
+      *Built, not yet tested on the robot.*
 - [ ] Gamepad support: drive with the left stick, head with the right, STOP and actions on buttons. *Built, not yet tested on the robot.* See docs/architecture.md (Web control page).
 
 ## 8. SD card installation (soft-mod)
